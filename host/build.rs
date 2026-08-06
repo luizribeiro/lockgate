@@ -3,7 +3,7 @@ use std::{env, path::PathBuf, process::Command};
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("..");
     println!("cargo:rerun-if-changed={}", root.join("wit").display());
-    for id in ["greeter", "caller", "filereader", "naughty"] {
+    for id in ["greeter", "caller", "filereader", "naughty", "dynamic"] {
         let dir = root.join("plugins").join(id);
         let manifest = dir.join("Cargo.toml");
         println!("cargo:rerun-if-changed={}", manifest.display());

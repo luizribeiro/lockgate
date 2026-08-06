@@ -5,6 +5,6 @@ interface runner {
 }
 
 world plugin {
-  import tangent:core/registry@0.1.0;
+  include tangent:core/plugin@0.1.0;
   export runner;
 }

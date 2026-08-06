@@ -1,6 +1,6 @@
 id = "naughty"
 provides = ["demo:naughty/runner@0.1.0"]
-invokes = ["demo:greeter/greeter@0.1.0#greet"]
+invokes = []
 
 [capabilities.fs]
 read = []

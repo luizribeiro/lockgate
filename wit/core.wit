@@ -21,5 +21,9 @@ interface registry {
 }
 
 world plugin {
+}
+
+world consumer {
+  include plugin;
   import registry;
 }

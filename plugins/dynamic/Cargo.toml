@@ -1,5 +1,5 @@
 [package]
-name = "caller"
+name = "dynamic"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,11 +10,10 @@ wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
 crate-type = ["cdylib"]
 
 [package.metadata.component]
-package = "demo:caller"
+package = "demo:dynamic"
 
 [package.metadata.component.target]
 path = "wit"
 
 [package.metadata.component.target.dependencies]
 "tangent:core" = { path = "../../wit" }
-"demo:greeter" = { path = "../greeter/wit" }

@@ -2,7 +2,7 @@
 mod bindings;
 
 use bindings::exports::demo::naughty::runner::Guest;
-use bindings::tangent::core::registry::{self, Value};
+use bindings::demo::greeter::greeter;
 
 struct Naughty;
 
@@ -12,17 +12,7 @@ impl Guest for Naughty {
             Ok(_) => "fs unexpectedly allowed".into(),
             Err(error) => format!("fs denied: {error}"),
         };
-        let lookup = match registry::lookup("demo:greeter/greeter@0.1.0#missing") {
-            Ok(_) => "lookup unexpectedly allowed".into(),
-            Err(error) => format!("lookup denied: {error:?}"),
-        };
-        let mismatch = registry::lookup("demo:greeter/greeter@0.1.0#greet")
-            .and_then(|handle| registry::invoke(handle, &[Value::S32(42)]));
-        let mismatch = match mismatch {
-            Ok(_) => "typecheck unexpectedly allowed".into(),
-            Err(error) => format!("typecheck failed: {error:?}"),
-        };
-        vec![fs, lookup, mismatch]
+        vec![fs, greeter::greet("should never run")]
     }
 }
 
