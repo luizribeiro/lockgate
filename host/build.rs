@@ -11,10 +11,7 @@ fn main() {
             "cargo:rerun-if-changed={}",
             dir.join("src/lib.rs").display()
         );
-        println!(
-            "cargo:rerun-if-changed={}",
-            dir.join("wit/world.wit").display()
-        );
+        println!("cargo:rerun-if-changed={}", dir.join("wit").display());
         let status = Command::new("cargo")
             .args(["component", "build", "--quiet", "--manifest-path"])
             .arg(&manifest)

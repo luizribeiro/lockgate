@@ -12,7 +12,10 @@ impl Guest for Dynamic {
         let allowed = registry::lookup(&target)
             .and_then(|handle| registry::invoke(handle, &[Value::String("dynamic".into())]));
         let allowed = match allowed {
-            Ok(values) => format!("allowed: {values:?}"),
+            Ok(values) => match values.as_slice() {
+                [Value::String(message)] => format!("allowed: {message}"),
+                _ => format!("allowed call returned unexpected values: {values:?}"),
+            },
             Err(error) => format!("allowed call failed: {error:?}"),
         };
         let denied = match registry::lookup("demo:greeter/greeter@0.1.0#missing") {
