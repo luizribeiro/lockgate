@@ -1,4 +1,24 @@
-use super::*;
+use crate::{
+    manifest::{Capabilities, FsCapability, Manifest, NetCapability},
+    plugin::{Signature, Target, decode_imports},
+    runtime::{
+        CALL_STACK, FUEL, MAX_DEPTH, PluginRuntime, PluginState, PluginTable, invoke_target,
+        resolve_direct_target,
+    },
+};
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+use wasmtime::{
+    Config, Engine, Store,
+    component::{Component, Linker, ResourceTable},
+};
+use wasmtime_wasi::WasiCtxBuilder;
+use wit_component::DecodedWasm;
+use wit_parser::Resolve;
 
 fn manifest(id: &str) -> Manifest {
     Manifest {
