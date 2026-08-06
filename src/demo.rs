@@ -7,15 +7,15 @@ use crate::{
 };
 use anyhow::Result;
 use std::{
-    path::PathBuf,
+    path::Path,
     sync::{Arc, Mutex},
 };
 use wasmtime::{Config, Engine};
 
 const IDS: [&str; 5] = ["greeter", "caller", "filereader", "naughty", "dynamic"];
 
-pub(crate) fn run() -> Result<()> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).canonicalize()?;
+pub(crate) fn run(root: &Path) -> Result<()> {
+    let root = root.canonicalize()?;
     let mut config = Config::new();
     config.wasm_component_model(true).consume_fuel(true);
     let engine = Engine::new(&config)?;

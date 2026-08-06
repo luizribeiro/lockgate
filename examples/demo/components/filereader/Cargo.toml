@@ -1,5 +1,5 @@
 [package]
-name = "naughty"
+name = "filereader"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,11 +10,12 @@ wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
 crate-type = ["cdylib"]
 
 [package.metadata.component]
-package = "demo:naughty"
+package = "demo:filereader"
 
 [package.metadata.component.target]
 path = "wit"
 
 [package.metadata.component.target.dependencies]
-"tangent:core" = { path = "../../wit" }
-"demo:greeter" = { path = "../../packages/demo-greeter-0.1.0.wasm" }
+"tangent:core" = { path = "../../../../wit" }
+
+[workspace]

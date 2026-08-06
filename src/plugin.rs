@@ -69,7 +69,7 @@ impl Target {
 
 impl PluginDefinition {
     pub(crate) fn load(engine: &Engine, root: &Path, id: &str) -> Result<Self> {
-        let dir = root.join("plugins").join(id);
+        let dir = root.join("components").join(id);
         let manifest: Manifest = toml::from_str(&fs::read_to_string(dir.join("plugin.toml"))?)?;
         if manifest.id != id {
             bail!("manifest id {:?} does not match directory", manifest.id);
