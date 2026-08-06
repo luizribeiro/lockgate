@@ -1,4 +1,4 @@
-//! Enforcement-focused tests for loading, linking, recursion, and fuel exhaustion.
+//! Prototype tests for loading, linking, recursion, and fuel exhaustion.
 //! The component fixtures are built by the host build script and decoded where needed.
 
 use crate::{
@@ -54,7 +54,7 @@ fn target(plugin: &str) -> Target {
 }
 
 fn decoded(id: &str) -> (Resolve, wit_parser::WorldId) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bytes = fs::read(root.join("plugins").join(id).join(format!("{id}.wasm"))).unwrap();
     match wit_component::decode(&bytes).unwrap() {
         DecodedWasm::Component(resolve, world) => (resolve, world),

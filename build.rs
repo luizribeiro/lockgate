@@ -1,9 +1,9 @@
-//! Builds each guest component before compiling the host demo.
+//! Builds each guest component before compiling the Lockgate prototype.
 
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
-    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("..");
+    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     println!("cargo:rerun-if-changed={}", root.join("wit").display());
     println!("cargo:rerun-if-changed={}", root.join("packages").display());
     for id in ["greeter", "caller", "filereader", "naughty", "dynamic"] {

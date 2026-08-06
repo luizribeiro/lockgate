@@ -1,4 +1,4 @@
-//! Isolated plugin execution and cross-plugin call enforcement.
+//! Isolated component execution and cross-component call enforcement.
 //! Builds stores and WASI contexts, wires typed imports, and implements the dynamic broker.
 
 use crate::{

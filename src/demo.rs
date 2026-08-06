@@ -1,4 +1,4 @@
-//! Narrated demonstration orchestration.
+//! Narrated Lockgate prototype orchestration.
 //! Loads the five fixture plugins, instantiates the valid ones, and prints each test call.
 
 use crate::{
@@ -15,9 +15,7 @@ use wasmtime::{Config, Engine};
 const IDS: [&str; 5] = ["greeter", "caller", "filereader", "naughty", "dynamic"];
 
 pub(crate) fn run() -> Result<()> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .canonicalize()?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).canonicalize()?;
     let mut config = Config::new();
     config.wasm_component_model(true).consume_fuel(true);
     let engine = Engine::new(&config)?;

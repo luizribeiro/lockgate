@@ -1,4 +1,4 @@
-//! Plugin manifest schema and invocation policy matching.
+//! Prototype manifest schema and invocation policy matching.
 //! These types describe declared exports, cross-plugin authority, and WASI capabilities.
 
 use serde::Deserialize;

@@ -1,4 +1,4 @@
-//! Component discovery and structural WIT metadata.
+//! Prototype component discovery and structural WIT metadata.
 //! Decodes binaries, validates manifests against their worlds, and records callable targets.
 
 use crate::manifest::Manifest;
