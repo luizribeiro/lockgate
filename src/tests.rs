@@ -49,10 +49,10 @@ fn target(plugin: &str) -> Target {
     }
 }
 
-fn parsed_world(wit: &str) -> (Resolve, wit_parser::WorldId) {
+fn parsed_world(wit: &str, world_name: &str) -> (Resolve, wit_parser::WorldId) {
     let mut resolve = Resolve::new();
     let package = resolve.push_str("fixture.wit", wit).unwrap();
-    let world = resolve.packages[package].worlds["fixture"];
+    let world = resolve.packages[package].worlds[world_name];
     (resolve, world)
 }
 
@@ -102,11 +102,7 @@ world fixture {{ export api; }}"#
 
 #[test]
 fn unused_declared_capability_is_harmless() {
-    let (resolve, world) = parsed_world(
-        r#"package demo:fixture@0.1.0;
-
-world fixture {}"#,
-    );
+    let (resolve, world) = parsed_world(include_str!("../wit/core.wit"), "plugin");
     let mut manifest = manifest("greeter");
     manifest.capabilities.registry = true;
     assert!(
@@ -118,13 +114,7 @@ world fixture {}"#,
 
 #[test]
 fn registry_import_requires_explicit_capability() {
-    let (resolve, world) = parsed_world(
-        r#"package tangent:core@0.1.0;
-
-interface registry {}
-
-world fixture { import registry; }"#,
-    );
+    let (resolve, world) = parsed_world(include_str!("../wit/core.wit"), "consumer");
     let error = decode_imports(&resolve, world, &manifest("dynamic")).unwrap_err();
     assert!(error.to_string().contains("tangent:core/registry"));
 }
