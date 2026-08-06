@@ -1,7 +1,9 @@
 //! Component discovery and application-assigned identity.
 //! A catalog hashes exact artifacts and exposes the imports and exports decoded from their WIT.
 
-use crate::plugin::{interface_functions, type_name, validate_wit_interface};
+use crate::plugin::{
+    DirectImport, Signature, interface_functions, type_name, validate_wit_interface,
+};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -48,6 +50,7 @@ pub struct ExportInfo {
     function: String,
     target: String,
     signature: FunctionSignature,
+    pub(crate) runtime_signature: Signature,
 }
 
 /// Read-only metadata for a cataloged component.
@@ -56,12 +59,20 @@ pub struct ComponentInfo<'a> {
     entry: &'a ComponentEntry,
 }
 
-struct ComponentEntry {
-    name: String,
+pub(crate) struct ComponentEntry {
+    pub(crate) name: String,
     digest: ArtifactDigest,
+    pub(crate) imports: Vec<String>,
+    pub(crate) direct_imports: Vec<DirectImport>,
+    pub(crate) exports: Vec<ExportInfo>,
+    pub(crate) component: Component,
+}
+
+struct InspectedComponent {
     imports: Vec<String>,
+    direct_imports: Vec<DirectImport>,
     exports: Vec<ExportInfo>,
-    _component: Component,
+    component: Component,
 }
 
 /// A collection of decoded, compiled component artifacts.
@@ -97,7 +108,7 @@ impl Catalog {
     /// Creates an empty catalog with component-model support enabled.
     pub fn new() -> Result<Self, CatalogError> {
         let mut config = Config::new();
-        config.wasm_component_model(true);
+        config.wasm_component_model(true).consume_fuel(true);
         let engine = Engine::new(&config).map_err(|error| CatalogError::Engine(error.into()))?;
         Ok(Self {
             identity: NEXT_CATALOG.fetch_add(1, Ordering::Relaxed),
@@ -122,7 +133,7 @@ impl Catalog {
         }
 
         let bytes = bytes.as_ref();
-        let (imports, exports, component) = inspect(&self.engine, &name, bytes)?;
+        let inspected = inspect(&self.engine, &name, bytes)?;
         let id = ComponentId {
             catalog: self.identity,
             index: self.components.len(),
@@ -130,9 +141,10 @@ impl Catalog {
         self.components.push(ComponentEntry {
             name: name.clone(),
             digest: ArtifactDigest(Sha256::digest(bytes).into()),
-            imports,
-            exports,
-            _component: component,
+            imports: inspected.imports,
+            direct_imports: inspected.direct_imports,
+            exports: inspected.exports,
+            component: inspected.component,
         });
         self.names.insert(name, id);
         Ok(id)
@@ -162,7 +174,15 @@ impl Catalog {
         })
     }
 
-    fn entry(&self, id: ComponentId) -> Result<&ComponentEntry, CatalogError> {
+    pub(crate) fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    pub(crate) fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    pub(crate) fn entry(&self, id: ComponentId) -> Result<&ComponentEntry, CatalogError> {
         if id.catalog != self.identity {
             return Err(CatalogError::ForeignComponent);
         }
@@ -179,6 +199,14 @@ impl Catalog {
             .get(id.component)
             .and_then(|component| component.exports.get(id.export))
             .ok_or(CatalogError::ForeignComponent)
+    }
+
+    pub(crate) fn export_component(&self, id: ExportId) -> Result<ComponentId, CatalogError> {
+        self.export_entry(id)?;
+        Ok(ComponentId {
+            catalog: self.identity,
+            index: id.component,
+        })
     }
 }
 
@@ -241,11 +269,7 @@ impl fmt::Display for ArtifactDigest {
     }
 }
 
-fn inspect(
-    engine: &Engine,
-    name: &str,
-    bytes: &[u8],
-) -> Result<(Vec<String>, Vec<ExportInfo>, Component), CatalogError> {
+fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedComponent, CatalogError> {
     let decoded =
         wit_component::decode(bytes).map_err(|source| CatalogError::InvalidComponent {
             name: name.into(),
@@ -257,12 +281,38 @@ fn inspect(
             source: anyhow::anyhow!("artifact is a core module, not a component"),
         });
     };
+    validate_world_interfaces(&resolve, world, name)?;
     let component =
         Component::new(engine, bytes).map_err(|source| CatalogError::InvalidComponent {
             name: name.into(),
             source: source.into(),
         })?;
     let imports = interface_names(&resolve, world, true, name)?;
+    let mut direct_imports = Vec::new();
+    for item in resolve.worlds[world].imports.values() {
+        let WorldItem::Interface { id, .. } = item else {
+            continue;
+        };
+        let interface = resolve.id_of(*id).expect("named interface was validated");
+        if interface.starts_with("wasi:") || interface == "tangent:core/registry@0.1.0" {
+            continue;
+        }
+        validate_wit_interface(&resolve, *id).map_err(|source| CatalogError::InvalidComponent {
+            name: name.into(),
+            source,
+        })?;
+        let functions =
+            interface_functions(engine, &component, &interface, true).map_err(|source| {
+                CatalogError::InvalidComponent {
+                    name: name.into(),
+                    source,
+                }
+            })?;
+        direct_imports.push(DirectImport {
+            interface,
+            functions,
+        });
+    }
     let exported = interface_names(&resolve, world, false, name)?;
     let mut exports = Vec::new();
     for interface in exported {
@@ -301,10 +351,49 @@ fn inspect(
                     params: signature.params.iter().map(type_name).collect(),
                     results: signature.results.iter().map(type_name).collect(),
                 },
+                runtime_signature: signature,
             }
         }));
     }
-    Ok((imports, exports, component))
+    Ok(InspectedComponent {
+        imports,
+        direct_imports,
+        exports,
+        component,
+    })
+}
+
+fn validate_world_interfaces(
+    resolve: &Resolve,
+    world: wit_parser::WorldId,
+    component_name: &str,
+) -> Result<(), CatalogError> {
+    for (imported, items) in [
+        (true, &resolve.worlds[world].imports),
+        (false, &resolve.worlds[world].exports),
+    ] {
+        for item in items.values() {
+            let WorldItem::Interface { id, .. } = item else {
+                continue;
+            };
+            let name = resolve
+                .id_of(*id)
+                .ok_or_else(|| CatalogError::InvalidComponent {
+                    name: component_name.into(),
+                    source: anyhow::anyhow!("component contains an unnamed interface"),
+                })?;
+            if imported && (name.starts_with("wasi:") || name == "tangent:core/registry@0.1.0") {
+                continue;
+            }
+            validate_wit_interface(resolve, *id).map_err(|source| {
+                CatalogError::InvalidComponent {
+                    name: component_name.into(),
+                    source,
+                }
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn interface_names(

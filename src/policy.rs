@@ -7,17 +7,22 @@ use thiserror::Error;
 
 /// A fully validated and immutable set of component grants.
 pub struct Policy {
+    catalog: u64,
+    components: Vec<ComponentId>,
     links: Vec<LinkGrant>,
     lookups: Vec<LookupGrant>,
     directories: Vec<DirectoryGrant>,
+    registries: Vec<ComponentId>,
 }
 
 /// A policy builder tied to one catalog.
 pub struct PolicyBuilder<'a> {
     catalog: &'a Catalog,
+    components: Vec<ComponentId>,
     links: Vec<LinkGrant>,
     lookups: Vec<LookupGrant>,
     directories: Vec<DirectoryGrant>,
+    registries: Vec<ComponentId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,17 +57,21 @@ pub enum PolicyError {
     Catalog(#[from] CatalogError),
     #[error("component `{caller}` imports no interface exported by `{provider}`")]
     NoMatchingImport { caller: String, provider: String },
-    #[error("guest directory path must be absolute: `{0}`")]
+    #[error("guest directory path must be normalized absolute POSIX: `{0}`")]
     RelativeGuestPath(PathBuf),
+    #[error("host directory does not exist or is not a directory: `{0}`")]
+    InvalidHostDirectory(PathBuf),
 }
 
 impl Policy {
     pub fn builder(catalog: &Catalog) -> PolicyBuilder<'_> {
         PolicyBuilder {
             catalog,
+            components: Vec::new(),
             links: Vec::new(),
             lookups: Vec::new(),
             directories: Vec::new(),
+            registries: Vec::new(),
         }
     }
 
@@ -77,9 +86,28 @@ impl Policy {
     pub fn directories(&self) -> &[DirectoryGrant] {
         &self.directories
     }
+
+    pub fn registries(&self) -> &[ComponentId] {
+        &self.registries
+    }
+
+    pub fn components(&self) -> &[ComponentId] {
+        &self.components
+    }
+
+    pub(crate) fn catalog_identity(&self) -> u64 {
+        self.catalog
+    }
 }
 
 impl PolicyBuilder<'_> {
+    /// Includes a component that needs no other grants in the execution plan.
+    pub fn include(mut self, component: ComponentId) -> Result<Self, PolicyError> {
+        self.catalog.component(component)?;
+        self.include_component(component);
+        Ok(self)
+    }
+
     /// Permits a caller's typed imports to be satisfied by a provider.
     pub fn link(mut self, caller: ComponentId, provider: ComponentId) -> Result<Self, PolicyError> {
         let caller_info = self.catalog.component(caller)?;
@@ -100,6 +128,8 @@ impl PolicyBuilder<'_> {
         if !self.links.contains(&grant) {
             self.links.push(grant);
         }
+        self.include_component(caller);
+        self.include_component(provider);
         Ok(self)
     }
 
@@ -111,9 +141,25 @@ impl PolicyBuilder<'_> {
     ) -> Result<Self, PolicyError> {
         self.catalog.component(caller)?;
         self.catalog.export_entry(export)?;
+        let provider = self.catalog.export_component(export)?;
+        self.include_component(caller);
+        self.include_component(provider);
+        if !self.registries.contains(&caller) {
+            self.registries.push(caller);
+        }
         let grant = LookupGrant { caller, export };
         if !self.lookups.contains(&grant) {
             self.lookups.push(grant);
+        }
+        Ok(self)
+    }
+
+    /// Enables the optional dynamic registry without granting any target.
+    pub fn enable_registry(mut self, component: ComponentId) -> Result<Self, PolicyError> {
+        self.catalog.component(component)?;
+        self.include_component(component);
+        if !self.registries.contains(&component) {
+            self.registries.push(component);
         }
         Ok(self)
     }
@@ -148,9 +194,12 @@ impl PolicyBuilder<'_> {
 
     pub fn build(self) -> Policy {
         Policy {
+            catalog: self.catalog.identity(),
+            components: self.components,
             links: self.links,
             lookups: self.lookups,
             directories: self.directories,
+            registries: self.registries,
         }
     }
 
@@ -162,8 +211,15 @@ impl PolicyBuilder<'_> {
         access: DirectoryAccess,
     ) -> Result<Self, PolicyError> {
         self.catalog.component(component)?;
-        if !guest.is_absolute() {
+        self.include_component(component);
+        if !valid_guest_path(&guest) {
             return Err(PolicyError::RelativeGuestPath(guest));
+        }
+        let host = host
+            .canonicalize()
+            .map_err(|_| PolicyError::InvalidHostDirectory(host.clone()))?;
+        if !host.is_dir() {
+            return Err(PolicyError::InvalidHostDirectory(host));
         }
         let grant = DirectoryGrant {
             component,
@@ -176,6 +232,27 @@ impl PolicyBuilder<'_> {
         }
         Ok(self)
     }
+
+    fn include_component(&mut self, component: ComponentId) {
+        if !self.components.contains(&component) {
+            self.components.push(component);
+        }
+    }
+}
+
+fn valid_guest_path(path: &Path) -> bool {
+    let Some(path) = path.to_str() else {
+        return false;
+    };
+    if path == "/" {
+        return true;
+    }
+    path.starts_with('/')
+        && !path.ends_with('/')
+        && !path.contains('\0')
+        && path[1..]
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
 impl LinkGrant {
@@ -258,7 +335,7 @@ world caller { import api; }"#;
             .unwrap()
             .allow_lookup(caller, export)
             .unwrap()
-            .read_only_dir(caller, "/tmp/shared", "/shared")
+            .read_only_dir(caller, std::env::temp_dir(), "/shared")
             .unwrap()
             .build();
         assert_eq!(policy.links().len(), 1);
@@ -282,6 +359,24 @@ world caller { import api; }"#;
         assert!(matches!(
             Policy::builder(&catalog).read_only_dir(foreign, "/tmp", "/tmp"),
             Err(PolicyError::Catalog(CatalogError::ForeignComponent))
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_directory_grants() {
+        let mut catalog = Catalog::new().unwrap();
+        let caller = catalog.add("caller", component_bytes("caller")).unwrap();
+        assert!(matches!(
+            Policy::builder(&catalog).read_only_dir(caller, std::env::temp_dir(), "/a/../b"),
+            Err(PolicyError::RelativeGuestPath(_))
+        ));
+        assert!(matches!(
+            Policy::builder(&catalog).read_only_dir(
+                caller,
+                std::env::temp_dir().join("lockgate-path-that-does-not-exist"),
+                "/shared"
+            ),
+            Err(PolicyError::InvalidHostDirectory(_))
         ));
     }
 }

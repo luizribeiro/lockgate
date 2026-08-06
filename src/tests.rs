@@ -1,295 +1,214 @@
-//! Prototype tests for loading, linking, recursion, and fuel exhaustion.
-//! Small WIT and component fixtures keep the library tests independent from the demo guests.
+//! Cross-layer tests for discovery, planning, registry authority, and fuel isolation.
+//! Small synthesized components keep the library suite independent from the runnable demo.
 
-use crate::{
-    manifest::{Capabilities, FsCapability, Manifest, NetCapability},
-    plugin::{Signature, Target, decode_imports, interface_functions},
-    runtime::{
-        CALL_STACK, FUEL, MAX_DEPTH, PluginRuntime, PluginState, PluginTable, invoke_target,
-        resolve_direct_target,
-    },
-};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-use wasmtime::{
-    Config, Engine, Store,
-    component::{Component, Linker, ResourceTable, types::Type},
-};
-use wasmtime_wasi::WasiCtxBuilder;
+use crate::{Catalog, Plan, PlanError, Policy, Runtime, RuntimeError};
+use std::error::Error as _;
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
-fn manifest(id: &str) -> Manifest {
-    Manifest {
-        id: id.into(),
-        provides: vec![],
-        invokes: vec![],
-        capabilities: Capabilities {
-            registry: false,
-            fs: Some(FsCapability {
-                read: vec![],
-                write: vec![],
-            }),
-            net: Some(NetCapability { hosts: vec![] }),
-        },
-    }
-}
-
-fn target(plugin: &str) -> Target {
-    Target {
-        plugin: plugin.into(),
-        interface: "demo:test/api@0.1.0".into(),
-        function: "run".into(),
-        signature: Signature {
-            params: vec![],
-            results: vec![],
-        },
-    }
-}
-
-fn parsed_world(wit: &str, world_name: &str) -> (Resolve, wit_parser::WorldId) {
+fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {
     let mut resolve = Resolve::new();
     let package = resolve.push_str("fixture.wit", wit).unwrap();
     let world = resolve.packages[package].worlds[world_name];
-    (resolve, world)
-}
-
-fn signature_from_wit(engine: &Engine, wit: &str) -> Signature {
-    let component = component_from_wit(engine, wit);
-    interface_functions(engine, &component, "demo:structural/api@0.1.0", false)
-        .unwrap()
-        .into_iter()
-        .find_map(|(name, signature)| (name == "run").then_some(signature))
-        .unwrap()
-}
-
-fn component_from_wit(engine: &Engine, wit: &str) -> Component {
-    let mut resolve = Resolve::new();
-    let package = resolve.push_str("fixture.wit", wit).unwrap();
-    let world = resolve.packages[package].worlds["fixture"];
     let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
     embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
-    let bytes = ComponentEncoder::default()
+    ComponentEncoder::default()
         .module(&module)
         .unwrap()
         .encode()
+        .unwrap()
+}
+
+#[test]
+fn catalog_rejects_fixed_lists_before_runtime_type_introspection() {
+    let wit = r#"package demo:fixed-list@0.1.0;
+
+interface api { run: func(input: list<u32, 4>); }
+world caller { import api; }"#;
+    let mut catalog = Catalog::new().unwrap();
+    let error = catalog
+        .add("caller", component_bytes(wit, "caller"))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("not a valid supported component")
+    );
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .to_string()
+            .contains("fixed-length lists")
+    );
+}
+
+#[test]
+fn catalog_rejects_cross_store_resource_imports() {
+    let wit = r#"package demo:resources@0.1.0;
+
+interface api {
+  resource file;
+  run: func(input: borrow<file>);
+}
+world caller { import api; }"#;
+    let mut catalog = Catalog::new().unwrap();
+    let error = catalog
+        .add("caller", component_bytes(wit, "caller"))
+        .unwrap_err();
+    assert!(error.source().unwrap().to_string().contains("resource"));
+}
+
+#[test]
+fn plan_requires_an_explicit_provider() {
+    let wit = r#"package demo:missing@0.1.0;
+interface api { run: func(); }
+world caller { import api; }"#;
+    let mut catalog = Catalog::new().unwrap();
+    let caller = catalog
+        .add("caller", component_bytes(wit, "caller"))
         .unwrap();
-    Component::new(engine, bytes).unwrap()
+    let policy = Policy::builder(&catalog).include(caller).unwrap().build();
+    assert!(matches!(
+        Plan::new(catalog, policy),
+        Err(PlanError::MissingProvider { .. })
+    ));
+}
+
+#[test]
+fn plan_rejects_ambiguous_providers() {
+    let wit = r#"package demo:ambiguous@0.1.0;
+interface api { run: func(); }
+world caller { import api; }
+world provider { export api; }"#;
+    let mut catalog = Catalog::new().unwrap();
+    let caller = catalog
+        .add("caller", component_bytes(wit, "caller"))
+        .unwrap();
+    let first = catalog
+        .add("first", component_bytes(wit, "provider"))
+        .unwrap();
+    let second = catalog
+        .add("second", component_bytes(wit, "provider"))
+        .unwrap();
+    let policy = Policy::builder(&catalog)
+        .link(caller, first)
+        .unwrap()
+        .link(caller, second)
+        .unwrap()
+        .build();
+    assert!(matches!(
+        Plan::new(catalog, policy),
+        Err(PlanError::AmbiguousProvider { .. })
+    ));
+}
+
+#[test]
+fn plan_compares_complete_structural_types() {
+    let caller_wit = structural_wit("s32", "safe", "polite", "choice", "caller", "import");
+    let provider_wit = structural_wit("u32", "careful", "quiet", "selection", "provider", "export");
+    let mut catalog = Catalog::new().unwrap();
+    let caller = catalog
+        .add("caller", component_bytes(&caller_wit, "caller"))
+        .unwrap();
+    let provider = catalog
+        .add("provider", component_bytes(&provider_wit, "provider"))
+        .unwrap();
+    let policy = Policy::builder(&catalog)
+        .link(caller, provider)
+        .unwrap()
+        .build();
+    let error = match Plan::new(catalog, policy) {
+        Ok(_) => panic!("mismatched structural types unexpectedly planned"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("type mismatch"));
+    assert!(error.contains("variant"));
+    assert!(error.contains("enum"));
+    assert!(error.contains("flags"));
+    assert!(error.contains("record"));
+}
+
+#[test]
+fn registry_import_requires_explicit_policy_authority() {
+    let mut catalog = Catalog::new().unwrap();
+    let dynamic = catalog
+        .add(
+            "dynamic",
+            component_bytes(include_str!("../wit/core.wit"), "consumer"),
+        )
+        .unwrap();
+    let policy = Policy::builder(&catalog).include(dynamic).unwrap().build();
+    let plan = Plan::new(catalog, policy).unwrap();
+    assert!(matches!(
+        Runtime::new(plan),
+        Err(RuntimeError::RegistryDenied { .. })
+    ));
+}
+
+#[test]
+fn unused_registry_authority_is_harmless() {
+    let mut catalog = Catalog::new().unwrap();
+    let component = catalog
+        .add(
+            "plain",
+            component_bytes(include_str!("../wit/core.wit"), "plugin"),
+        )
+        .unwrap();
+    let policy = Policy::builder(&catalog)
+        .enable_registry(component)
+        .unwrap()
+        .build();
+    let plan = Plan::new(catalog, policy).unwrap();
+    assert!(Runtime::new(plan).is_ok());
+}
+
+#[test]
+fn fuel_trap_marks_only_the_looping_component_unhealthy() {
+    let bytes = wat::parse_str(
+        r#"(component
+            (core module $m (func (export "loop") (loop $again (br $again))))
+            (core instance $i (instantiate $m))
+            (func $loop (canon lift (core func $i "loop")))
+            (instance $api (export "run" (func $loop)))
+            (export "demo:fuel/api@0.1.0" (instance $api)))"#,
+    )
+    .unwrap();
+    let mut catalog = Catalog::new().unwrap();
+    let looping = catalog.add("looping", bytes).unwrap();
+    let run = catalog.export(looping, "demo:fuel/api@0.1.0#run").unwrap();
+    let policy = Policy::builder(&catalog).include(looping).unwrap().build();
+    let runtime = Runtime::new(Plan::new(catalog, policy).unwrap()).unwrap();
+    assert!(matches!(
+        runtime.call(run, &[]),
+        Err(RuntimeError::Trapped { .. })
+    ));
+    assert!(!runtime.is_healthy(looping).unwrap());
+    assert!(matches!(
+        runtime.call(run, &[]),
+        Err(RuntimeError::Unhealthy { .. })
+    ));
 }
 
 fn structural_wit(
-    variant_payload: &str,
+    payload: &str,
     enum_case: &str,
     flag: &str,
     record_field: &str,
+    world: &str,
+    direction: &str,
 ) -> String {
     format!(
         r#"package demo:structural@0.1.0;
 
 interface api {{
-  variant choice {{ text(string), number({variant_payload}) }}
+  variant choice {{ text(string), number({payload}) }}
   enum mode {{ fast, {enum_case} }}
   flags options {{ loud, {flag} }}
   record request {{ {record_field}: choice, mode: mode, options: options }}
   run: func(input: request) -> request;
 }}
 
-world fixture {{ export api; }}"#
+world {world} {{ {direction} api; }}"#
     )
-}
-
-#[test]
-fn unused_declared_capability_is_harmless() {
-    let (resolve, world) = parsed_world(include_str!("../wit/core.wit"), "plugin");
-    let mut manifest = manifest("greeter");
-    manifest.capabilities.registry = true;
-    assert!(
-        decode_imports(&resolve, world, &manifest)
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
-fn registry_import_requires_explicit_capability() {
-    let (resolve, world) = parsed_world(include_str!("../wit/core.wit"), "consumer");
-    let error = decode_imports(&resolve, world, &manifest("dynamic")).unwrap_err();
-    assert!(error.to_string().contains("tangent:core/registry"));
-}
-
-#[test]
-fn fixed_length_lists_fail_cleanly_before_runtime_introspection() {
-    let mut resolve = Resolve::new();
-    let package = resolve
-        .push_str(
-            "fixed-list.wit",
-            r#"package demo:fixed-list@0.1.0;
-
-interface api {
-  run: func(input: list<u32, 4>);
-}
-
-world fixture { import api; }"#,
-        )
-        .unwrap();
-    let world = resolve.packages[package].worlds["fixture"];
-    let error = decode_imports(&resolve, world, &manifest("fixed-list")).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("fixed-length lists are unsupported")
-    );
-}
-
-#[test]
-fn direct_import_checks_policy_and_signature() {
-    let plugins = Arc::new(Mutex::new(PluginTable::default()));
-    let key = "demo:greeter/greeter@0.1.0#greet";
-    let expected = Signature {
-        params: vec![Type::String],
-        results: vec![Type::String],
-    };
-    let provider = Target {
-        plugin: "greeter".into(),
-        interface: "demo:greeter/greeter@0.1.0".into(),
-        function: "greet".into(),
-        signature: expected.clone(),
-    };
-    plugins.lock().unwrap().targets.insert(key.into(), provider);
-
-    let error = resolve_direct_target(&plugins, &manifest("caller"), key, &expected).unwrap_err();
-    assert!(error.to_string().contains("not permitted"));
-
-    let mut caller = manifest("caller");
-    caller.invokes.push(key.into());
-    let changed = Signature {
-        params: vec![Type::S32],
-        results: vec![Type::String],
-    };
-    let error = resolve_direct_target(&plugins, &caller, key, &changed).unwrap_err();
-    assert!(error.to_string().contains("type mismatch"));
-    assert!(error.to_string().contains("s32"));
-}
-
-#[test]
-fn direct_import_compares_complete_structural_types() {
-    let mut config = Config::new();
-    config.wasm_component_model(true);
-    let engine = Engine::new(&config).unwrap();
-    let baseline = signature_from_wit(&engine, &structural_wit("s32", "safe", "polite", "choice"));
-    let key = "demo:structural/api@0.1.0#run";
-    let plugins = Arc::new(Mutex::new(PluginTable::default()));
-    plugins.lock().unwrap().targets.insert(
-        key.into(),
-        Target {
-            plugin: "provider".into(),
-            interface: "demo:structural/api@0.1.0".into(),
-            function: "run".into(),
-            signature: baseline,
-        },
-    );
-    let mut caller = manifest("caller");
-    caller.invokes.push(key.into());
-
-    for changed in [
-        structural_wit("u32", "safe", "polite", "choice"),
-        structural_wit("s32", "careful", "polite", "choice"),
-        structural_wit("s32", "safe", "quiet", "choice"),
-        structural_wit("s32", "safe", "polite", "selection"),
-    ] {
-        let expected = signature_from_wit(&engine, &changed);
-        let error = resolve_direct_target(&plugins, &caller, key, &expected).unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("type mismatch"));
-        assert!(message.contains("variant"));
-        assert!(message.contains("enum"));
-        assert!(message.contains("flags"));
-        assert!(message.contains("record"));
-    }
-}
-
-#[test]
-fn direct_import_rejects_cross_store_resource_handles() {
-    let mut config = Config::new();
-    config.wasm_component_model(true);
-    let engine = Engine::new(&config).unwrap();
-    let component = component_from_wit(
-        &engine,
-        r#"package demo:structural@0.1.0;
-
-interface api {
-  resource file;
-  run: func(input: borrow<file>);
-}
-
-world fixture { export api; }"#,
-    );
-    let error =
-        interface_functions(&engine, &component, "demo:structural/api@0.1.0", false).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("resource handles are unsupported")
-    );
-}
-
-#[test]
-fn rejects_depth_limit_and_cycles() {
-    let plugins = Arc::new(Mutex::new(PluginTable::default()));
-    CALL_STACK
-        .with(|stack| *stack.borrow_mut() = (0..MAX_DEPTH).map(|n| format!("p{n}")).collect());
-    let error = invoke_target(&plugins, &target("callee"), &[]).unwrap_err();
-    assert!(error.to_string().contains("depth"));
-
-    CALL_STACK.with(|stack| *stack.borrow_mut() = vec!["callee".into()]);
-    let error = invoke_target(&plugins, &target("callee"), &[]).unwrap_err();
-    assert!(error.to_string().contains("cycle"));
-    CALL_STACK.with(|stack| stack.borrow_mut().clear());
-}
-
-#[test]
-fn fuel_trap_marks_callee_unhealthy() {
-    let mut config = Config::new();
-    config.wasm_component_model(true).consume_fuel(true);
-    let engine = Engine::new(&config).unwrap();
-    let component = Component::new(
-        &engine,
-        r#"(component
-            (core module $m (func (export "loop") (loop $again (br $again))))
-            (core instance $i (instantiate $m))
-            (func $loop (canon lift (core func $i "loop")))
-            (instance $api (export "run" (func $loop)))
-            (export "demo:test/api@0.1.0" (instance $api)))"#,
-    )
-    .unwrap();
-    let plugins = Arc::new(Mutex::new(PluginTable::default()));
-    let state = PluginState {
-        manifest: manifest("loop"),
-        wasi: WasiCtxBuilder::new().build(),
-        table: ResourceTable::new(),
-        plugins: Arc::downgrade(&plugins),
-        handles: HashMap::new(),
-        next_handle: 1,
-    };
-    let mut store = Store::new(&engine, state);
-    store.set_fuel(FUEL).unwrap();
-    let instance = Linker::new(&engine)
-        .instantiate(&mut store, &component)
-        .unwrap();
-    let runtime = Arc::new(Mutex::new(PluginRuntime {
-        store,
-        instance,
-        healthy: true,
-    }));
-    plugins
-        .lock()
-        .unwrap()
-        .runtimes
-        .insert("loop".into(), runtime.clone());
-
-    let error = invoke_target(&plugins, &target("loop"), &[]).unwrap_err();
-    assert!(format!("{error:#}").contains("fuel"));
-    assert!(!runtime.lock().unwrap().healthy);
 }

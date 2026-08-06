@@ -647,12 +647,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glob-match"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9985c9503b412198aa4197559e9a318524ebc4519c229bfa05a535828c950b9d"
-
-[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -930,13 +924,11 @@ name = "lockgate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "glob-match",
- "serde",
  "sha2",
  "thiserror 2.0.19",
- "toml",
  "wasmtime",
  "wasmtime-wasi",
+ "wat",
  "wit-component",
  "wit-parser 0.255.0",
 ]

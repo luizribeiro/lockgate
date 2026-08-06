@@ -1,193 +1,315 @@
-//! Isolated component execution and cross-component call enforcement.
-//! Builds stores and WASI contexts, wires typed imports, and implements the dynamic broker.
+//! Isolated component execution for a validated [`Plan`](crate::Plan).
+//! Each component receives its own store, WASI context, fuel budget, and dynamic handle table.
 
 use crate::{
-    manifest::Manifest,
-    plugin::{PluginDefinition, Signature, Target, type_name},
+    ComponentId, ExportId, Plan,
+    catalog::CatalogError,
+    plan::{ResolvedImport, Target},
+    policy::{DirectoryAccess, DirectoryGrant},
     tangent::core::registry,
 };
-use anyhow::{Context, Result, bail};
 use std::{
     cell::RefCell,
     collections::HashMap,
-    path::Path,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        Arc, Mutex, MutexGuard, TryLockError, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
 };
+use thiserror::Error;
 use wasmtime::{
-    Engine, Store,
-    component::{HasSelf, Instance, Linker, ResourceTable, Val, types::Type},
+    Store,
+    component::{HasSelf, Instance, Linker, ResourceTable, Val},
 };
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-pub(crate) const FUEL: u64 = 100_000;
-pub(crate) const MAX_DEPTH: usize = 8;
+mod dynamic;
+
+const FUEL: u64 = 100_000;
+const MAX_DEPTH: usize = 8;
+const REGISTRY_INTERFACE: &str = "tangent:core/registry@0.1.0";
+static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
+
+type Observer = Arc<dyn Fn(Event) + Send + Sync>;
+
+/// An observable cross-component broker event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Event {
+    DirectCall {
+        target: String,
+    },
+    DynamicLookup {
+        caller: String,
+        target: String,
+        allowed: bool,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Frame {
+    runtime: u64,
+    component: ComponentId,
+}
 
 thread_local! {
-    pub(crate) static CALL_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static CALL_STACK: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(crate) struct PluginState {
-    pub(crate) manifest: Manifest,
-    pub(crate) wasi: WasiCtx,
-    pub(crate) table: ResourceTable,
-    pub(crate) plugins: Weak<Mutex<PluginTable>>,
-    pub(crate) handles: HashMap<u32, Target>,
-    pub(crate) next_handle: u32,
+struct CallGuard(Frame);
+
+impl Drop for CallGuard {
+    fn drop(&mut self) {
+        CALL_STACK.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            if let Some(position) = stack.iter().rposition(|frame| *frame == self.0) {
+                stack.remove(position);
+            }
+        });
+    }
 }
 
-impl WasiView for PluginState {
+struct StoreState {
+    component_name: String,
+    wasi: WasiCtx,
+    resources: ResourceTable,
+    runtimes: Weak<Mutex<RuntimeTable>>,
+    lookups: HashMap<String, Target>,
+    handles: HashMap<u32, Target>,
+    target_handles: HashMap<String, u32>,
+}
+
+impl WasiView for StoreState {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi,
-            table: &mut self.table,
+            table: &mut self.resources,
         }
     }
 }
 
-pub(crate) struct PluginRuntime {
-    pub(crate) store: Store<PluginState>,
-    pub(crate) instance: Instance,
-    pub(crate) healthy: bool,
+struct ComponentRuntime {
+    store: Store<StoreState>,
+    instance: Instance,
+    healthy: bool,
 }
 
-#[derive(Default)]
-pub(crate) struct PluginTable {
-    pub(crate) targets: HashMap<String, Target>,
-    pub(crate) runtimes: HashMap<String, Arc<Mutex<PluginRuntime>>>,
+struct RuntimeTable {
+    identity: u64,
+    components: HashMap<ComponentId, Arc<Mutex<ComponentRuntime>>>,
+    observer: Option<Observer>,
 }
 
-impl registry::Host for PluginState {
-    fn lookup(&mut self, target: String) -> Result<u32, registry::InvokeError> {
-        if !self.manifest.permits(&target) {
-            println!("  [dynamic] {} -> {target}  DENIED", self.manifest.id);
-            return Err(registry::InvokeError::Denied("not in invokes".into()));
+/// A fully instantiated set of isolated component stores.
+pub struct Runtime {
+    plan: Plan,
+    table: Arc<Mutex<RuntimeTable>>,
+}
+
+/// A typed failure while instantiating or calling a planned component.
+#[derive(Debug, Error)]
+pub enum RuntimeError {
+    #[error(transparent)]
+    Catalog(#[from] CatalogError),
+    #[error("component `{component}` is not included in the plan")]
+    NotPlanned { component: String },
+    #[error("component `{component}` imports `{interface}` without an authorized provider")]
+    ImportDenied {
+        component: String,
+        interface: String,
+    },
+    #[error("component `{component}` imports the dynamic registry without enabling it")]
+    RegistryDenied { component: String },
+    #[error("component `{component}` failed to instantiate")]
+    Instantiation {
+        component: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("component `{component}` is unavailable")]
+    Unavailable { component: String },
+    #[error("component `{component}` is unhealthy")]
+    Unhealthy { component: String },
+    #[error("component `{component}` store is already borrowed")]
+    Busy { component: String },
+    #[error("call depth limit {MAX_DEPTH} exceeded")]
+    DepthLimit,
+    #[error("call cycle detected at component `{component}`")]
+    Cycle { component: String },
+    #[error("component `{component}` trapped")]
+    Trapped {
+        component: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("runtime synchronization state was poisoned")]
+    Poisoned,
+}
+
+impl Runtime {
+    /// Instantiates every component included in a validated plan.
+    pub fn new(plan: Plan) -> Result<Self, RuntimeError> {
+        Self::build(plan, None)
+    }
+
+    /// Instantiates a plan and sends broker events to an application observer.
+    pub fn with_observer(
+        plan: Plan,
+        observer: impl Fn(Event) + Send + Sync + 'static,
+    ) -> Result<Self, RuntimeError> {
+        Self::build(plan, Some(Arc::new(observer)))
+    }
+
+    fn build(plan: Plan, observer: Option<Observer>) -> Result<Self, RuntimeError> {
+        let table = Arc::new(Mutex::new(RuntimeTable {
+            identity: NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed),
+            components: HashMap::new(),
+            observer,
+        }));
+        let runtime = Self { plan, table };
+        for component in runtime.plan.order.clone() {
+            runtime.instantiate(component)?;
         }
-        let Some(plugins) = self.plugins.upgrade() else {
-            return Err(registry::InvokeError::Trapped(
-                "plugin table unavailable".into(),
-            ));
-        };
-        let Some(resolved) = plugins.lock().unwrap().targets.get(&target).cloned() else {
-            println!("  [dynamic] {} -> {target}  NOT-FOUND", self.manifest.id);
-            return Err(registry::InvokeError::NotFound(target));
-        };
-        println!("  [dynamic] {} -> {target}  ALLOWED", self.manifest.id);
-        let handle = self.next_handle;
-        self.next_handle += 1;
-        self.handles.insert(handle, resolved);
-        Ok(handle)
+        Ok(runtime)
     }
 
-    fn invoke(
-        &mut self,
-        handle: u32,
-        args: Vec<registry::Value>,
-    ) -> Result<Vec<registry::Value>, registry::InvokeError> {
-        let Some(target) = self.handles.get(&handle).cloned() else {
-            return Err(registry::InvokeError::Denied(format!(
-                "unknown handle {handle}"
-            )));
-        };
-        check_values(&target.signature, &args)?;
-        let Some(plugins) = self.plugins.upgrade() else {
-            return Err(registry::InvokeError::Trapped(
-                "plugin table unavailable".into(),
-            ));
-        };
-        let params = args.into_iter().map(value_to_val).collect::<Vec<_>>();
-        invoke_target(&plugins, &target, &params)
-            .map_err(|error| registry::InvokeError::Trapped(format!("{error:#}")))?
-            .into_iter()
-            .map(val_to_value)
-            .collect()
+    /// Calls an exact exported function with runtime component values.
+    pub fn call(&self, export: ExportId, params: &[Val]) -> Result<Vec<Val>, RuntimeError> {
+        let target = self.plan.target(export)?;
+        invoke_target(&self.table, &target, params)
     }
-}
 
-impl PluginRuntime {
-    pub(crate) fn instantiate(
-        root: &Path,
-        plugins: &Arc<Mutex<PluginTable>>,
-        engine: &Engine,
-        definition: PluginDefinition,
-    ) -> Result<Self> {
+    /// Reports whether a component has avoided a trapping call.
+    pub fn is_healthy(&self, component: ComponentId) -> Result<bool, RuntimeError> {
+        let name = self.plan.catalog.component(component)?.name().to_owned();
+        let runtime = runtime_for(&self.table, component, &name)?;
+        let runtime = runtime.lock().map_err(|_| RuntimeError::Poisoned)?;
+        Ok(runtime.healthy)
+    }
+
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    fn instantiate(&self, component: ComponentId) -> Result<(), RuntimeError> {
+        let entry = self.plan.catalog.entry(component)?;
+        let component_plan =
+            self.plan
+                .component(component)
+                .map_err(|_| RuntimeError::NotPlanned {
+                    component: entry.name.clone(),
+                })?;
+        for import in &entry.direct_imports {
+            if !component_plan
+                .direct_imports
+                .contains_key(&import.interface)
+            {
+                return Err(RuntimeError::ImportDenied {
+                    component: entry.name.clone(),
+                    interface: import.interface.clone(),
+                });
+            }
+        }
+        if entry
+            .imports
+            .iter()
+            .any(|import| import == REGISTRY_INTERFACE)
+            && !component_plan.registry
+        {
+            return Err(RuntimeError::RegistryDenied {
+                component: entry.name.clone(),
+            });
+        }
+
+        let engine = self.plan.catalog.engine();
         let mut linker = Linker::new(engine);
-        registry::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
-        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-        wire_direct_imports(&mut linker, plugins, &definition)?;
+        registry::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)
+            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
+            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
+        wire_direct_imports(
+            &mut linker,
+            &self.table,
+            component_plan.direct_imports.values(),
+        )
+        .map_err(|error| instantiate_error(&entry.name, error))?;
 
         let mut wasi = WasiCtxBuilder::new();
-        if let Some(fs) = &definition.manifest.capabilities.fs {
-            for path in &fs.read {
-                preopen(root, &mut wasi, path, false)?;
-            }
-            for path in &fs.write {
-                preopen(root, &mut wasi, path, true)?;
-            }
+        for directory in &component_plan.directories {
+            preopen(&mut wasi, directory).map_err(|error| instantiate_error(&entry.name, error))?;
         }
-        let state = PluginState {
-            manifest: definition.manifest,
+        let state = StoreState {
+            component_name: entry.name.clone(),
             wasi: wasi.build(),
-            table: ResourceTable::new(),
-            plugins: Arc::downgrade(plugins),
+            resources: ResourceTable::new(),
+            runtimes: Arc::downgrade(&self.table),
+            lookups: component_plan.lookups.clone(),
             handles: HashMap::new(),
-            next_handle: 1,
+            target_handles: HashMap::new(),
         };
         let mut store = Store::new(engine, state);
-        store.set_fuel(FUEL)?;
-        let instance = linker.instantiate(&mut store, &definition.component)?;
-        Ok(Self {
+        store
+            .set_fuel(FUEL)
+            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
+        let instance = linker
+            .instantiate(&mut store, &entry.component)
+            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
+        let runtime = Arc::new(Mutex::new(ComponentRuntime {
             store,
             instance,
             healthy: true,
-        })
+        }));
+        self.table
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)?
+            .components
+            .insert(component, runtime);
+        Ok(())
     }
+}
 
-    fn call(&mut self, interface: &str, function: &str, params: &[Val]) -> Result<Vec<Val>> {
+impl ComponentRuntime {
+    fn call(&mut self, target: &Target, params: &[Val]) -> Result<Vec<Val>, anyhow::Error> {
         let interface = self
             .instance
-            .get_export_index(&mut self.store, None, interface)
-            .context("interface not exported")?;
+            .get_export_index(&mut self.store, None, &target.interface)
+            .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
         let function = self
             .instance
-            .get_export_index(&mut self.store, Some(&interface), function)
-            .context("function not exported")?;
-        let func = self
+            .get_export_index(&mut self.store, Some(&interface), &target.function)
+            .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
+        let function = self
             .instance
             .get_func(&mut self.store, function)
-            .context("export is not a function")?;
-        let mut results = func
+            .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
+        let mut results = function
             .ty(&self.store)
             .results()
             .map(|_| Val::Bool(false))
             .collect::<Vec<_>>();
-        func.call(&mut self.store, params, &mut results)?;
+        function.call(&mut self.store, params, &mut results)?;
         Ok(results)
     }
 }
 
-fn wire_direct_imports(
-    linker: &mut Linker<PluginState>,
-    plugins: &Arc<Mutex<PluginTable>>,
-    definition: &PluginDefinition,
-) -> Result<()> {
-    for import in &definition.direct_imports {
+fn wire_direct_imports<'a>(
+    linker: &mut Linker<StoreState>,
+    runtimes: &Arc<Mutex<RuntimeTable>>,
+    imports: impl Iterator<Item = &'a ResolvedImport>,
+) -> Result<(), anyhow::Error> {
+    for import in imports {
         let mut instance = linker.instance(&import.interface)?;
-        for (function, expected) in &import.functions {
-            let key = format!("{}#{function}", import.interface);
-            let target = resolve_direct_target(plugins, &definition.manifest, &key, expected)?;
-            if !plugins
-                .lock()
-                .unwrap()
-                .runtimes
-                .contains_key(&target.plugin)
-            {
-                bail!("provider {} for {key} is not instantiated", target.plugin);
-            }
-            let plugins = Arc::clone(plugins);
+        for (function, target) in &import.functions {
+            let target = target.clone();
+            let runtimes = Arc::clone(runtimes);
             instance.func_new(function, move |_store, _ty, params, results| {
-                println!("  [direct] -> {}", target.key());
-                let values = invoke_target(&plugins, &target, params)
-                    .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))?;
+                emit(
+                    &Arc::downgrade(&runtimes),
+                    Event::DirectCall {
+                        target: target.key(),
+                    },
+                );
+                let values = invoke_target(&runtimes, &target, params)
+                    .map_err(|error| wasmtime::Error::msg(error.to_string()))?;
                 if values.len() != results.len() {
                     return Err(wasmtime::Error::msg("provider returned the wrong arity"));
                 }
@@ -201,195 +323,188 @@ fn wire_direct_imports(
     Ok(())
 }
 
-pub(crate) fn resolve_direct_target(
-    plugins: &Arc<Mutex<PluginTable>>,
-    manifest: &Manifest,
-    key: &str,
-    expected: &Signature,
-) -> Result<Target> {
-    if !manifest.permits(key) {
-        bail!("direct import {key} is not permitted by manifest invokes");
+fn emit(runtimes: &Weak<Mutex<RuntimeTable>>, event: Event) {
+    let observer = runtimes
+        .upgrade()
+        .and_then(|runtimes| runtimes.lock().ok()?.observer.clone());
+    if let Some(observer) = observer {
+        observer(event);
     }
-    let target = plugins
-        .lock()
-        .unwrap()
-        .targets
-        .get(key)
-        .cloned()
-        .with_context(|| format!("direct import {key} has no provider"))?;
-    if &target.signature != expected {
-        bail!(
-            "type mismatch for {key}: caller expects {}, provider exports {}",
-            expected,
-            target.signature
-        );
-    }
-    Ok(target)
 }
 
-pub(crate) fn invoke_target(
-    plugins: &Arc<Mutex<PluginTable>>,
+fn invoke_target(
+    runtimes: &Arc<Mutex<RuntimeTable>>,
     target: &Target,
     params: &[Val],
-) -> Result<Vec<Val>> {
-    let stack_error = CALL_STACK.with(|stack| {
-        let stack = stack.borrow();
-        if stack.len() >= MAX_DEPTH {
-            Some(format!("call depth limit {MAX_DEPTH} exceeded"))
-        } else if stack.contains(&target.plugin) {
-            Some(format!("call cycle detected at plugin {}", target.plugin))
-        } else {
-            None
-        }
-    });
-    if let Some(error) = stack_error {
-        bail!(error);
-    }
-    let runtime = plugins
+) -> Result<Vec<Val>, RuntimeError> {
+    let runtime_identity = runtimes
         .lock()
-        .unwrap()
-        .runtimes
-        .get(&target.plugin)
-        .with_context(|| format!("plugin {} is unavailable", target.plugin))?
-        .clone();
-    let mut runtime = runtime
-        .try_lock()
-        .map_err(|_| anyhow::anyhow!("callee store is already borrowed"))?;
+        .map_err(|_| RuntimeError::Poisoned)?
+        .identity;
+    let _guard = enter_call(runtime_identity, target)?;
+    let runtime = runtime_for(runtimes, target.component, &target.component_name)?;
+    let mut runtime = try_runtime_lock(&runtime, &target.component_name)?;
     if !runtime.healthy {
-        bail!("plugin {} is unhealthy", target.plugin);
+        return Err(RuntimeError::Unhealthy {
+            component: target.component_name.clone(),
+        });
     }
-    runtime.store.set_fuel(FUEL)?;
-    CALL_STACK.with(|stack| stack.borrow_mut().push(target.plugin.clone()));
-    let call = runtime.call(&target.interface, &target.function, params);
-    CALL_STACK.with(|stack| {
-        stack.borrow_mut().pop();
-    });
-    if call.is_err() {
-        runtime.healthy = false;
-    }
-    call
-}
-
-pub(crate) fn call_runner(
-    plugins: &Arc<Mutex<PluginTable>>,
-    id: &str,
-    interface: &str,
-) -> Result<Vec<Val>> {
-    let runtime = plugins
-        .lock()
-        .unwrap()
-        .runtimes
-        .get(id)
-        .context("plugin unavailable")?
-        .clone();
-    let mut runtime = runtime.lock().unwrap();
-    runtime.store.set_fuel(FUEL)?;
-    CALL_STACK.with(|stack| stack.borrow_mut().push(id.into()));
-    let result = runtime.call(interface, "run", &[]);
-    CALL_STACK.with(|stack| {
-        stack.borrow_mut().pop();
-    });
+    runtime
+        .store
+        .set_fuel(FUEL)
+        .map_err(|source| RuntimeError::Trapped {
+            component: target.component_name.clone(),
+            source: source.into(),
+        })?;
+    let result = runtime.call(target, params);
     if result.is_err() {
         runtime.healthy = false;
     }
-    result
+    result.map_err(|source| RuntimeError::Trapped {
+        component: target.component_name.clone(),
+        source,
+    })
 }
 
-fn preopen(root: &Path, wasi: &mut WasiCtxBuilder, path: &str, writable: bool) -> Result<()> {
-    let host = root.join(path.strip_prefix("./").unwrap_or(path));
-    let guest = format!("/{}", host.file_name().unwrap().to_string_lossy());
-    let (dirs, files) = if writable {
-        (DirPerms::all(), FilePerms::all())
-    } else {
-        (DirPerms::READ, FilePerms::READ)
+fn runtime_for(
+    runtimes: &Arc<Mutex<RuntimeTable>>,
+    component: ComponentId,
+    name: &str,
+) -> Result<Arc<Mutex<ComponentRuntime>>, RuntimeError> {
+    runtimes
+        .lock()
+        .map_err(|_| RuntimeError::Poisoned)?
+        .components
+        .get(&component)
+        .cloned()
+        .ok_or_else(|| RuntimeError::Unavailable {
+            component: name.into(),
+        })
+}
+
+fn try_runtime_lock<'a>(
+    runtime: &'a Mutex<ComponentRuntime>,
+    name: &str,
+) -> Result<MutexGuard<'a, ComponentRuntime>, RuntimeError> {
+    match runtime.try_lock() {
+        Ok(runtime) => Ok(runtime),
+        Err(TryLockError::WouldBlock) => Err(RuntimeError::Busy {
+            component: name.into(),
+        }),
+        Err(TryLockError::Poisoned(_)) => Err(RuntimeError::Poisoned),
+    }
+}
+
+fn enter_call(runtime: u64, target: &Target) -> Result<CallGuard, RuntimeError> {
+    let frame = Frame {
+        runtime,
+        component: target.component,
     };
-    wasi.preopened_dir(host, guest, dirs, files)?;
-    Ok(())
-}
-
-fn check_values(
-    signature: &Signature,
-    args: &[registry::Value],
-) -> Result<(), registry::InvokeError> {
-    if args.len() != signature.params.len() {
-        return Err(registry::InvokeError::TypeMismatch(format!(
-            "expected {} arguments, got {}",
-            signature.params.len(),
-            args.len()
-        )));
-    }
-    for (index, (value, expected)) in args.iter().zip(&signature.params).enumerate() {
-        if !dynamic_value_matches(value, expected) {
-            return Err(registry::InvokeError::TypeMismatch(format!(
-                "arg {index} expected {}, got {}",
-                type_name(expected),
-                value_name(value)
-            )));
+    CALL_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let runtime_depth = stack.iter().filter(|item| item.runtime == runtime).count();
+        if runtime_depth >= MAX_DEPTH {
+            return Err(RuntimeError::DepthLimit);
         }
+        if stack.contains(&frame) {
+            return Err(RuntimeError::Cycle {
+                component: target.component_name.clone(),
+            });
+        }
+        stack.push(frame);
+        Ok(CallGuard(frame))
+    })
+}
+
+fn instantiate_error(component: &str, source: anyhow::Error) -> RuntimeError {
+    RuntimeError::Instantiation {
+        component: component.into(),
+        source,
     }
+}
+
+fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyhow::Error> {
+    if !grant.host().is_dir() {
+        anyhow::bail!("host path {} is not a directory", grant.host().display());
+    }
+    let (dirs, files) = match grant.access() {
+        DirectoryAccess::ReadOnly => (DirPerms::READ, FilePerms::READ),
+        DirectoryAccess::ReadWrite => (DirPerms::all(), FilePerms::all()),
+    };
+    let guest = grant
+        .guest()
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("guest path is not UTF-8"))?;
+    wasi.preopened_dir(grant.host(), guest, dirs, files)?;
     Ok(())
 }
 
-fn dynamic_value_matches(value: &registry::Value, expected: &Type) -> bool {
-    match (value, expected) {
-        (registry::Value::Bool(_), Type::Bool)
-        | (registry::Value::S32(_), Type::S32)
-        | (registry::Value::U32(_), Type::U32)
-        | (registry::Value::String(_), Type::String) => true,
-        (registry::Value::List(_), Type::List(list)) => list.ty() == Type::String,
-        _ => false,
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Catalog, Policy};
+    use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
+    use wit_parser::{ManglingAndAbi, Resolve};
 
-fn value_name(value: &registry::Value) -> &str {
-    match value {
-        registry::Value::Bool(_) => "bool",
-        registry::Value::S32(_) => "s32",
-        registry::Value::U32(_) => "u32",
-        registry::Value::String(_) => "string",
-        registry::Value::List(_) => "list<string>",
+    fn provider_bytes() -> Vec<u8> {
+        let wit = r#"package demo:stack@0.1.0;
+interface api { run: func(); }
+world provider { export api; }"#;
+        let mut resolve = Resolve::new();
+        let package = resolve.push_str("stack.wit", wit).unwrap();
+        let world = resolve.packages[package].worlds["provider"];
+        let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+        embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+        ComponentEncoder::default()
+            .module(&module)
+            .unwrap()
+            .encode()
+            .unwrap()
     }
-}
 
-fn value_to_val(value: registry::Value) -> Val {
-    match value {
-        registry::Value::Bool(value) => Val::Bool(value),
-        registry::Value::S32(value) => Val::S32(value),
-        registry::Value::U32(value) => Val::U32(value),
-        registry::Value::String(value) => Val::String(value),
-        registry::Value::List(values) => Val::List(values.into_iter().map(Val::String).collect()),
-    }
-}
-
-fn val_to_value(value: Val) -> Result<registry::Value, registry::InvokeError> {
-    match value {
-        Val::Bool(value) => Ok(registry::Value::Bool(value)),
-        Val::S32(value) => Ok(registry::Value::S32(value)),
-        Val::U32(value) => Ok(registry::Value::U32(value)),
-        Val::String(value) => Ok(registry::Value::String(value)),
-        Val::List(values) => values
+    #[test]
+    fn call_guards_reject_cycles_and_depth_without_leaking_frames() {
+        let mut catalog = Catalog::new().unwrap();
+        let mut components = Vec::new();
+        let mut exports = Vec::new();
+        for index in 0..=MAX_DEPTH {
+            let component = catalog
+                .add(format!("provider-{index}"), provider_bytes())
+                .unwrap();
+            exports.push(
+                catalog
+                    .export(component, "demo:stack/api@0.1.0#run")
+                    .unwrap(),
+            );
+            components.push(component);
+        }
+        let mut policy = Policy::builder(&catalog);
+        for component in components {
+            policy = policy.include(component).unwrap();
+        }
+        let policy = policy.build();
+        let plan = Plan::new(catalog, policy).unwrap();
+        let targets = exports
             .into_iter()
-            .map(|value| match value {
-                Val::String(string) => Ok(string),
-                other => Err(registry::InvokeError::Trapped(format!(
-                    "unsupported list item {other:?}"
-                ))),
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(registry::Value::List),
-        other => Err(registry::InvokeError::Trapped(format!(
-            "unsupported result {other:?}"
-        ))),
-    }
-}
+            .map(|export| plan.target(export).unwrap())
+            .collect::<Vec<_>>();
 
-pub(crate) fn render_values(values: &[Val]) -> String {
-    match values {
-        [Val::Result(Ok(Some(value)))] => match value.as_ref() {
-            Val::String(value) => format!("{value:?}"),
-            other => format!("{other:?}"),
-        },
-        [Val::List(values)] => format!("{values:?}"),
-        other => format!("{other:?}"),
+        let first = enter_call(7, &targets[0]).unwrap();
+        assert!(matches!(
+            enter_call(7, &targets[0]),
+            Err(RuntimeError::Cycle { .. })
+        ));
+        drop(first);
+
+        let guards = targets[..MAX_DEPTH]
+            .iter()
+            .map(|target| enter_call(7, target).unwrap())
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            enter_call(7, &targets[MAX_DEPTH]),
+            Err(RuntimeError::DepthLimit)
+        ));
+        drop(guards);
+        assert!(enter_call(7, &targets[0]).is_ok());
     }
 }

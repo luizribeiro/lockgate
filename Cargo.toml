@@ -13,15 +13,13 @@ default-members = ["."]
 
 [dependencies]
 anyhow = "1.0.100"
-glob-match = "0.2.1"
-serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.10.9"
 thiserror = "2.0.19"
-toml = "0.9.8"
 wasmtime = { version = "47.0.3", features = ["component-model"] }
 wasmtime-wasi = "47.0.3"
 wit-component = "0.255.0"
 wit-parser = "0.255.0"
 
 [dev-dependencies]
+wat = "1.255.0"
 wit-component = { version = "0.255.0", features = ["dummy-module"] }
