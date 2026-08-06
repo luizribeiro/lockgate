@@ -1,8 +1,8 @@
 #[allow(unsafe_op_in_unsafe_fn)]
 mod bindings;
 
-use bindings::exports::demo::naughty::runner::Guest;
 use bindings::demo::greeter::greeter;
+use bindings::exports::demo::naughty::runner::Guest;
 
 struct Naughty;
 
