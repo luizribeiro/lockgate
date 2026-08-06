@@ -139,10 +139,9 @@ fn registry_import_requires_explicit_policy_authority() {
         )
         .unwrap();
     let policy = Policy::builder(&catalog).include(dynamic).unwrap().build();
-    let plan = Plan::new(catalog, policy).unwrap();
     assert!(matches!(
-        Runtime::new(plan),
-        Err(RuntimeError::RegistryDenied { .. })
+        Plan::new(catalog, policy),
+        Err(PlanError::RegistryNotEnabled { .. })
     ));
 }
 
@@ -161,6 +160,67 @@ fn unused_registry_authority_is_harmless() {
         .build();
     let plan = Plan::new(catalog, policy).unwrap();
     assert!(Runtime::new(plan).is_ok());
+}
+
+#[test]
+fn plan_rejects_ambiguous_and_unencodable_dynamic_grants() {
+    let provider_wit = r#"package demo:dynamic-types@0.1.0;
+interface api { run: func(value: s64) -> s64; }
+world provider { export api; }"#;
+    let mut catalog = Catalog::new().unwrap();
+    let dynamic = catalog
+        .add(
+            "dynamic",
+            component_bytes(include_str!("../wit/core.wit"), "consumer"),
+        )
+        .unwrap();
+    let provider = catalog
+        .add("provider", component_bytes(provider_wit, "provider"))
+        .unwrap();
+    let export = catalog
+        .export(provider, "demo:dynamic-types/api@0.1.0#run")
+        .unwrap();
+    let policy = Policy::builder(&catalog)
+        .allow_lookup(dynamic, export)
+        .unwrap()
+        .build();
+    assert!(matches!(
+        Plan::new(catalog, policy),
+        Err(PlanError::UnsupportedDynamicType { .. })
+    ));
+
+    let provider_wit = r#"package demo:dynamic-duplicate@0.1.0;
+interface api { run: func(value: string) -> string; }
+world provider { export api; }"#;
+    let mut catalog = Catalog::new().unwrap();
+    let dynamic = catalog
+        .add(
+            "dynamic",
+            component_bytes(include_str!("../wit/core.wit"), "consumer"),
+        )
+        .unwrap();
+    let first = catalog
+        .add("first", component_bytes(provider_wit, "provider"))
+        .unwrap();
+    let second = catalog
+        .add("second", component_bytes(provider_wit, "provider"))
+        .unwrap();
+    let first = catalog
+        .export(first, "demo:dynamic-duplicate/api@0.1.0#run")
+        .unwrap();
+    let second = catalog
+        .export(second, "demo:dynamic-duplicate/api@0.1.0#run")
+        .unwrap();
+    let policy = Policy::builder(&catalog)
+        .allow_lookup(dynamic, first)
+        .unwrap()
+        .allow_lookup(dynamic, second)
+        .unwrap()
+        .build();
+    assert!(matches!(
+        Plan::new(catalog, policy),
+        Err(PlanError::AmbiguousLookup { .. })
+    ));
 }
 
 #[test]

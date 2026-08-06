@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use wasmtime::component::types::Type;
 
+const REGISTRY_INTERFACE: &str = "tangent:core/registry@0.1.0";
+
 #[derive(Clone, Debug)]
 pub(crate) struct Target {
     pub(crate) component: ComponentId,
@@ -69,6 +71,8 @@ pub enum PlanError {
     AmbiguousLookup { caller: String, target: String },
     #[error("dynamic target `{target}` uses types unsupported by the registry encoding")]
     UnsupportedDynamicType { target: String },
+    #[error("component `{component}` imports the dynamic registry without enabling it")]
+    RegistryNotEnabled { component: String },
 }
 
 impl Plan {
@@ -132,6 +136,16 @@ impl Plan {
         for caller in policy.components() {
             let caller = *caller;
             let caller_entry = catalog.entry(caller)?;
+            if caller_entry
+                .imports
+                .iter()
+                .any(|import| import == REGISTRY_INTERFACE)
+                && !components.get(&caller).unwrap().registry
+            {
+                return Err(PlanError::RegistryNotEnabled {
+                    component: caller_entry.name.clone(),
+                });
+            }
             for import in &caller_entry.direct_imports {
                 let providers = links
                     .iter()
