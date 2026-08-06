@@ -1,3 +1,6 @@
+//! Host binary entry point.
+//! Declares the host modules and generates bindings for its one compile-time WIT dependency.
+
 use anyhow::Result;
 
 mod demo;

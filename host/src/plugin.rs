@@ -1,3 +1,6 @@
+//! Component discovery and structural WIT metadata.
+//! Decodes binaries, validates manifests against their worlds, and records callable targets.
+
 use crate::manifest::Manifest;
 use anyhow::{Context, Result, bail};
 use std::{collections::HashMap, fs, path::Path};

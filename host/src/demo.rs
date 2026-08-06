@@ -1,3 +1,6 @@
+//! Narrated demonstration orchestration.
+//! Loads the five fixture plugins, instantiates the valid ones, and prints each test call.
+
 use crate::{
     plugin::{self, print_load},
     runtime::{PluginTable, call_runner, instantiate, render_values},

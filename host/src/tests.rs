@@ -1,3 +1,6 @@
+//! Enforcement-focused tests for loading, linking, recursion, and fuel exhaustion.
+//! The component fixtures are built by the host build script and decoded where needed.
+
 use crate::{
     manifest::{Capabilities, FsCapability, Manifest, NetCapability},
     plugin::{Signature, Target, decode_imports},

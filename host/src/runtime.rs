@@ -1,3 +1,6 @@
+//! Isolated plugin execution and cross-plugin call enforcement.
+//! Builds stores and WASI contexts, wires typed imports, and implements the dynamic broker.
+
 use crate::{
     manifest::{Manifest, permitted},
     plugin::{PluginDefinition, Signature, Target, signature_text, target_key},
