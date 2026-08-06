@@ -4,10 +4,13 @@
 use anyhow::Result;
 use std::path::Path;
 
+pub mod catalog;
 mod demo;
 mod manifest;
 mod plugin;
 mod runtime;
+
+pub use catalog::{ArtifactDigest, Catalog, CatalogError, ComponentId, ComponentInfo, ExportId};
 
 wasmtime::component::bindgen!({ path: "wit", world: "consumer" });
 

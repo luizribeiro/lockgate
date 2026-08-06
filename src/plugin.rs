@@ -152,7 +152,10 @@ pub(crate) fn decode_imports(
     Ok(direct)
 }
 
-fn validate_wit_interface(resolve: &Resolve, interface: wit_parser::InterfaceId) -> Result<()> {
+pub(crate) fn validate_wit_interface(
+    resolve: &Resolve,
+    interface: wit_parser::InterfaceId,
+) -> Result<()> {
     for function in resolve.interfaces[interface].functions.values() {
         if function.kind.is_async() {
             bail!("async plugin functions are unsupported");
