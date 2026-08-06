@@ -2,6 +2,9 @@
 name = "lockgate"
 version = "0.1.0"
 edition = "2024"
+description = "Capability-scoped WebAssembly component applications"
+readme = "README.md"
+include = ["src/**", "wit/**", "Cargo.toml", "README.md"]
 
 [workspace]
 resolver = "3"
