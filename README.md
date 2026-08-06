@@ -15,12 +15,13 @@ Lockgate deliberately keeps three kinds of identity separate:
 Policy code therefore uses opaque catalog handles rather than names copied out of Wasm files:
 
 ```rust,no_run
-use lockgate::{Catalog, Policy};
+use lockgate::{Catalog, Plan, Policy, Runtime};
 
 # fn example(
 #     greeter_wasm: &[u8],
 #     caller_wasm: &[u8],
 #     dynamic_wasm: &[u8],
+#     shared_dir: &std::path::Path,
 # ) -> Result<(), Box<dyn std::error::Error>> {
 let mut catalog = Catalog::new()?;
 let greeter = catalog.add("greeter", greeter_wasm)?;
@@ -30,19 +31,26 @@ let greet = catalog.export(
     greeter,
     "demo:greeter/greeter@0.1.0#greet",
 )?;
+let caller_run = catalog.export(
+    caller,
+    "demo:caller/runner@0.1.0#run",
+)?;
 
 let policy = Policy::builder(&catalog)
     .link(caller, greeter)?
     .allow_lookup(dynamic, greet)?
-    .read_only_dir(caller, "./shared", "/shared")?
+    .read_only_dir(caller, shared_dir, "/shared")?
     .build();
 
-assert_eq!(policy.links().len(), 1);
+let plan = Plan::new(catalog, policy)?;
+let runtime = Runtime::new(plan)?;
+let values = runtime.call(caller_run, &[])?;
+assert_eq!(values.len(), 1);
 # Ok(())
 # }
 ```
 
-`Catalog` and the immutable `Policy` builder are public today. Runtime construction is still being extracted from the prototype internals. The demo's TOML manifests are a temporary adapter and fixture format; parsers and configuration-file formats are intentionally not part of Lockgate's core API.
+All four lifecycle stages are public. `Plan` performs deterministic, side-effect-free authority and structural-type validation; `Runtime` is the first stage allowed to instantiate or execute a component. Parsers and configuration-file formats remain outside Lockgate's core API.
 
 ## Repository layout
 
@@ -50,14 +58,16 @@ assert_eq!(policy.links().len(), 1);
 src/
   catalog.rs             artifact identity and decoded component metadata
   policy.rs              immutable programmatic grants
-  manifest.rs            temporary demo TOML adapter
-  plugin.rs              prototype loading and structural type discovery
+  plan.rs                provider resolution and complete preflight validation
+  plugin.rs              shared structural type validation helpers
   runtime.rs             isolated stores and broker forwarding
-  demo.rs                temporary narrated-demo adapter
+  runtime/dynamic.rs     optional runtime-typed registry broker
 wit/
   core.wit               optional dynamic registry owned by Lockgate
 examples/demo/
-  build.rs               builds and stages the demo components
+  build.rs               builds and stages executable demo components
+  src/policy.rs          application-assigned identity and authority
+  src/demo.rs            narrated calls and event rendering
   components/            five standalone Rust component crates
   packages/              checked-in versioned demo WIT package
   sandbox/               demo filesystem input
@@ -87,7 +97,7 @@ cargo test -p lockgate
 cargo test --workspace
 ```
 
-The root library has no build script and does not require `cargo-component` to compile or test. The example owns guest compilation. Its build script writes executable components and adjacent manifest copies to Cargo's `OUT_DIR`, then points the demo at that staged tree. Generated executable Wasm never lands beside component source.
+The root library has no build script and does not require `cargo-component` to compile or test. The example owns guest compilation and writes executable components to Cargo's `OUT_DIR`. Generated executable Wasm never lands beside component source.
 
 ## Two call paths
 
@@ -122,38 +132,42 @@ wkg wit build \
 
 Ordinary component builds consume that package and never regenerate it implicitly. This mirrors a registry release without requiring a private registry or duplicating dependency WIT under every component.
 
-## Prototype enforcement
+## Enforcement lifecycle
 
-At load, `wit_component::decode` reads the real embedded world. Imported capabilities must be a subset of declared authority; declaring an unused capability remains harmless. Every claimed export must exist, and plugin-defined interfaces are checked for supported synchronous cross-store types.
+`Catalog` hashes the exact bytes it compiles, then uses `wit_component::decode` to read the real embedded world. Application names, artifact digests, and embedded WIT names remain distinct. Unsupported cross-store types are rejected before Wasmtime's dynamic type introspection.
 
-At instantiation, each component receives its own Wasmtime `Store`, resource table, WASI context, handle table, and fuel budget. The host begins with no preopened directories and network access denied. For a typed component import it:
+`Policy` contains only catalog-owned handles. Grants automatically include their caller and provider; `.include(component)` adds a standalone component. An optional capability granted but not imported remains harmless.
 
-1. checks policy for each `interface#function`;
-2. resolves a provider from decoded exports;
+`Plan` validates every included component before any store exists. For each typed component import it:
+
+1. requires exactly one explicitly linked provider for the whole interface;
+2. resolves every required function from that exact provider artifact;
 3. structurally compares the caller's expected signature with the provider's actual signature;
-4. installs a `Linker::instance(...).func_new(...)` forwarding closure.
+4. rejects missing, ambiguous, incomplete, or mismatched links with named errors.
 
-The plugin table lives outside every store. Wasmtime 47 requires forwarding callbacks and store data to satisfy `Send` bounds, so the prototype uses `Arc<Mutex<...>>` with a separate lock per runtime. A thread-local call stack rejects cycles and depth greater than eight before locking a callee. Fuel exhaustion becomes a trapped call and marks the callee unhealthy without terminating the host.
+`Runtime` gives each component its own Wasmtime `Store`, resource table, WASI context, bounded dynamic handle table, and fuel budget. It installs typed imports with `Linker::instance(...).func_new(...)`, begins with no preopens and network denied, and emits typed `Event` values instead of printing. The application decides whether and how to log broker crossings.
 
-Filesystem paths in the demo manifests are relative to the staged example root. `./sandbox/shared` is mounted at `/shared`; nothing else is preopened. Networking remains fail-closed because Wasmtime's current socket callback exposes resolved addresses rather than the requested hostname.
+The runtime table lives outside every store. Wasmtime 47 requires forwarding callbacks and store data to satisfy `Send` bounds, so Lockgate uses `Arc<Mutex<...>>` with a separate lock per component. An identity-based RAII call stack rejects cycles and depth greater than eight before locking a callee, including mixed direct/dynamic chains. Fuel exhaustion becomes a trapped call, marks that component unhealthy, and leaves unrelated stores available.
+
+Directory grants require an existing host directory and a normalized absolute POSIX guest path. The host path is canonicalized when policy is built, and the complete guest path is preserved. The demo grants only its staged `sandbox/shared` directory at `/shared`. Networking remains fail-closed because Wasmtime's current socket callback exposes resolved addresses rather than the requested hostname.
 
 ## Add a demo component
 
 1. Copy a crate under `examples/demo/components/` and define its world in `wit/world.wit`.
 2. Depend on the root `tangent:core` WIT only if needed; use its import-free `plugin` world for ordinary components and `consumer` only for runtime-selected calls.
 3. For typed calls, add the provider's versioned WIT package as a cargo-component target dependency and call the generated Rust binding normally.
-4. Add the fixture manifest and application policy grants.
-5. Add the component ID to `IDS` in `examples/demo/build.rs` and `src/demo.rs` while the transitional adapter remains.
+4. Add the component in `examples/demo/src/policy.rs`, retain the returned handles, and grant only its required authority.
+5. Add the component ID to `IDS` in `examples/demo/build.rs`.
 6. Run `cargo run -p lockgate-demo`.
 
 ## Acceptance experiments
 
 - Inspect `examples/demo/components/caller/src/lib.rs`: it contains no dynamic `Value`, handle, or registry reference—only `greeter::greet`.
-- Remove caller's `invokes` entry. The current adapter refuses caller at instantiation with the complete target name.
-- Give caller and provider different signatures. Instantiation reports both structural types before greeter code runs.
-- Run the default demo. Naughty shows instantiation-time typed-import denial; dynamic shows an allowed runtime call followed by a runtime `denied`; the host continues.
+- Remove `.link(caller, greeter)` from the example policy. `Plan::new` refuses caller's real decoded import before any store exists.
+- Give caller and provider different signatures. Planning reports both structural types before guest code runs.
+- Run the default demo. Naughty shows a missing-authority plan refusal; dynamic shows an allowed exact lookup followed by an ungranted runtime `denied`; the host continues.
 - Change filereader's guest path away from `/shared`. WASI returns an error because no other directory is preopened.
-- Run `cargo test -p lockgate` for capability-subset, signature, unsupported-type, foreign-handle, policy, fuel, depth, and cycle coverage.
+- Run `cargo test -p lockgate` for identity, foreign handles/policies, directory validation, missing and ambiguous providers, complete structural signatures, unsupported types, fuel, health, depth, and cycle coverage.
 
 ## Current API substitutions and limits
 
@@ -161,6 +175,8 @@ The flake currently pins Rust 1.97.1, `cargo-component` 0.21.1, `wasm-tools` 1.2
 
 - Signature enforcement uses `Component::component_type()` and Wasmtime's recursive `component::types::Type` equality instead of a handwritten WIT shape model.
 - Wasmtime 47 links runtime-discovered imports with `Linker::instance(...).func_new(...)`; provider exports are resolved with `Instance::get_export_index` and called with `component::Func::call`.
+- Direct provider cycles are allowed because forwarding closures resolve stores only when called; runtime identity and component handles detect re-entry before a store lock. A component that calls an import during its own instantiation can still fail if the provider store is not available yet.
 - Resource handles and `error-context` cannot cross independent stores. Async functions, futures, and streams remain explicit non-goals.
 - Wasmtime 47's public dynamic type conversion does not expose fixed-length lists and currently contains a `todo!()` for them. Lockgate rejects those from decoded WIT before runtime introspection rather than panicking.
 - The optional dynamic registry intentionally supports only `bool`, `s32`, `u32`, `string`, and `list<string>`. Typed forwarding supports Wasmtime's broader structural value set.
+- Dynamic grants name an exact `ExportId`. Unknown and existing-but-ungranted target strings are both denied without revealing catalog contents; repeated allowed lookups reuse one per-store handle.
