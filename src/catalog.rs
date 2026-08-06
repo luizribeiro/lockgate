@@ -170,6 +170,16 @@ impl Catalog {
             .get(id.index)
             .ok_or(CatalogError::ForeignComponent)
     }
+
+    pub(crate) fn export_entry(&self, id: ExportId) -> Result<&ExportInfo, CatalogError> {
+        if id.catalog != self.identity {
+            return Err(CatalogError::ForeignComponent);
+        }
+        self.components
+            .get(id.component)
+            .and_then(|component| component.exports.get(id.export))
+            .ok_or(CatalogError::ForeignComponent)
+    }
 }
 
 impl ComponentInfo<'_> {

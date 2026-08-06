@@ -8,9 +8,11 @@ pub mod catalog;
 mod demo;
 mod manifest;
 mod plugin;
+pub mod policy;
 mod runtime;
 
 pub use catalog::{ArtifactDigest, Catalog, CatalogError, ComponentId, ComponentInfo, ExportId};
+pub use policy::{DirectoryAccess, Policy, PolicyBuilder, PolicyError};
 
 wasmtime::component::bindgen!({ path: "wit", world: "consumer" });
 
