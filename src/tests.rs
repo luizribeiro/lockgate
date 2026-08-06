@@ -1,5 +1,5 @@
 //! Prototype tests for loading, linking, recursion, and fuel exhaustion.
-//! The component fixtures are built by the host build script and decoded where needed.
+//! Small WIT and component fixtures keep the library tests independent from the demo guests.
 
 use crate::{
     manifest::{Capabilities, FsCapability, Manifest, NetCapability},
@@ -11,8 +11,6 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    fs,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 use wasmtime::{
@@ -20,9 +18,7 @@ use wasmtime::{
     component::{Component, Linker, ResourceTable, types::Type},
 };
 use wasmtime_wasi::WasiCtxBuilder;
-use wit_component::{
-    ComponentEncoder, DecodedWasm, StringEncoding, dummy_module, embed_component_metadata,
-};
+use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
 fn manifest(id: &str) -> Manifest {
@@ -53,13 +49,11 @@ fn target(plugin: &str) -> Target {
     }
 }
 
-fn decoded(id: &str) -> (Resolve, wit_parser::WorldId) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let bytes = fs::read(root.join("plugins").join(id).join(format!("{id}.wasm"))).unwrap();
-    match wit_component::decode(&bytes).unwrap() {
-        DecodedWasm::Component(resolve, world) => (resolve, world),
-        _ => panic!("not a component"),
-    }
+fn parsed_world(wit: &str) -> (Resolve, wit_parser::WorldId) {
+    let mut resolve = Resolve::new();
+    let package = resolve.push_str("fixture.wit", wit).unwrap();
+    let world = resolve.packages[package].worlds["fixture"];
+    (resolve, world)
 }
 
 fn signature_from_wit(engine: &Engine, wit: &str) -> Signature {
@@ -108,7 +102,11 @@ world fixture {{ export api; }}"#
 
 #[test]
 fn unused_declared_capability_is_harmless() {
-    let (resolve, world) = decoded("greeter");
+    let (resolve, world) = parsed_world(
+        r#"package demo:fixture@0.1.0;
+
+world fixture {}"#,
+    );
     let mut manifest = manifest("greeter");
     manifest.capabilities.registry = true;
     assert!(
@@ -120,7 +118,13 @@ fn unused_declared_capability_is_harmless() {
 
 #[test]
 fn registry_import_requires_explicit_capability() {
-    let (resolve, world) = decoded("dynamic");
+    let (resolve, world) = parsed_world(
+        r#"package tangent:core@0.1.0;
+
+interface registry {}
+
+world fixture { import registry; }"#,
+    );
     let error = decode_imports(&resolve, world, &manifest("dynamic")).unwrap_err();
     assert!(error.to_string().contains("tangent:core/registry"));
 }
