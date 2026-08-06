@@ -13,7 +13,7 @@ The host's only compile-time WIT knowledge is `tangent:core`. `demo:greeter` doe
 
 - `main.rs` declares the modules and generated core binding, then starts the demo.
 - `manifest.rs` defines capability policy and target matching.
-- `plugin.rs` decodes component WIT, verifies manifests, and records structural types.
+- `plugin.rs` decodes component WIT, verifies manifests, and records Wasmtime's runtime component types.
 - `runtime.rs` owns isolated stores, WASI setup, direct forwarding, and the dynamic broker.
 - `demo.rs` loads the five fixtures and prints the narrated transcript.
 - `tests.rs` exercises the enforcement boundaries.
@@ -69,7 +69,7 @@ The greeter interface is distributed once as `packages/demo-greeter-0.1.0.wasm`.
 1. `wit_component::decode` reads the real world embedded in each component.
 2. Imports must be a subset of declared capabilities. An imported registry requires `capabilities.registry = true`; filesystem and socket imports require their corresponding tables. Declaring an unused capability is harmless.
 3. Every `provides` claim must be a real component export. Extra exports are not registered unless claimed.
-4. The host records each claimed function's structural parameter and result shapes. Plugin-defined imports are recorded for the next phase rather than linked yet.
+4. The host reads each claimed function's complete parameter and result types from `Component::component_type()`. Plugin-defined imports are recorded for the next phase rather than linked yet.
 
 The preview1 adapter adds baseline WASI CLI, I/O, clock, and filesystem type imports even for simple guests. All plugins therefore declare an empty filesystem table; only filereader receives a path.
 
@@ -81,7 +81,7 @@ For every plugin-defined direct import, the host:
 
 1. Checks each `interface#function` against the caller's `invokes` globs.
 2. Resolves its provider from the decoded registry.
-3. Structurally compares the caller's expected signature with the provider's actual signature.
+3. Structurally compares the caller's expected signature with the provider's actual signature using Wasmtime's `Type` equality.
 4. Creates the imported interface with `Linker::instance` and each function with `func_new`.
 
 The forwarding callback receives `&[component::Val]`, calls the provider export on its separate store, and moves the returned values into the caller's result slice. Wasmtime lowers and lifts those values through the statically typed guest bindings at both ends.
@@ -127,12 +127,14 @@ Networking remains fail-closed in this five-plugin prototype. Socket imports req
 5. Add the ID to `IDS` in `host/src/demo.rs` and to the list in `host/build.rs`.
 6. Run `cargo run` in `host`.
 
-The dynamic registry encoding deliberately supports only `bool`, `s32`, `u32`, `string`, and `list<string>`. Direct forwarding is not limited to this encoding; it passes component values after structural signature matching.
+The dynamic registry encoding deliberately supports only `bool`, `s32`, `u32`, `string`, and `list<string>`. Direct forwarding is not limited to this encoding: Wasmtime compares and transports primitives, lists, maps, records, tuples, variants, enums, options, results, and flags without flattening them into strings.
+
+Resource handles and `error-context` values are rejected because they belong to a particular store and cannot be moved directly into another plugin's store. Async functions, futures, and streams remain explicit non-goals. Fixed-length lists are also rejected cleanly because Wasmtime 47's public dynamic `Type` conversion does not expose them yet.
 
 ## Acceptance experiments
 
 - Inspect `plugins/caller/src/lib.rs`: it contains no `Value`, handle, or registry reference, only `greeter::greet`.
-- Run `cargo test`. The direct-import test gives caller and provider different structural signatures and verifies that instantiation resolution reports both expected and provided types. Legitimate local guests cannot drift accidentally because they compile against the same immutable package; independently distributed or dishonest components are still checked from their decoded binaries.
+- Run `cargo test`. The direct-import tests give caller and provider different primitive and nested record/variant/enum/flags signatures, then verify that resolution reports both complete types. Legitimate local guests cannot drift accidentally because they compile against the same immutable package; independently distributed or dishonest components are still checked from their decoded binaries.
 - Remove caller's `invokes` entry. Caller is refused at instantiation with the target name.
 - Run the default demo. Naughty shows instantiation-time direct-import denial; dynamic shows an allowed runtime call followed by a runtime `denied`; the host continues.
 - The test suite also covers unused capability declarations, missing registry capability, fuel exhaustion/unhealthy state, depth, and cycle guards.
@@ -145,6 +147,8 @@ The flake currently pins Rust 1.97.1, `cargo-component` 0.21.1, `wasm-tools` 1.2
 - Current WIT rejects the original recursive `value` case `list(list<value>)`; the unused nested case is represented as `list<string>`. Keyword cases require `%s32` and `%u32` escapes.
 - Local cargo-component worlds use `[package.metadata.component.target]` and `[package.metadata.component.target.dependencies]`.
 - `wkg wit build` packages editable WIT as a component binary; cargo-component 0.21.1 accepts that binary as a target dependency and generates normal Rust bindings from it.
+- Signature enforcement uses `Component::component_type()` and `wasmtime::component::types::Type` instead of a handwritten WIT shape model. Wasmtime's handle-backed type equality recursively compares types originating from different component binaries.
+- Wasmtime 47 has a `todo!()` when converting fixed-length lists through this dynamic type API, so the decoded WIT is checked first and load fails with a named unsupported-type error instead of panicking.
 - Wasmtime 47 links generated imports with `HasSelf`, exposes Preview 2 through `wasmtime_wasi::p2::add_to_linker_sync`, and accesses context state through `WasiCtxView`.
 - Dynamic direct imports use `Linker::instance(...).func_new(...)`. Nested provider exports are resolved with `Instance::get_export_index`, called with `component::Func::call`, and sized through `Func::ty().results()`.
 - `Arc<Mutex<...>>` replaces the proposed `Rc<RefCell<...>>` because of Wasmtime 47's required callback and store bounds.
