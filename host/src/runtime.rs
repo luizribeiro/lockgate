@@ -3,7 +3,7 @@
 
 use crate::{
     manifest::Manifest,
-    plugin::{PluginDefinition, Signature, Target},
+    plugin::{PluginDefinition, Signature, Target, type_name},
     tangent::core::registry,
 };
 use anyhow::{Context, Result, bail};
@@ -15,7 +15,7 @@ use std::{
 };
 use wasmtime::{
     Engine, Store,
-    component::{HasSelf, Instance, Linker, ResourceTable, Val},
+    component::{HasSelf, Instance, Linker, ResourceTable, Val, types::Type},
 };
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
@@ -319,14 +319,26 @@ fn check_values(
         )));
     }
     for (index, (value, expected)) in args.iter().zip(&signature.params).enumerate() {
-        if value_name(value) != expected {
+        if !dynamic_value_matches(value, expected) {
             return Err(registry::InvokeError::TypeMismatch(format!(
-                "arg {index} expected {expected}, got {}",
+                "arg {index} expected {}, got {}",
+                type_name(expected),
                 value_name(value)
             )));
         }
     }
     Ok(())
+}
+
+fn dynamic_value_matches(value: &registry::Value, expected: &Type) -> bool {
+    match (value, expected) {
+        (registry::Value::Bool(_), Type::Bool)
+        | (registry::Value::S32(_), Type::S32)
+        | (registry::Value::U32(_), Type::U32)
+        | (registry::Value::String(_), Type::String) => true,
+        (registry::Value::List(_), Type::List(list)) => list.ty() == Type::String,
+        _ => false,
+    }
 }
 
 fn value_name(value: &registry::Value) -> &str {

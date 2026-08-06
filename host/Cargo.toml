@@ -13,3 +13,6 @@ wasmtime = { version = "47.0.3", features = ["component-model"] }
 wasmtime-wasi = "47.0.3"
 wit-component = "0.255.0"
 wit-parser = "0.255.0"
+
+[dev-dependencies]
+wit-component = { version = "0.255.0", features = ["dummy-module"] }
