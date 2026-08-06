@@ -1,8 +1,11 @@
+//! Builds each guest component before compiling the host demo.
+
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("..");
     println!("cargo:rerun-if-changed={}", root.join("wit").display());
+    println!("cargo:rerun-if-changed={}", root.join("packages").display());
     for id in ["greeter", "caller", "filereader", "naughty", "dynamic"] {
         let dir = root.join("plugins").join(id);
         let manifest = dir.join("Cargo.toml");

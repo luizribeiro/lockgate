@@ -35,6 +35,16 @@ cargo run
 
 The build script builds all five Rust guests with `cargo component` and places each ignored `.wasm` beside its `plugin.toml`. Run the enforcement tests with `cargo test`.
 
+The greeter contract has one editable source at `wit/packages/greeter/package.wit`. Its checked-in, versioned distribution artifact is `packages/demo-greeter-0.1.0.wasm`; greeter, caller, and naughty all generate bindings from that 297-byte WIT package component. Rebuild it explicitly when publishing a contract version:
+
+```console
+wkg wit build \
+  --wit-dir wit/packages/greeter \
+  --output packages/demo-greeter-0.1.0.wasm
+```
+
+This local package stands in for a registry release, so ordinary guest builds never regenerate it implicitly.
+
 ## Worlds
 
 `wit/core.wit` defines an import-free base and an opt-in consumer:
@@ -50,7 +60,7 @@ world consumer {
 
 Greeter and filereader include `plugin` and have no registry import. Caller also includes `plugin`, then directly imports greeter. Only dynamic includes `consumer`.
 
-Caller and naughty carry a local snapshot of the greeter interface under `wit/deps`. That represents the interface each consumer was compiled against. Changing the provider's WIT therefore produces an instantiation mismatch rather than silently recompiling consumers against the new signature.
+The greeter interface is distributed once as `packages/demo-greeter-0.1.0.wasm`. Greeter exports that package's interface, while caller and naughty import it. This mirrors a registry dependency without requiring a registry service or duplicating WIT source under each consumer.
 
 ## Enforcement sequence
 
@@ -112,7 +122,7 @@ Networking remains fail-closed in this five-plugin prototype. Socket imports req
 
 1. Copy a directory under `plugins/` and define its exports in `wit/world.wit`.
 2. Include `tangent:core/plugin@0.1.0`. Include `consumer` instead only if the target truly is runtime-selected.
-3. For direct calls, add the imported package WIT under `wit/deps`, import its interface in the world, and call its generated Rust bindings normally.
+3. For direct calls, add the versioned WIT package component under `package.metadata.component.target.dependencies`, import its interface in the world, and call its generated Rust bindings normally.
 4. Make `provides`, `invokes`, and capabilities describe the component's authority.
 5. Add the ID to `IDS` in `host/src/demo.rs` and to the list in `host/build.rs`.
 6. Run `cargo run` in `host`.
@@ -122,18 +132,19 @@ The dynamic registry encoding deliberately supports only `bool`, `s32`, `u32`, `
 ## Acceptance experiments
 
 - Inspect `plugins/caller/src/lib.rs`: it contains no `Value`, handle, or registry reference, only `greeter::greet`.
-- Change greeter's `greet` parameter to `s32` and update only greeter's Rust implementation. Caller retains its string snapshot and is refused at instantiation with both expected and provided signatures.
+- Run `cargo test`. The direct-import test gives caller and provider different structural signatures and verifies that instantiation resolution reports both expected and provided types. Legitimate local guests cannot drift accidentally because they compile against the same immutable package; independently distributed or dishonest components are still checked from their decoded binaries.
 - Remove caller's `invokes` entry. Caller is refused at instantiation with the target name.
 - Run the default demo. Naughty shows instantiation-time direct-import denial; dynamic shows an allowed runtime call followed by a runtime `denied`; the host continues.
-- Run `cargo test`. Tests cover unused capability declarations, missing registry capability, direct policy and signature mismatches, fuel exhaustion/unhealthy state, depth, and cycle guards.
+- The test suite also covers unused capability declarations, missing registry capability, fuel exhaustion/unhealthy state, depth, and cycle guards.
 - Change filereader's guest path away from `/shared`. WASI returns an error because no other directory is preopened.
 
 ## Current API substitutions
 
-The flake currently pins Rust 1.97.1, `cargo-component` 0.21.1, and `wasm-tools` 1.254.0. Rust dependencies pin Wasmtime 47.0.3 and `wit-component`/`wit-parser` 0.255.0.
+The flake currently pins Rust 1.97.1, `cargo-component` 0.21.1, `wasm-tools` 1.254.0, and `wkg` 0.15.1. Rust dependencies pin Wasmtime 47.0.3 and `wit-component`/`wit-parser` 0.255.0.
 
 - Current WIT rejects the original recursive `value` case `list(list<value>)`; the unused nested case is represented as `list<string>`. Keyword cases require `%s32` and `%u32` escapes.
 - Local cargo-component worlds use `[package.metadata.component.target]` and `[package.metadata.component.target.dependencies]`.
+- `wkg wit build` packages editable WIT as a component binary; cargo-component 0.21.1 accepts that binary as a target dependency and generates normal Rust bindings from it.
 - Wasmtime 47 links generated imports with `HasSelf`, exposes Preview 2 through `wasmtime_wasi::p2::add_to_linker_sync`, and accesses context state through `WasiCtxView`.
 - Dynamic direct imports use `Linker::instance(...).func_new(...)`. Nested provider exports are resolved with `Instance::get_export_index`, called with `component::Func::call`, and sized through `Func::ty().results()`.
 - `Arc<Mutex<...>>` replaces the proposed `Rc<RefCell<...>>` because of Wasmtime 47's required callback and store bounds.
