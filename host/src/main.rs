@@ -16,6 +16,9 @@ use wit_parser::{Resolve, Type, TypeDefKind, WorldItem};
 wasmtime::component::bindgen!({ path: "../wit", world: "plugin" });
 use crate::tangent::core::registry;
 
+#[cfg(test)]
+mod tests;
+
 const FUEL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
 const IDS: [&str; 4] = ["greeter", "caller", "filereader", "naughty"];
@@ -202,11 +205,12 @@ fn call_target(
         Ok(values) => values.into_iter().map(val_to_value).collect(),
         Err(error) => {
             runtime.healthy = false;
+            let error = format!("{error:#}");
             println!(
                 "  [broker] {caller} -> {}  TRAPPED ({error})",
                 target_key(target)
             );
-            Err(registry::InvokeError::Trapped(error.to_string()))
+            Err(registry::InvokeError::Trapped(error))
         }
     }
 }
