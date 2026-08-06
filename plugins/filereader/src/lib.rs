@@ -1,4 +1,4 @@
-#[allow(warnings)]
+#[allow(unsafe_op_in_unsafe_fn)]
 mod bindings;
 
 use bindings::exports::demo::filereader::runner::Guest;
