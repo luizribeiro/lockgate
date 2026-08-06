@@ -28,58 +28,71 @@ thread_local! {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[rustfmt::skip]
 struct Manifest {
-    id: String, #[serde(default)] provides: Vec<String>, #[serde(default)] invokes: Vec<String>,
+    id: String,
+    #[serde(default)]
+    provides: Vec<String>,
+    #[serde(default)]
+    invokes: Vec<String>,
     capabilities: Capabilities,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-#[rustfmt::skip]
 struct Capabilities {
-    #[serde(default)] registry: bool, fs: Option<FsCapability>, net: Option<NetCapability>,
+    #[serde(default)]
+    registry: bool,
+    fs: Option<FsCapability>,
+    net: Option<NetCapability>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[rustfmt::skip]
 struct FsCapability {
-    #[serde(default)] read: Vec<String>, #[serde(default)] write: Vec<String>,
+    #[serde(default)]
+    read: Vec<String>,
+    #[serde(default)]
+    write: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[rustfmt::skip]
 struct NetCapability {
-    #[serde(default)] hosts: Vec<String>,
+    #[serde(default)]
+    hosts: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[rustfmt::skip]
 struct Signature {
-    params: Vec<String>, result: Option<String>,
+    params: Vec<String>,
+    result: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-#[rustfmt::skip]
 struct Target {
-    plugin: String, interface: String, function: String, signature: Signature,
+    plugin: String,
+    interface: String,
+    function: String,
+    signature: Signature,
 }
 
 #[derive(Clone, Debug)]
-#[rustfmt::skip]
 struct DirectImport {
-    interface: String, functions: Vec<(String, Signature)>,
+    interface: String,
+    functions: Vec<(String, Signature)>,
 }
 
-#[rustfmt::skip]
 struct PluginDefinition {
-    manifest: Manifest, component: Component, targets: Vec<(String, Target)>,
+    manifest: Manifest,
+    component: Component,
+    targets: Vec<(String, Target)>,
     direct_imports: Vec<DirectImport>,
 }
 
-#[rustfmt::skip]
 struct PluginState {
-    manifest: Manifest, wasi: WasiCtx, table: ResourceTable, plugins: Weak<Mutex<PluginTable>>,
-    handles: HashMap<u32, Target>, next_handle: u32,
+    manifest: Manifest,
+    wasi: WasiCtx,
+    table: ResourceTable,
+    plugins: Weak<Mutex<PluginTable>>,
+    handles: HashMap<u32, Target>,
+    next_handle: u32,
 }
 
 impl WasiView for PluginState {
@@ -91,12 +104,17 @@ impl WasiView for PluginState {
     }
 }
 
-#[rustfmt::skip]
-struct PluginRuntime { store: Store<PluginState>, instance: Instance, healthy: bool }
+struct PluginRuntime {
+    store: Store<PluginState>,
+    instance: Instance,
+    healthy: bool,
+}
 
 #[derive(Default)]
-#[rustfmt::skip]
-struct PluginTable { targets: HashMap<String, Target>, runtimes: HashMap<String, Arc<Mutex<PluginRuntime>>> }
+struct PluginTable {
+    targets: HashMap<String, Target>,
+    runtimes: HashMap<String, Arc<Mutex<PluginRuntime>>>,
+}
 
 impl registry::Host for PluginState {
     fn lookup(&mut self, target: String) -> Result<u32, registry::InvokeError> {
@@ -120,26 +138,35 @@ impl registry::Host for PluginState {
         Ok(handle)
     }
 
-    #[rustfmt::skip]
-    fn invoke(&mut self, handle: u32, args: Vec<registry::Value>)
-        -> Result<Vec<registry::Value>, registry::InvokeError> {
+    fn invoke(
+        &mut self,
+        handle: u32,
+        args: Vec<registry::Value>,
+    ) -> Result<Vec<registry::Value>, registry::InvokeError> {
         let Some(target) = self.handles.get(&handle).cloned() else {
-            return Err(registry::InvokeError::Denied(format!("unknown handle {handle}")));
+            return Err(registry::InvokeError::Denied(format!(
+                "unknown handle {handle}"
+            )));
         };
         check_values(&target.signature, &args)?;
         let Some(plugins) = self.plugins.upgrade() else {
-            return Err(registry::InvokeError::Trapped("plugin table unavailable".into()));
+            return Err(registry::InvokeError::Trapped(
+                "plugin table unavailable".into(),
+            ));
         };
         let params = args.into_iter().map(value_to_val).collect::<Vec<_>>();
         invoke_target(&plugins, &target, &params)
             .map_err(|error| registry::InvokeError::Trapped(format!("{error:#}")))?
-            .into_iter().map(val_to_value).collect()
+            .into_iter()
+            .map(val_to_value)
+            .collect()
     }
 }
 
-#[rustfmt::skip]
 fn main() -> Result<()> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").canonicalize()?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .canonicalize()?;
     let mut config = Config::new();
     config.wasm_component_model(true).consume_fuel(true);
     let engine = Engine::new(&config)?;
@@ -150,7 +177,11 @@ fn main() -> Result<()> {
         match load_plugin(&engine, &root, id) {
             Ok(definition) => {
                 print_load(&definition);
-                plugins.lock().unwrap().targets.extend(definition.targets.clone());
+                plugins
+                    .lock()
+                    .unwrap()
+                    .targets
+                    .extend(definition.targets.clone());
                 definitions.push(definition);
             }
             Err(error) => println!("[load] {id:<12} REFUSED {error:#}"),
@@ -161,24 +192,46 @@ fn main() -> Result<()> {
     for definition in definitions {
         let id = definition.manifest.id.clone();
         match instantiate(&root, &plugins, &engine, definition) {
-            Ok(runtime) => { plugins.lock().unwrap().runtimes.insert(id, Arc::new(Mutex::new(runtime))); }
+            Ok(runtime) => {
+                plugins
+                    .lock()
+                    .unwrap()
+                    .runtimes
+                    .insert(id, Arc::new(Mutex::new(runtime)));
+            }
             Err(error) => println!("[instantiate] {id:<8} REFUSED {error:#}"),
         }
     }
 
-    run_and_print(&plugins, "caller", "demo:caller/runner@0.1.0", "caller.run()")?;
-    run_and_print(&plugins, "filereader", "demo:filereader/runner@0.1.0", "filereader.run()")?;
+    run_and_print(
+        &plugins,
+        "caller",
+        "demo:caller/runner@0.1.0",
+        "caller.run()",
+    )?;
+    run_and_print(
+        &plugins,
+        "filereader",
+        "demo:filereader/runner@0.1.0",
+        "filereader.run()",
+    )?;
     println!("\n[call] naughty.run()\n  => unavailable (undeclared direct import was refused)");
-    run_and_print(&plugins, "dynamic", "demo:dynamic/runner@0.1.0", "dynamic.run()")?;
+    run_and_print(
+        &plugins,
+        "dynamic",
+        "demo:dynamic/runner@0.1.0",
+        "dynamic.run()",
+    )?;
     println!("\n[host] still running");
     Ok(())
 }
 
-#[rustfmt::skip]
 fn load_plugin(engine: &Engine, root: &Path, id: &str) -> Result<PluginDefinition> {
     let dir = root.join("plugins").join(id);
     let manifest: Manifest = toml::from_str(&fs::read_to_string(dir.join("plugin.toml"))?)?;
-    if manifest.id != id { bail!("manifest id {:?} does not match directory", manifest.id); }
+    if manifest.id != id {
+        bail!("manifest id {:?} does not match directory", manifest.id);
+    }
     let bytes = fs::read(dir.join(format!("{id}.wasm"))).context("component binary missing")?;
     let DecodedWasm::Component(resolve, world) = wit_component::decode(&bytes)? else {
         bail!("binary is not a component");
@@ -186,7 +239,9 @@ fn load_plugin(engine: &Engine, root: &Path, id: &str) -> Result<PluginDefinitio
     let direct_imports = decode_imports(&resolve, world, &manifest)?;
     let exports = exported_interfaces(&resolve, world)?;
     for provided in &manifest.provides {
-        if !exports.contains_key(provided) { bail!("manifest provides {provided}, but component does not export it"); }
+        if !exports.contains_key(provided) {
+            bail!("manifest provides {provided}, but component does not export it");
+        }
     }
     let mut targets = Vec::new();
     for provided in &manifest.provides {
@@ -484,9 +539,11 @@ fn preopen(root: &Path, wasi: &mut WasiCtxBuilder, path: &str, writable: bool) -
     Ok(())
 }
 
-#[rustfmt::skip]
 fn permitted(manifest: &Manifest, target: &str) -> bool {
-    manifest.invokes.iter().any(|pattern| glob_match::glob_match(pattern, target))
+    manifest
+        .invokes
+        .iter()
+        .any(|pattern| glob_match::glob_match(pattern, target))
 }
 
 fn signature(resolve: &Resolve, function: &wit_parser::Function) -> Signature {
@@ -500,31 +557,63 @@ fn signature(resolve: &Resolve, function: &wit_parser::Function) -> Signature {
     }
 }
 
-#[rustfmt::skip]
 fn type_shape(resolve: &Resolve, ty: Type) -> String {
     match ty {
-        Type::Bool => "bool".into(), Type::U8 => "u8".into(), Type::U16 => "u16".into(),
-        Type::U32 => "u32".into(), Type::U64 => "u64".into(), Type::S8 => "s8".into(),
-        Type::S16 => "s16".into(), Type::S32 => "s32".into(), Type::S64 => "s64".into(),
-        Type::F32 => "f32".into(), Type::F64 => "f64".into(), Type::Char => "char".into(),
-        Type::String => "string".into(), Type::ErrorContext => "error-context".into(),
+        Type::Bool => "bool".into(),
+        Type::U8 => "u8".into(),
+        Type::U16 => "u16".into(),
+        Type::U32 => "u32".into(),
+        Type::U64 => "u64".into(),
+        Type::S8 => "s8".into(),
+        Type::S16 => "s16".into(),
+        Type::S32 => "s32".into(),
+        Type::S64 => "s64".into(),
+        Type::F32 => "f32".into(),
+        Type::F64 => "f64".into(),
+        Type::Char => "char".into(),
+        Type::String => "string".into(),
+        Type::ErrorContext => "error-context".into(),
         Type::Id(id) => match &resolve.types[id].kind {
             TypeDefKind::Type(ty) => type_shape(resolve, *ty),
             TypeDefKind::List(ty) => format!("list<{}>", type_shape(resolve, *ty)),
             TypeDefKind::Option(ty) => format!("option<{}>", type_shape(resolve, *ty)),
-            TypeDefKind::Tuple(t) => format!("tuple<{}>", t.types.iter().map(|ty| type_shape(resolve, *ty)).collect::<Vec<_>>().join(",")),
-            TypeDefKind::Record(r) => format!("record{{{}}}", r.fields.iter().map(|f| format!("{}:{}", f.name, type_shape(resolve, f.ty))).collect::<Vec<_>>().join(",")),
-            TypeDefKind::Result(r) => format!("result<{},{}>", r.ok.map(|ty| type_shape(resolve, ty)).unwrap_or_default(), r.err.map(|ty| type_shape(resolve, ty)).unwrap_or_default()),
+            TypeDefKind::Tuple(t) => format!(
+                "tuple<{}>",
+                t.types
+                    .iter()
+                    .map(|ty| type_shape(resolve, *ty))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            TypeDefKind::Record(r) => format!(
+                "record{{{}}}",
+                r.fields
+                    .iter()
+                    .map(|f| format!("{}:{}", f.name, type_shape(resolve, f.ty)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            TypeDefKind::Result(r) => format!(
+                "result<{},{}>",
+                r.ok.map(|ty| type_shape(resolve, ty)).unwrap_or_default(),
+                r.err.map(|ty| type_shape(resolve, ty)).unwrap_or_default()
+            ),
             kind => kind.as_str().into(),
         },
     }
 }
 
-#[rustfmt::skip]
-fn signature_text(s: &Signature) -> String { format!("({}) -> {}", s.params.join(", "), s.result.as_deref().unwrap_or("()")) }
+fn signature_text(s: &Signature) -> String {
+    format!(
+        "({}) -> {}",
+        s.params.join(", "),
+        s.result.as_deref().unwrap_or("()")
+    )
+}
 
-#[rustfmt::skip]
-fn target_key(target: &Target) -> String { format!("{}#{}", target.interface, target.function) }
+fn target_key(target: &Target) -> String {
+    format!("{}#{}", target.interface, target.function)
+}
 
 fn check_values(
     signature: &Signature,
@@ -548,7 +637,6 @@ fn check_values(
     Ok(())
 }
 
-#[rustfmt::skip]
 fn value_name(value: &registry::Value) -> &str {
     match value {
         registry::Value::Bool(_) => "bool",
@@ -559,7 +647,6 @@ fn value_name(value: &registry::Value) -> &str {
     }
 }
 
-#[rustfmt::skip]
 fn value_to_val(value: registry::Value) -> Val {
     match value {
         registry::Value::Bool(v) => Val::Bool(v),
@@ -570,24 +657,39 @@ fn value_to_val(value: registry::Value) -> Val {
     }
 }
 
-#[rustfmt::skip]
 fn val_to_value(value: Val) -> Result<registry::Value, registry::InvokeError> {
     match value {
-        Val::Bool(v) => Ok(registry::Value::Bool(v)), Val::S32(v) => Ok(registry::Value::S32(v)),
-        Val::U32(v) => Ok(registry::Value::U32(v)), Val::String(v) => Ok(registry::Value::String(v)),
-        Val::List(v) => v.into_iter().map(|v| match v { Val::String(s) => Ok(s), other => Err(registry::InvokeError::Trapped(format!("unsupported list item {other:?}"))) }).collect::<Result<Vec<_>, _>>().map(registry::Value::List),
-        other => Err(registry::InvokeError::Trapped(format!("unsupported result {other:?}"))),
+        Val::Bool(v) => Ok(registry::Value::Bool(v)),
+        Val::S32(v) => Ok(registry::Value::S32(v)),
+        Val::U32(v) => Ok(registry::Value::U32(v)),
+        Val::String(v) => Ok(registry::Value::String(v)),
+        Val::List(v) => v
+            .into_iter()
+            .map(|v| match v {
+                Val::String(s) => Ok(s),
+                other => Err(registry::InvokeError::Trapped(format!(
+                    "unsupported list item {other:?}"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(registry::Value::List),
+        other => Err(registry::InvokeError::Trapped(format!(
+            "unsupported result {other:?}"
+        ))),
     }
 }
 
-#[rustfmt::skip]
 fn print_load(definition: &PluginDefinition) {
     let id = &definition.manifest.id;
-    let targets = definition.targets.iter().map(|(_, t)| format!("{}{}", target_key(t), signature_text(&t.signature))).collect::<Vec<_>>().join(", ");
+    let targets = definition
+        .targets
+        .iter()
+        .map(|(_, t)| format!("{}{}", target_key(t), signature_text(&t.signature)))
+        .collect::<Vec<_>>()
+        .join(", ");
     println!("[load] {id:<12} ok   provides {targets}");
 }
 
-#[rustfmt::skip]
 fn render_values(values: &[Val]) -> String {
     match values {
         [Val::Result(Ok(Some(value)))] => match value.as_ref() {
