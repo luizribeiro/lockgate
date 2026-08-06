@@ -1,4 +1,4 @@
-//! Temporary binary entry point for the narrated Lockgate prototype.
+//! Runs the narrated end-to-end Lockgate prototype.
 
 use anyhow::Result;
 

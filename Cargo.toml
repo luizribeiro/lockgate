@@ -4,6 +4,19 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 
+[workspace]
+resolver = "3"
+members = ["examples/demo"]
+exclude = [
+  "plugins/caller",
+  "plugins/dynamic",
+  "plugins/filereader",
+  "plugins/greeter",
+  "plugins/naughty",
+  "examples/demo/components/*",
+]
+default-members = ["."]
+
 [dependencies]
 anyhow = "1.0.100"
 glob-match = "0.2.1"
