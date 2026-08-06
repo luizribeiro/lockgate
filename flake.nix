@@ -27,6 +27,7 @@
             rust
             cargo-component
             wasm-tools
+            wkg
           ];
 
           RUST_BACKTRACE = "1";

@@ -1,0 +1,6 @@
+// The canonical, versioned contract shared by greeter and its consumers.
+package demo:greeter@0.1.0;
+
+interface greeter {
+  greet: func(name: string) -> string;
+}

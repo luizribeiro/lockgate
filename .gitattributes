@@ -1,1 +1,2 @@
 **/src/bindings.rs linguist-generated=true
+packages/*.wasm binary linguist-generated=true
