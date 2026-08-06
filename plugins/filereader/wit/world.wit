@@ -1,0 +1,10 @@
+package demo:filereader@0.1.0;
+
+interface runner {
+  run: func() -> result<string, string>;
+}
+
+world plugin {
+  import tangent:core/registry@0.1.0;
+  export runner;
+}

@@ -1,0 +1,10 @@
+package demo:greeter@0.1.0;
+
+interface greeter {
+  greet: func(name: string) -> string;
+}
+
+world plugin {
+  import tangent:core/registry@0.1.0;
+  export greeter;
+}

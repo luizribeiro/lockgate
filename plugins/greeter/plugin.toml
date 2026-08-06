@@ -1,0 +1,10 @@
+id = "greeter"
+provides = ["demo:greeter/greeter@0.1.0"]
+invokes = []
+
+[capabilities.fs]
+read = []
+write = []
+
+[capabilities.net]
+hosts = []

@@ -1,0 +1,25 @@
+package tangent:core@0.1.0;
+
+interface registry {
+  variant value {
+    %bool(bool),
+    %s32(s32),
+    %u32(u32),
+    %string(string),
+    %list(list<string>),
+  }
+
+  variant invoke-error {
+    not-found(string),
+    denied(string),
+    type-mismatch(string),
+    trapped(string),
+  }
+
+  lookup: func(target: string) -> result<u32, invoke-error>;
+  invoke: func(handle: u32, args: list<value>) -> result<list<value>, invoke-error>;
+}
+
+world plugin {
+  import registry;
+}

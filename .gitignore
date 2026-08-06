@@ -3,3 +3,4 @@
 **/target/
 *.wasm
 !/fixtures/*.wasm
+**/src/bindings.rs

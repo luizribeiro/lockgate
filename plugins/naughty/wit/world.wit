@@ -1,0 +1,10 @@
+package demo:naughty@0.1.0;
+
+interface runner {
+  run: func() -> list<string>;
+}
+
+world plugin {
+  import tangent:core/registry@0.1.0;
+  export runner;
+}
