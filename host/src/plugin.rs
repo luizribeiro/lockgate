@@ -3,7 +3,7 @@
 
 use crate::manifest::Manifest;
 use anyhow::{Context, Result, bail};
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fmt, fs, path::Path};
 use wasmtime::{Engine, component::Component};
 use wit_component::DecodedWasm;
 use wit_parser::{Resolve, Type, TypeDefKind, WorldItem};
@@ -35,41 +35,60 @@ pub(crate) struct PluginDefinition {
     pub(crate) direct_imports: Vec<DirectImport>,
 }
 
-pub(crate) fn load(engine: &Engine, root: &Path, id: &str) -> Result<PluginDefinition> {
-    let dir = root.join("plugins").join(id);
-    let manifest: Manifest = toml::from_str(&fs::read_to_string(dir.join("plugin.toml"))?)?;
-    if manifest.id != id {
-        bail!("manifest id {:?} does not match directory", manifest.id);
+impl fmt::Display for Signature {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "({}) -> {}",
+            self.params.join(", "),
+            self.result.as_deref().unwrap_or("()")
+        )
     }
-    let bytes = fs::read(dir.join(format!("{id}.wasm"))).context("component binary missing")?;
-    let DecodedWasm::Component(resolve, world) = wit_component::decode(&bytes)? else {
-        bail!("binary is not a component");
-    };
-    let direct_imports = decode_imports(&resolve, world, &manifest)?;
-    let exports = exported_interfaces(&resolve, world)?;
-    for provided in &manifest.provides {
-        if !exports.contains_key(provided) {
-            bail!("manifest provides {provided}, but component does not export it");
+}
+
+impl Target {
+    pub(crate) fn key(&self) -> String {
+        format!("{}#{}", self.interface, self.function)
+    }
+}
+
+impl PluginDefinition {
+    pub(crate) fn load(engine: &Engine, root: &Path, id: &str) -> Result<Self> {
+        let dir = root.join("plugins").join(id);
+        let manifest: Manifest = toml::from_str(&fs::read_to_string(dir.join("plugin.toml"))?)?;
+        if manifest.id != id {
+            bail!("manifest id {:?} does not match directory", manifest.id);
         }
-    }
-    let mut targets = Vec::new();
-    for provided in &manifest.provides {
-        for function in resolve.interfaces[exports[provided]].functions.values() {
-            let target = Target {
-                plugin: id.into(),
-                interface: provided.clone(),
-                function: function.name.clone(),
-                signature: signature(&resolve, function),
-            };
-            targets.push((target_key(&target), target));
+        let bytes = fs::read(dir.join(format!("{id}.wasm"))).context("component binary missing")?;
+        let DecodedWasm::Component(resolve, world) = wit_component::decode(&bytes)? else {
+            bail!("binary is not a component");
+        };
+        let direct_imports = decode_imports(&resolve, world, &manifest)?;
+        let exports = exported_interfaces(&resolve, world)?;
+        for provided in &manifest.provides {
+            if !exports.contains_key(provided) {
+                bail!("manifest provides {provided}, but component does not export it");
+            }
         }
+        let mut targets = Vec::new();
+        for provided in &manifest.provides {
+            for function in resolve.interfaces[exports[provided]].functions.values() {
+                let target = Target {
+                    plugin: id.into(),
+                    interface: provided.clone(),
+                    function: function.name.clone(),
+                    signature: signature(&resolve, function),
+                };
+                targets.push((target.key(), target));
+            }
+        }
+        Ok(Self {
+            manifest,
+            component: Component::new(engine, bytes)?,
+            targets,
+            direct_imports,
+        })
     }
-    Ok(PluginDefinition {
-        manifest,
-        component: Component::new(engine, bytes)?,
-        targets,
-        direct_imports,
-    })
 }
 
 pub(crate) fn decode_imports(
@@ -196,30 +215,12 @@ fn type_shape(resolve: &Resolve, ty: Type) -> String {
     }
 }
 
-pub(crate) fn signature_text(signature: &Signature) -> String {
-    format!(
-        "({}) -> {}",
-        signature.params.join(", "),
-        signature.result.as_deref().unwrap_or("()")
-    )
-}
-
-pub(crate) fn target_key(target: &Target) -> String {
-    format!("{}#{}", target.interface, target.function)
-}
-
 pub(crate) fn print_load(definition: &PluginDefinition) {
     let id = &definition.manifest.id;
     let targets = definition
         .targets
         .iter()
-        .map(|(_, target)| {
-            format!(
-                "{}{}",
-                target_key(target),
-                signature_text(&target.signature)
-            )
-        })
+        .map(|(_, target)| format!("{}{}", target.key(), target.signature))
         .collect::<Vec<_>>()
         .join(", ");
     println!("[load] {id:<12} ok   provides {targets}");

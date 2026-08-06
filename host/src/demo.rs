@@ -2,8 +2,8 @@
 //! Loads the five fixture plugins, instantiates the valid ones, and prints each test call.
 
 use crate::{
-    plugin::{self, print_load},
-    runtime::{PluginTable, call_runner, instantiate, render_values},
+    plugin::{PluginDefinition, print_load},
+    runtime::{PluginRuntime, PluginTable, call_runner, render_values},
 };
 use anyhow::Result;
 use std::{
@@ -25,7 +25,7 @@ pub(crate) fn run() -> Result<()> {
     let mut definitions = Vec::new();
 
     for id in IDS {
-        match plugin::load(&engine, &root, id) {
+        match PluginDefinition::load(&engine, &root, id) {
             Ok(definition) => {
                 print_load(&definition);
                 plugins
@@ -42,7 +42,7 @@ pub(crate) fn run() -> Result<()> {
 
     for definition in definitions {
         let id = definition.manifest.id.clone();
-        match instantiate(&root, &plugins, &engine, definition) {
+        match PluginRuntime::instantiate(&root, &plugins, &engine, definition) {
             Ok(runtime) => {
                 plugins
                     .lock()

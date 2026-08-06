@@ -35,9 +35,10 @@ pub(crate) struct NetCapability {
     pub(crate) hosts: Vec<String>,
 }
 
-pub(crate) fn permitted(manifest: &Manifest, target: &str) -> bool {
-    manifest
-        .invokes
-        .iter()
-        .any(|pattern| glob_match::glob_match(pattern, target))
+impl Manifest {
+    pub(crate) fn permits(&self, target: &str) -> bool {
+        self.invokes
+            .iter()
+            .any(|pattern| glob_match::glob_match(pattern, target))
+    }
 }

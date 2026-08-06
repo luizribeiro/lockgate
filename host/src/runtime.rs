@@ -2,8 +2,8 @@
 //! Builds stores and WASI contexts, wires typed imports, and implements the dynamic broker.
 
 use crate::{
-    manifest::{Manifest, permitted},
-    plugin::{PluginDefinition, Signature, Target, signature_text, target_key},
+    manifest::Manifest,
+    plugin::{PluginDefinition, Signature, Target},
     tangent::core::registry,
 };
 use anyhow::{Context, Result, bail};
@@ -58,7 +58,7 @@ pub(crate) struct PluginTable {
 
 impl registry::Host for PluginState {
     fn lookup(&mut self, target: String) -> Result<u32, registry::InvokeError> {
-        if !permitted(&self.manifest, &target) {
+        if !self.manifest.permits(&target) {
             println!("  [dynamic] {} -> {target}  DENIED", self.manifest.id);
             return Err(registry::InvokeError::Denied("not in invokes".into()));
         }
@@ -103,42 +103,66 @@ impl registry::Host for PluginState {
     }
 }
 
-pub(crate) fn instantiate(
-    root: &Path,
-    plugins: &Arc<Mutex<PluginTable>>,
-    engine: &Engine,
-    definition: PluginDefinition,
-) -> Result<PluginRuntime> {
-    let mut linker = Linker::new(engine);
-    registry::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
-    wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-    wire_direct_imports(&mut linker, plugins, &definition)?;
+impl PluginRuntime {
+    pub(crate) fn instantiate(
+        root: &Path,
+        plugins: &Arc<Mutex<PluginTable>>,
+        engine: &Engine,
+        definition: PluginDefinition,
+    ) -> Result<Self> {
+        let mut linker = Linker::new(engine);
+        registry::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+        wire_direct_imports(&mut linker, plugins, &definition)?;
 
-    let mut wasi = WasiCtxBuilder::new();
-    if let Some(fs) = &definition.manifest.capabilities.fs {
-        for path in &fs.read {
-            preopen(root, &mut wasi, path, false)?;
+        let mut wasi = WasiCtxBuilder::new();
+        if let Some(fs) = &definition.manifest.capabilities.fs {
+            for path in &fs.read {
+                preopen(root, &mut wasi, path, false)?;
+            }
+            for path in &fs.write {
+                preopen(root, &mut wasi, path, true)?;
+            }
         }
-        for path in &fs.write {
-            preopen(root, &mut wasi, path, true)?;
-        }
+        let state = PluginState {
+            manifest: definition.manifest,
+            wasi: wasi.build(),
+            table: ResourceTable::new(),
+            plugins: Arc::downgrade(plugins),
+            handles: HashMap::new(),
+            next_handle: 1,
+        };
+        let mut store = Store::new(engine, state);
+        store.set_fuel(FUEL)?;
+        let instance = linker.instantiate(&mut store, &definition.component)?;
+        Ok(Self {
+            store,
+            instance,
+            healthy: true,
+        })
     }
-    let state = PluginState {
-        manifest: definition.manifest,
-        wasi: wasi.build(),
-        table: ResourceTable::new(),
-        plugins: Arc::downgrade(plugins),
-        handles: HashMap::new(),
-        next_handle: 1,
-    };
-    let mut store = Store::new(engine, state);
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &definition.component)?;
-    Ok(PluginRuntime {
-        store,
-        instance,
-        healthy: true,
-    })
+
+    fn call(&mut self, interface: &str, function: &str, params: &[Val]) -> Result<Vec<Val>> {
+        let interface = self
+            .instance
+            .get_export_index(&mut self.store, None, interface)
+            .context("interface not exported")?;
+        let function = self
+            .instance
+            .get_export_index(&mut self.store, Some(&interface), function)
+            .context("function not exported")?;
+        let func = self
+            .instance
+            .get_func(&mut self.store, function)
+            .context("export is not a function")?;
+        let mut results = func
+            .ty(&self.store)
+            .results()
+            .map(|_| Val::Bool(false))
+            .collect::<Vec<_>>();
+        func.call(&mut self.store, params, &mut results)?;
+        Ok(results)
+    }
 }
 
 fn wire_direct_imports(
@@ -161,7 +185,7 @@ fn wire_direct_imports(
             }
             let plugins = Arc::clone(plugins);
             instance.func_new(function, move |_store, _ty, params, results| {
-                println!("  [direct] -> {}", target_key(&target));
+                println!("  [direct] -> {}", target.key());
                 let values = invoke_target(&plugins, &target, params)
                     .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))?;
                 if values.len() != results.len() {
@@ -183,7 +207,7 @@ pub(crate) fn resolve_direct_target(
     key: &str,
     expected: &Signature,
 ) -> Result<Target> {
-    if !permitted(manifest, key) {
+    if !manifest.permits(key) {
         bail!("direct import {key} is not permitted by manifest invokes");
     }
     let target = plugins
@@ -196,8 +220,8 @@ pub(crate) fn resolve_direct_target(
     if &target.signature != expected {
         bail!(
             "type mismatch for {key}: caller expects {}, provider exports {}",
-            signature_text(expected),
-            signature_text(&target.signature)
+            expected,
+            target.signature
         );
     }
     Ok(target)
@@ -236,7 +260,7 @@ pub(crate) fn invoke_target(
     }
     runtime.store.set_fuel(FUEL)?;
     CALL_STACK.with(|stack| stack.borrow_mut().push(target.plugin.clone()));
-    let call = call_dynamic(&mut runtime, &target.interface, &target.function, params);
+    let call = runtime.call(&target.interface, &target.function, params);
     CALL_STACK.with(|stack| {
         stack.borrow_mut().pop();
     });
@@ -244,33 +268,6 @@ pub(crate) fn invoke_target(
         runtime.healthy = false;
     }
     call
-}
-
-fn call_dynamic(
-    runtime: &mut PluginRuntime,
-    interface: &str,
-    function: &str,
-    params: &[Val],
-) -> Result<Vec<Val>> {
-    let interface = runtime
-        .instance
-        .get_export_index(&mut runtime.store, None, interface)
-        .context("interface not exported")?;
-    let function = runtime
-        .instance
-        .get_export_index(&mut runtime.store, Some(&interface), function)
-        .context("function not exported")?;
-    let func = runtime
-        .instance
-        .get_func(&mut runtime.store, function)
-        .context("export is not a function")?;
-    let mut results = func
-        .ty(&runtime.store)
-        .results()
-        .map(|_| Val::Bool(false))
-        .collect::<Vec<_>>();
-    func.call(&mut runtime.store, params, &mut results)?;
-    Ok(results)
 }
 
 pub(crate) fn call_runner(
@@ -288,7 +285,7 @@ pub(crate) fn call_runner(
     let mut runtime = runtime.lock().unwrap();
     runtime.store.set_fuel(FUEL)?;
     CALL_STACK.with(|stack| stack.borrow_mut().push(id.into()));
-    let result = call_dynamic(&mut runtime, interface, "run", &[]);
+    let result = runtime.call(interface, "run", &[]);
     CALL_STACK.with(|stack| {
         stack.borrow_mut().pop();
     });
