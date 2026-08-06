@@ -1,0 +1,5 @@
+/.direnv/
+/target/
+**/target/
+*.wasm
+!/fixtures/*.wasm
