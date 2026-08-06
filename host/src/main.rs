@@ -566,63 +566,33 @@ fn val_to_value(value: Val) -> Result<registry::Value, registry::InvokeError> {
     }
 }
 
-fn target_key(target: &Target) -> String {
-    format!("{}#{}", target.interface, target.function)
-}
+#[rustfmt::skip]
+fn target_key(target: &Target) -> String { format!("{}#{}", target.interface, target.function) }
 
+#[rustfmt::skip]
 fn print_load(definition: &PluginDefinition) {
     let id = &definition.manifest.id;
-    let targets = definition
-        .targets
-        .iter()
-        .map(|(_, target)| {
-            let params = target
-                .params
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            let result = target
-                .result
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "()".into());
+    let targets = definition.targets.iter().map(|(_, target)| {
+            let params = target.params.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+            let result = target.result.as_ref().map(ToString::to_string).unwrap_or_else(|| "()".into());
             format!("{}({params}) -> {result}", target_key(target))
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+        }).collect::<Vec<_>>().join(", ");
     println!("[load] {id:<12} ok   provides {targets}");
-    if !definition.manifest.invokes.is_empty() {
-        println!(
-            "       {id:<12} invokes {}",
-            definition.manifest.invokes.join(", ")
-        );
-    }
-    if let Some(fs) = &definition.manifest.capabilities.fs
-        && !fs.read.is_empty()
-    {
-        println!("       {id:<12} fs.read = {}", fs.read.join(", "));
-    }
+    if !definition.manifest.invokes.is_empty() { println!("       {id:<12} invokes {}", definition.manifest.invokes.join(", ")); }
+    if let Some(fs) = &definition.manifest.capabilities.fs && !fs.read.is_empty() { println!("       {id:<12} fs.read = {}", fs.read.join(", ")); }
 }
 
+#[rustfmt::skip]
 fn render_result(values: &[Val]) -> String {
-    match values {
-        [Val::Result(Ok(Some(value)))] => render_value(value),
-        [value] => render_value(value),
-        _ => format!("{values:?}"),
-    }
+    match values { [Val::Result(Ok(Some(value)))] => render_value(value), [value] => render_value(value), _ => format!("{values:?}") }
 }
 
+#[rustfmt::skip]
 fn render_value(value: &Val) -> String {
-    match value {
-        Val::String(value) => format!("{value:?}"),
-        other => format!("{other:?}"),
-    }
+    match value { Val::String(value) => format!("{value:?}"), other => format!("{other:?}") }
 }
 
+#[rustfmt::skip]
 fn naughty_count(values: &[Val]) -> usize {
-    match values {
-        [Val::List(items)] => items.len(),
-        _ => 0,
-    }
+    match values { [Val::List(items)] => items.len(), _ => 0 }
 }
