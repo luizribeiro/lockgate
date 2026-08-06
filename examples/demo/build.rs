@@ -30,10 +30,6 @@ fn main() {
         );
         println!(
             "cargo:rerun-if-changed={}",
-            dir.join("plugin.toml").display()
-        );
-        println!(
-            "cargo:rerun-if-changed={}",
             dir.join("src/lib.rs").display()
         );
         println!(
@@ -57,7 +53,6 @@ fn main() {
 
         let destination = staged.join("components").join(id);
         fs::create_dir_all(&destination).unwrap();
-        fs::copy(dir.join("plugin.toml"), destination.join("plugin.toml")).unwrap();
         fs::copy(
             component_target
                 .join("wasm32-wasip1/debug")
