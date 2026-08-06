@@ -9,6 +9,15 @@ There are two visibly different call mechanisms:
 
 The host's only compile-time WIT knowledge is `tangent:core`. `demo:greeter` does not appear anywhere under `host/`.
 
+## Host layout
+
+- `main.rs` declares the modules and generated core binding, then starts the demo.
+- `manifest.rs` defines capability policy and target matching.
+- `plugin.rs` decodes component WIT, verifies manifests, and records structural types.
+- `runtime.rs` owns isolated stores, WASI setup, direct forwarding, and the dynamic broker.
+- `demo.rs` loads the five fixtures and prints the narrated transcript.
+- `tests.rs` exercises the enforcement boundaries.
+
 ## Run it
 
 Install Nix with flakes and direnv, then enter the repository once:
@@ -105,7 +114,7 @@ Networking remains fail-closed in this five-plugin prototype. Socket imports req
 2. Include `tangent:core/plugin@0.1.0`. Include `consumer` instead only if the target truly is runtime-selected.
 3. For direct calls, add the imported package WIT under `wit/deps`, import its interface in the world, and call its generated Rust bindings normally.
 4. Make `provides`, `invokes`, and capabilities describe the component's authority.
-5. Add the ID to `IDS` in `host/src/main.rs` and to the list in `host/build.rs`.
+5. Add the ID to `IDS` in `host/src/demo.rs` and to the list in `host/build.rs`.
 6. Run `cargo run` in `host`.
 
 The dynamic registry encoding deliberately supports only `bool`, `s32`, `u32`, `string`, and `list<string>`. Direct forwarding is not limited to this encoding; it passes component values after structural signature matching.
