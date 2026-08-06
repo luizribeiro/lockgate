@@ -17,4 +17,4 @@ path = "wit"
 
 [package.metadata.component.target.dependencies]
 "tangent:core" = { path = "../../wit" }
-"demo:greeter" = { path = "wit/deps/greeter.wit" }
+"demo:greeter" = { path = "../../packages/demo-greeter-0.1.0.wasm" }
