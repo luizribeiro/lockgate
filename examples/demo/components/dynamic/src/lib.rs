@@ -2,7 +2,7 @@
 mod bindings;
 
 use bindings::exports::demo::dynamic::runner::Guest;
-use bindings::tangent::core::registry::{self, Value};
+use bindings::lockgate::core::registry::{self, Value};
 
 struct Dynamic;
 

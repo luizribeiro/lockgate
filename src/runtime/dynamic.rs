@@ -2,7 +2,7 @@
 //! Exact lookup grants become bounded per-store handles before values cross into another store.
 
 use super::{Event, StoreState, emit, invoke_target};
-use crate::{plan::Target, tangent::core::registry};
+use crate::{lockgate::core::registry, plan::Target};
 use wasmtime::component::{Val, types::Type};
 
 impl registry::Host for StoreState {

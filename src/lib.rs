@@ -12,6 +12,8 @@ pub use policy::{DirectoryAccess, Policy, PolicyBuilder, PolicyError};
 pub use runtime::{Event, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError};
 pub use wasmtime::component::Val;
 
+pub(crate) const REGISTRY_INTERFACE: &str = "lockgate:core/registry@0.1.0";
+
 wasmtime::component::bindgen!({ path: "wit", world: "consumer" });
 
 #[cfg(test)]

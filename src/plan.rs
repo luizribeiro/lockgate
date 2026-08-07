@@ -2,6 +2,7 @@
 //! Every included import is authorized and structurally checked before any store is created.
 
 use crate::{
+    REGISTRY_INTERFACE,
     catalog::{Catalog, CatalogError, ComponentId, ExportInfo},
     plugin::Signature,
     policy::{DirectoryGrant, Policy},
@@ -9,8 +10,6 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 use wasmtime::component::types::Type;
-
-const REGISTRY_INTERFACE: &str = "tangent:core/registry@0.1.0";
 
 #[derive(Clone, Debug)]
 pub(crate) struct Target {

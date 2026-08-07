@@ -2,6 +2,6 @@
 package demo:greeter-plugin@0.1.0;
 
 world plugin {
-  include tangent:core/plugin@0.1.0;
+  include lockgate:core/plugin@0.1.0;
   export demo:greeter/greeter@0.1.0;
 }

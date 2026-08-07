@@ -2,11 +2,11 @@
 //! Each component receives its own store, WASI context, fuel budget, and dynamic handle table.
 
 use crate::{
-    ComponentId,
+    ComponentId, REGISTRY_INTERFACE,
     catalog::{Catalog, CatalogError},
+    lockgate::core::registry,
     plan::{Plan, ResolvedImport, Target},
     policy::{DirectoryAccess, DirectoryGrant, Policy},
-    tangent::core::registry,
 };
 use std::{
     cell::RefCell,
@@ -27,7 +27,6 @@ mod dynamic;
 
 const FUEL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
-const REGISTRY_INTERFACE: &str = "tangent:core/registry@0.1.0";
 static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
 type Observer = Arc<dyn Fn(Event) + Send + Sync>;

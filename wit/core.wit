@@ -1,4 +1,4 @@
-package tangent:core@0.1.0;
+package lockgate:core@0.1.0;
 
 interface registry {
   variant value {

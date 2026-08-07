@@ -6,6 +6,6 @@ interface runner {
 }
 
 world plugin {
-  include tangent:core/plugin@0.1.0;
+  include lockgate:core/plugin@0.1.0;
   export runner;
 }

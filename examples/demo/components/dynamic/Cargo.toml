@@ -16,6 +16,6 @@ package = "demo:dynamic"
 path = "wit"
 
 [package.metadata.component.target.dependencies]
-"tangent:core" = { path = "../../../../wit" }
+"lockgate:core" = { path = "../../../../wit" }
 
 [workspace]

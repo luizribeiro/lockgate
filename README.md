@@ -105,7 +105,7 @@ The root library has no build script and does not require `cargo-component` to c
 The example keeps two mechanisms visibly distinct:
 
 - `caller` imports `demo:greeter/greeter@0.1.0` and calls `greeter::greet("world")` through normal `wit-bindgen` bindings. The host satisfies that typed import with a forwarding closure learned from the component binaries.
-- `dynamic` imports `tangent:core/registry`, computes a target string, and uses `lookup`/`invoke`. Handles, the small dynamic `Value` encoding, and runtime denial exist only on this opt-in path.
+- `dynamic` imports `lockgate:core/registry`, computes a target string, and uses `lookup`/`invoke`. Handles, the small dynamic `Value` encoding, and runtime denial exist only on this opt-in path.
 
 The host has no generated binding for `demo:greeter`. It uses the signature decoded from the caller and provider components, compares their complete Wasmtime structural types, and forwards `component::Val` values between their independently owned stores.
 
@@ -155,7 +155,7 @@ Directory grants require an existing host directory and a normalized absolute PO
 ## Add a demo component
 
 1. Copy a crate under `examples/demo/components/` and define its world in `wit/world.wit`.
-2. Depend on the root `tangent:core` WIT only if needed; use its import-free `plugin` world for ordinary components and `consumer` only for runtime-selected calls.
+2. Depend on the root `lockgate:core` WIT only if needed; use its import-free `plugin` world for ordinary components and `consumer` only for runtime-selected calls.
 3. For typed calls, add the provider's versioned WIT package as a cargo-component target dependency and call the generated Rust binding normally.
 4. Add the component in `examples/demo/src/main.rs`, retain the returned handles, and grant only its required authority.
 5. Add the component ID to `IDS` in `examples/demo/build.rs`.
