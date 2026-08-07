@@ -13,36 +13,52 @@ The design keeps API knowledge and implementation selection separate:
 
 Lockgate keeps three kinds of identity separate:
 
-- The application assigns a logical name such as `greeter` when adding bytes to a `Catalog`.
+- The application assigns a logical name such as `greeter` when adding bytes to its catalog.
 - Lockgate computes a SHA-256 digest over the exact artifact bytes.
 - Package, interface, and function names come from the WIT embedded in the component.
 
-The public lifecycle remains `Catalog` → `Policy` → `Runtime`:
+The public lifecycle is generated bindings → `Application` → `Policy` → `Runtime`:
 
-```rust,no_run
-use lockgate::{Catalog, Policy, Runtime};
+```rust,ignore
+use lockgate::{Application, HostContext, Policy};
 
-# fn example(
-#     greeter_wasm: &[u8],
-#     caller_wasm: &[u8],
-# ) -> Result<(), Box<dyn std::error::Error>> {
-let mut catalog = Catalog::new()?;
-let greeter = catalog.add("greeter", greeter_wasm)?;
-let caller = catalog.add("caller", caller_wasm)?;
+mod bindings {
+    lockgate::bindings! {
+        path: "wit",
+        worlds: {
+            RunnablePlugin: "runnable-plugin",
+            FileReaderPlugin: "file-reader-plugin",
+        },
+    }
+}
 
-let policy = Policy::builder(&catalog)
+impl bindings::myapp::host::services::Host for HostContext<()> {
+    fn log(&mut self, message: String) {
+        println!("{}: {message}", self.component().name());
+    }
+}
+
+let mut app = Application::new()?;
+let greeter = app.add_untyped("greeter", greeter_wasm)?;
+let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
+
+let policy = Policy::builder(app.catalog())
     .link(caller, greeter)?
     .allow_host_import(caller, "myapp:host/services@1.0.0")?
     .build();
 
-// The application normally follows this with `with_host`, `require_world`,
-// and generated bindings as demonstrated under examples/demo.
-let _builder = Runtime::builder(catalog, policy);
-# Ok(())
-# }
+let runtime = app.runtime(policy).build()?;
+
+let result = runtime.with_component(caller, |store, plugin| {
+    Ok(plugin.myapp_host_runnable().call_run(store)?)
+})?;
 ```
 
-`RuntimeBuilder::with_host` supplies per-component application state and adds generated host imports to each component's linker. `require_world` runs generated world validation after all authorized imports are linked but before a store is created. `Runtime::with_instance` then provides guarded access to the store and instance so the application can construct its generated binding and make a typed call.
+`lockgate::bindings!` parses all listed application worlds together. It generates every imported host interface once, remaps each Wasmtime world to those shared bindings, and emits export contracts plus canonical host-interface installers. The application therefore implements `myapp:host/services@1.0.0` once even when several plugin roles import it.
+
+`Application::add::<Binding>` compares the generated export contract with metadata decoded from the artifact and returns a typed `Component<Binding>` only when they match. It also retains host-interface installers specialized for the application's state type. Sibling-only components use `add_untyped`. Runtime construction installs only policy-granted host interfaces and prepares every complete linker before creating state or stores.
+
+The generated `ApplicationBinding<S>` implementation exists only when `HostContext<S>` implements every host trait imported by that role. A missing host implementation is therefore a compile-time error at `Application::add`, while artifact admission and policy validation remain runtime checks over the supplied bytes and grants.
 
 The runnable example contains the complete integration in `examples/demo/src/main.rs`.
 
@@ -54,7 +70,7 @@ The demo makes all three supported boundaries visible:
 2. `caller` invokes the application host's `demo:host/services.log` through its generated guest binding.
 3. `caller` invokes `demo:greeter/greeter.greet` through a normal generated sibling import. Lockgate satisfies that import using a provider selected by policy and structural types discovered from the two component artifacts.
 
-Dynamic component selection is still possible: the application may choose a `ComponentId` at runtime and use the generated binding for the role that component was required to implement. Dynamic selection does not require dynamic typing.
+Dynamic component selection is still possible: the application may choose among `Component<RunnablePlugin>` handles at runtime. `ComponentId` and `Runtime::with_instance` remain available as the untyped escape hatch for artifact-driven tooling.
 
 If an application eventually needs guest-selected routing, it should define a domain-specific typed WIT service such as `render-with(provider, document)` rather than a universal string-and-value invocation protocol.
 
@@ -85,44 +101,46 @@ Applications can define several plugin roles. A sibling-only provider does not n
 
 ## Host integration
 
-Application host traits are implemented directly on application state. `HasHost` projects that state out of Lockgate's `PluginStore` for generated `add_to_linker` functions:
+Lockgate constructs one `HostContext<S>` per component. The context always contains component identity and the component resource table; `S` is optional application state. A stateless application uses `S = ()`, so component metadata never depends on user initialization.
 
 ```rust,ignore
-impl bindings::myapp::host::services::Host for HostState {
+impl bindings::myapp::host::services::Host for HostContext<()> {
     fn log(&mut self, message: String) {
-        self.logs.push(message);
+        println!("{}: {message}", self.component().name());
+    }
+}
+```
+
+Shared state is normally held behind `Arc` and cloned into each component context:
+
+```rust,ignore
+type State = Arc<AppState>;
+
+impl bindings::myapp::host::services::Host for HostContext<State> {
+    fn log(&mut self, message: String) {
+        self.state().logger.log(self.component().name(), message);
     }
 }
 
-let runtime = Runtime::builder(catalog, policy)
-    .with_host(
-        |_, component_name| HostState::new(component_name),
-        |_, linker| {
-            bindings::Plugin::add_to_linker::<_, HasHost<HostState>>(
-                linker,
-                PluginStore::host_mut,
-            )?;
-            Ok(())
-        },
-    )
-    .require_world(plugin, |linker, component| {
-        let pre = linker.instantiate_pre(component)?;
-        bindings::PluginPre::new(pre)?;
-        Ok(())
-    })?
-    .build()?;
-
-let result = runtime.with_instance(plugin, |store, instance| {
-    let bindings = bindings::Plugin::new(&mut *store, instance)?;
-    Ok(bindings.myapp_plugin().call_run(&mut *store)?)
-})?;
+let state = Arc::new(AppState::new());
+let mut app = Application::with_state(state)?;
 ```
 
-`PluginStore::resources_mut` is available when an application-owned generated host interface needs the component's resource table.
+`Application::with_state_factory` can instead construct distinct state for each component. Host implementations use `HostContext::state`, `state_mut`, and `resources_mut`; `component().id()` and `component().name()` expose Lockgate-owned identity.
+
+A component may implement more than one application role without creating another instance:
+
+```rust,ignore
+let runnable = app.add::<bindings::RunnablePlugin>("plugin", bytes)?;
+let reader = app.admit::<bindings::FileReaderPlugin>(runnable)?;
+assert_eq!(runnable.id(), reader.id());
+```
+
+Secondary admission revalidates the existing artifact and merges its host-interface requirements. Canonical installers are deduplicated, and both typed handles access the same component store.
 
 ## Enforcement lifecycle
 
-`Catalog` hashes and compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to expose their real imports, exports, and function signatures.
+The catalog owned by `Application` hashes and compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to expose their real imports, exports, and function signatures. `Catalog` remains public for low-level untyped applications and artifact tooling.
 
 `Policy` contains catalog-owned handles. Grants automatically include their components; `.include(component)` adds a standalone component. Host imports and sibling links are distinct grants:
 
@@ -136,7 +154,8 @@ Before creating stores, runtime construction:
 2. resolves every function required from that sibling provider;
 3. rejects async functions and values that cannot cross independent stores;
 4. compares complete Wasmtime structural signatures;
-5. configures generated application host bindings and validates every required application world.
+5. installs only admitted host interfaces explicitly granted to that component;
+6. prepares every complete linker with Wasmtime before application state or component stores are created.
 
 Host-facing interfaces are not subjected to sibling cross-store restrictions. Their generated bindings and Wasmtime perform the relevant type checking.
 
@@ -148,11 +167,15 @@ Each component receives its own Wasmtime `Store`, application state, resource ta
 
 ```text
 src/
+  application.rs         typed assembly, application state, and host installers
+  binding.rs             generated binding admission and loading contract
   catalog.rs             artifact identity and decoded component metadata
   policy.rs              immutable host, sibling, and WASI grants
   plan.rs                private provider resolution and preflight validation
   plugin.rs              structural type inspection and cross-store validation
-  runtime.rs             isolated stores, host hooks, and sibling forwarding
+  runtime.rs             isolated stores, host context, and sibling forwarding
+lockgate-macros/          shared application-world binding generation
+lockgate-schema/          shared canonical WIT contract metadata
 examples/demo/
   build.rs               builds and stages executable demo components
   src/main.rs            generated host bindings and the narrated lifecycle
@@ -186,9 +209,10 @@ The root library has no build script and does not require `cargo-component` to c
 1. Choose or add an application-owned host-visible role under `examples/demo/wit/packages/host` if the host will call the component.
 2. Define the component world under its own `wit/world.wit`, importing host services and sibling packages explicitly.
 3. Use ordinary generated guest bindings for host and sibling calls.
-4. Add the artifact to the catalog and grant each host import, sibling link, and WASI capability separately.
-5. Configure the generated host binding and require its world before runtime construction.
-6. Add the component ID to `IDS` in `examples/demo/build.rs`.
+4. List host-callable worlds in one `lockgate::bindings!` invocation and implement each shared host interface once for `HostContext<S>`.
+5. Add host-callable artifacts with `app.add::<GeneratedBinding>` and sibling-only artifacts with `app.add_untyped`.
+6. Grant each host import, sibling link, and WASI capability separately; `Application` configures authorized host bindings automatically.
+7. Add the component ID to `IDS` in `examples/demo/build.rs`.
 
 ## Current limits
 
