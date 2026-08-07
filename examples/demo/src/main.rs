@@ -5,14 +5,14 @@ use lockgate::{Catalog, ComponentId, Event, HasHost, PluginStore, Policy, Runtim
 use wasmtime::component::Linker;
 
 mod runnable_bindings {
-    wasmtime::component::bindgen!({
+    lockgate::bindgen!({
         path: "wit/packages/host",
         world: "runnable-plugin",
     });
 }
 
 mod file_reader_bindings {
-    wasmtime::component::bindgen!({
+    lockgate::bindgen!({
         path: "wit/packages/host",
         world: "file-reader-plugin",
     });
@@ -43,9 +43,15 @@ impl file_reader_bindings::demo::host::services::Host for DemoHost {
 fn main() -> Result<()> {
     let root = artifacts::root()?;
     let mut catalog = Catalog::new()?;
-    let greeter = catalog.add("greeter", artifacts::component_bytes("greeter")?)?;
-    let caller = catalog.add("caller", artifacts::component_bytes("caller")?)?;
-    let filereader = catalog.add("filereader", artifacts::component_bytes("filereader")?)?;
+    let greeter = catalog.add_untyped("greeter", artifacts::component_bytes("greeter")?)?;
+    let caller = catalog.add::<runnable_bindings::RunnablePlugin>(
+        "caller",
+        artifacts::component_bytes("caller")?,
+    )?;
+    let filereader = catalog.add::<file_reader_bindings::FileReaderPlugin>(
+        "filereader",
+        artifacts::component_bytes("filereader")?,
+    )?;
     print_catalog(&catalog);
 
     let policy = Policy::builder(&catalog)
@@ -59,30 +65,20 @@ fn main() -> Result<()> {
             |_, name| DemoHost {
                 component: name.into(),
             },
-            move |component, linker| configure_host(component, caller, filereader, linker),
+            move |component, linker| {
+                configure_host(component, caller.id(), filereader.id(), linker)
+            },
         )
-        .require_world(caller, |linker, component| {
-            let pre = linker.instantiate_pre(component)?;
-            runnable_bindings::RunnablePluginPre::new(pre)?;
-            Ok(())
-        })?
-        .require_world(filereader, |linker, component| {
-            let pre = linker.instantiate_pre(component)?;
-            file_reader_bindings::FileReaderPluginPre::new(pre)?;
-            Ok(())
-        })?
         .with_observer(print_event)
         .build()?;
     println!("\n[call] caller.run()");
-    let value = runtime.with_instance(caller, |store, instance| {
-        let bindings = runnable_bindings::RunnablePlugin::new(&mut *store, instance)?;
+    let value = runtime.with_component(caller, |store, bindings| {
         Ok(bindings.demo_host_runnable().call_run(&mut *store)?)
     })?;
     println!("  => {value:?}");
 
     println!("\n[call] filereader.run()");
-    let value = runtime.with_instance(filereader, |store, instance| {
-        let bindings = file_reader_bindings::FileReaderPlugin::new(&mut *store, instance)?;
+    let value = runtime.with_component(filereader, |store, bindings| {
         Ok(bindings.demo_host_runnable().call_run(&mut *store)?)
     })?;
     println!("  => {value:?}");

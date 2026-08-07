@@ -10,7 +10,9 @@ mod plugin;
 pub mod policy;
 pub mod runtime;
 
-pub use catalog::{ArtifactDigest, Catalog, CatalogError, ComponentId, ComponentInfo};
+pub use catalog::{
+    ArtifactDigest, Catalog, CatalogError, Component, ComponentId, ComponentInfo, ComponentRef,
+};
 pub use lockgate_macros::bindgen;
 pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
 pub use runtime::{

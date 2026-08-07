@@ -222,10 +222,10 @@ world provider { export api; }
 world caller { import api; }"#;
         let mut catalog = Catalog::new().unwrap();
         let caller = catalog
-            .add("caller", component_bytes(wit, "caller"))
+            .add_untyped("caller", component_bytes(wit, "caller"))
             .unwrap();
         let provider = catalog
-            .add("provider", component_bytes(wit, "provider"))
+            .add_untyped("provider", component_bytes(wit, "provider"))
             .unwrap();
         let policy = Policy::builder(&catalog)
             .link(caller, provider)

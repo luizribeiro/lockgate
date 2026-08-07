@@ -1,11 +1,18 @@
 //! Cross-layer tests for discovery, planning, authority, and fuel isolation.
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
-use crate::{Catalog, PluginStore, Policy, Runtime, RuntimeBuildError, RuntimeError};
+use crate::{Catalog, CatalogError, PluginStore, Policy, Runtime, RuntimeBuildError, RuntimeError};
 use std::error::Error as _;
 use wasmtime::{Store, component::Instance};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
+
+mod typed_bindings {
+    crate::bindgen!({
+        path: "src/testdata/admission.wit",
+        world: "runnable-plugin",
+    });
+}
 
 fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {
     let mut resolve = Resolve::new();
@@ -21,6 +28,34 @@ fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {
 }
 
 #[test]
+fn typed_catalog_admission_uses_generated_world_exports() {
+    let matching = r#"package demo:admission@0.1.0;
+
+interface services { log: func(message: string); }
+interface runnable { run: func() -> string; }
+world matching { import services; export runnable; }"#;
+    let mismatched = r#"package demo:admission@0.1.0;
+
+interface runnable { run: func(input: string) -> string; }
+world mismatched { export runnable; }"#;
+
+    let mut catalog = Catalog::new().unwrap();
+    let runnable = catalog
+        .add::<typed_bindings::RunnablePlugin>("runnable", component_bytes(matching, "matching"))
+        .unwrap();
+    assert_eq!(catalog.component(runnable).unwrap().name(), "runnable");
+
+    let error = catalog
+        .add::<typed_bindings::RunnablePlugin>(
+            "mismatched",
+            component_bytes(mismatched, "mismatched"),
+        )
+        .unwrap_err();
+    assert!(matches!(error, CatalogError::WorldMismatch { .. }));
+    assert_eq!(catalog.components().count(), 1);
+}
+
+#[test]
 fn catalog_rejects_fixed_lists_before_runtime_type_introspection() {
     let wit = r#"package demo:fixed-list@0.1.0;
 
@@ -28,7 +63,7 @@ interface api { run: func(input: list<u32, 4>); }
 world caller { import api; }"#;
     let mut catalog = Catalog::new().unwrap();
     let error = catalog
-        .add("caller", component_bytes(wit, "caller"))
+        .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap_err();
     assert!(
         error
@@ -56,10 +91,10 @@ world caller { import api; }
 world provider { export api; }"#;
     let mut catalog = Catalog::new().unwrap();
     let caller = catalog
-        .add("caller", component_bytes(wit, "caller"))
+        .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
     let provider = catalog
-        .add("provider", component_bytes(wit, "provider"))
+        .add_untyped("provider", component_bytes(wit, "provider"))
         .unwrap();
     let policy = Policy::builder(&catalog)
         .link(caller, provider)
@@ -80,10 +115,10 @@ world caller { import api; }
 world provider { export api; }"#;
     let mut catalog = Catalog::new().unwrap();
     let caller = catalog
-        .add("caller", component_bytes(wit, "caller"))
+        .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
     let provider = catalog
-        .add("provider", component_bytes(wit, "provider"))
+        .add_untyped("provider", component_bytes(wit, "provider"))
         .unwrap();
     let policy = Policy::builder(&catalog)
         .include(caller)
@@ -106,13 +141,13 @@ world caller { import api; }
 world provider { export api; }"#;
     let mut catalog = Catalog::new().unwrap();
     let caller = catalog
-        .add("caller", component_bytes(wit, "caller"))
+        .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
     let first = catalog
-        .add("first", component_bytes(wit, "provider"))
+        .add_untyped("first", component_bytes(wit, "provider"))
         .unwrap();
     let second = catalog
-        .add("second", component_bytes(wit, "provider"))
+        .add_untyped("second", component_bytes(wit, "provider"))
         .unwrap();
     let policy = Policy::builder(&catalog)
         .link(caller, first)
@@ -132,10 +167,10 @@ fn plan_compares_complete_structural_types() {
     let provider_wit = structural_wit("u32", "careful", "quiet", "selection", "provider", "export");
     let mut catalog = Catalog::new().unwrap();
     let caller = catalog
-        .add("caller", component_bytes(&caller_wit, "caller"))
+        .add_untyped("caller", component_bytes(&caller_wit, "caller"))
         .unwrap();
     let provider = catalog
-        .add("provider", component_bytes(&provider_wit, "provider"))
+        .add_untyped("provider", component_bytes(&provider_wit, "provider"))
         .unwrap();
     let policy = Policy::builder(&catalog)
         .link(caller, provider)
@@ -164,7 +199,7 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
     )
     .unwrap();
     let mut catalog = Catalog::new().unwrap();
-    let looping = catalog.add("looping", bytes).unwrap();
+    let looping = catalog.add_untyped("looping", bytes).unwrap();
     let policy = Policy::builder(&catalog).include(looping).unwrap().build();
     let runtime = Runtime::builder(catalog, policy).build().unwrap();
     let call_loop = |store: &mut Store<PluginStore>, instance: &Instance| {

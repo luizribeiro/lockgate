@@ -8,7 +8,10 @@ use lockgate::{Catalog, HasHost, PluginStore, Policy, Runtime};
 fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
     let root = artifacts::root()?;
     let mut catalog = Catalog::new()?;
-    let filereader = catalog.add("filereader", artifacts::component_bytes("filereader")?)?;
+    let filereader = catalog.add::<file_reader_bindings::FileReaderPlugin>(
+        "filereader",
+        artifacts::component_bytes("filereader")?,
+    )?;
     let policy = Policy::builder(&catalog)
         .allow_host_import(filereader, HOST_SERVICES)?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
@@ -26,15 +29,9 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
                 Ok(())
             },
         )
-        .require_world(filereader, |linker, component| {
-            let pre = linker.instantiate_pre(component)?;
-            file_reader_bindings::FileReaderPluginPre::new(pre)?;
-            Ok(())
-        })?
         .build()?;
 
-    let value = runtime.with_instance(filereader, |store, instance| {
-        let bindings = file_reader_bindings::FileReaderPlugin::new(&mut *store, instance)?;
+    let value = runtime.with_component(filereader, |store, bindings| {
         Ok(bindings
             .demo_host_file_reader()
             .call_read(&mut *store, "/etc/passwd")?)

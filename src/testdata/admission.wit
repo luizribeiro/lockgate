@@ -1,0 +1,14 @@
+package demo:admission@0.1.0;
+
+interface services {
+  log: func(message: string);
+}
+
+interface runnable {
+  run: func() -> string;
+}
+
+world runnable-plugin {
+  import services;
+  export runnable;
+}

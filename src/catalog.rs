@@ -1,17 +1,22 @@
 //! Component discovery and application-assigned identity.
 //! A catalog hashes exact artifacts and exposes the imports and exports decoded from their WIT.
 
-use crate::plugin::{
-    DirectImport, Signature, interface_functions, type_name, validate_introspectable_interface,
+use crate::{
+    binding::{BindingExport, ComponentBinding},
+    plugin::{
+        DirectImport, Signature, interface_functions, type_name, validate_introspectable_interface,
+    },
 };
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fmt,
+    hash::{Hash, Hasher},
+    marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
-use wasmtime::{Config, Engine, component::Component};
+use wasmtime::{Config, Engine, component::Component as WasmtimeComponent};
 use wit_component::DecodedWasm;
 use wit_parser::{Resolve, WorldItem};
 
@@ -22,6 +27,21 @@ static NEXT_CATALOG: AtomicU64 = AtomicU64::new(1);
 pub struct ComponentId {
     catalog: u64,
     index: usize,
+}
+
+/// A component handle whose artifact was admitted against generated application bindings.
+///
+/// The binding parameter is preserved so [`crate::Runtime::with_component`] can construct the
+/// correct generated binding without exposing a raw Wasmtime instance.
+pub struct Component<B> {
+    id: ComponentId,
+    binding: PhantomData<fn() -> B>,
+}
+
+/// A catalog-issued component handle accepted by policy and runtime APIs.
+pub trait ComponentRef: Copy {
+    /// Returns the untyped identity carried by this handle.
+    fn id(self) -> ComponentId;
 }
 
 /// The SHA-256 digest of the exact component bytes supplied to a catalog.
@@ -57,14 +77,16 @@ pub(crate) struct ComponentEntry {
     pub(crate) imports: Vec<String>,
     pub(crate) direct_imports: Vec<DirectImport>,
     pub(crate) exports: Vec<ExportInfo>,
-    pub(crate) component: Component,
+    pub(crate) component: WasmtimeComponent,
 }
 
 struct InspectedComponent {
+    digest: ArtifactDigest,
+    binding_exports: Vec<lockgate_schema::Export>,
     imports: Vec<String>,
     direct_imports: Vec<DirectImport>,
     exports: Vec<ExportInfo>,
-    component: Component,
+    component: WasmtimeComponent,
 }
 
 /// A collection of decoded, compiled component artifacts.
@@ -92,6 +114,13 @@ pub enum CatalogError {
     },
     #[error("component handle does not belong to this catalog")]
     ForeignComponent,
+    #[error("component `{name}` does not implement world `{world}`")]
+    WorldMismatch {
+        name: String,
+        world: String,
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 impl Catalog {
@@ -108,40 +137,74 @@ impl Catalog {
         })
     }
 
-    /// Decodes and compiles an artifact under an application-assigned name.
-    pub fn add(
+    /// Decodes, compiles, and admits an artifact against generated application bindings.
+    ///
+    /// Admission requires every export described by `B` to exist in the component with the same
+    /// WIT type. Additional component exports are allowed.
+    pub fn add<B: ComponentBinding>(
+        &mut self,
+        name: impl Into<String>,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Component<B>, CatalogError> {
+        let name = name.into();
+        let inspected = self.inspect_new(&name, bytes.as_ref())?;
+        validate_binding(B::EXPORTS, &inspected.binding_exports).map_err(|source| {
+            CatalogError::WorldMismatch {
+                name: name.clone(),
+                world: B::WORLD.into(),
+                source,
+            }
+        })?;
+        Ok(Component {
+            id: self.insert(name, inspected),
+            binding: PhantomData,
+        })
+    }
+
+    /// Decodes and compiles an artifact without requiring an application binding.
+    pub fn add_untyped(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
     ) -> Result<ComponentId, CatalogError> {
         let name = name.into();
+        let inspected = self.inspect_new(&name, bytes.as_ref())?;
+        Ok(self.insert(name, inspected))
+    }
+
+    fn inspect_new(&self, name: &str, bytes: &[u8]) -> Result<InspectedComponent, CatalogError> {
         if name.trim().is_empty() {
             return Err(CatalogError::EmptyName);
         }
-        if self.names.contains_key(&name) {
-            return Err(CatalogError::DuplicateName(name));
+        if self.names.contains_key(name) {
+            return Err(CatalogError::DuplicateName(name.into()));
         }
+        inspect(&self.engine, name, bytes)
+    }
 
-        let bytes = bytes.as_ref();
-        let inspected = inspect(&self.engine, &name, bytes)?;
+    fn insert(&mut self, name: String, inspected: InspectedComponent) -> ComponentId {
         let id = ComponentId {
             catalog: self.identity,
             index: self.components.len(),
         };
         self.components.push(ComponentEntry {
             name: name.clone(),
-            digest: ArtifactDigest(Sha256::digest(bytes).into()),
+            digest: inspected.digest,
             imports: inspected.imports,
             direct_imports: inspected.direct_imports,
             exports: inspected.exports,
             component: inspected.component,
         });
         self.names.insert(name, id);
-        Ok(id)
+        id
     }
 
     /// Returns metadata for a component handle from this catalog.
-    pub fn component(&self, id: ComponentId) -> Result<ComponentInfo<'_>, CatalogError> {
+    pub fn component(
+        &self,
+        component: impl ComponentRef,
+    ) -> Result<ComponentInfo<'_>, CatalogError> {
+        let id = component.id();
         let entry = self.entry(id)?;
         Ok(ComponentInfo { id, entry })
     }
@@ -175,6 +238,53 @@ impl Catalog {
         self.components
             .get(id.index)
             .ok_or(CatalogError::ForeignComponent)
+    }
+}
+
+impl<B> Copy for Component<B> {}
+
+impl<B> Clone for Component<B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<B> fmt::Debug for Component<B> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_tuple("Component").field(&self.id).finish()
+    }
+}
+
+impl<B> PartialEq for Component<B> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<B> Eq for Component<B> {}
+
+impl<B> Hash for Component<B> {
+    fn hash<S: Hasher>(&self, state: &mut S) {
+        self.id.hash(state);
+    }
+}
+
+impl ComponentRef for ComponentId {
+    fn id(self) -> ComponentId {
+        self
+    }
+}
+
+impl<B> ComponentRef for Component<B> {
+    fn id(self) -> ComponentId {
+        self.id
+    }
+}
+
+impl<B> Component<B> {
+    /// Erases the generated binding type from this handle.
+    pub fn id(self) -> ComponentId {
+        self.id
     }
 }
 
@@ -267,8 +377,14 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
         });
     };
     validate_world_interfaces(&resolve, world, name)?;
+    let binding_exports = lockgate_schema::world_exports(&resolve, world).map_err(|source| {
+        CatalogError::InvalidComponent {
+            name: name.into(),
+            source,
+        }
+    })?;
     let component =
-        Component::new(engine, bytes).map_err(|source| CatalogError::InvalidComponent {
+        WasmtimeComponent::new(engine, bytes).map_err(|source| CatalogError::InvalidComponent {
             name: name.into(),
             source: source.into(),
         })?;
@@ -343,11 +459,41 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
         }));
     }
     Ok(InspectedComponent {
+        digest: ArtifactDigest(Sha256::digest(bytes).into()),
+        binding_exports,
         imports,
         direct_imports,
         exports,
         component,
     })
+}
+
+fn validate_binding(
+    expected: &[BindingExport],
+    actual: &[lockgate_schema::Export],
+) -> Result<(), anyhow::Error> {
+    for expected in expected {
+        let Some(actual) = actual
+            .iter()
+            .find(|actual| actual.interface == expected.interface && actual.item == expected.item)
+        else {
+            anyhow::bail!(
+                "missing required export {}#{}",
+                expected.interface,
+                expected.item
+            );
+        };
+        if actual.signature != expected.signature {
+            anyhow::bail!(
+                "type mismatch for {}#{}: expected {}, found {}",
+                expected.interface,
+                expected.item,
+                expected.signature,
+                actual.signature
+            );
+        }
+    }
+    Ok(())
 }
 
 fn validate_world_interfaces(
@@ -442,8 +588,12 @@ world caller { import api; }"#;
     #[test]
     fn assigns_identity_and_discovers_wit() {
         let mut catalog = Catalog::new().unwrap();
-        let provider = catalog.add("greeter", component_bytes("provider")).unwrap();
-        let caller = catalog.add("caller", component_bytes("caller")).unwrap();
+        let provider = catalog
+            .add_untyped("greeter", component_bytes("provider"))
+            .unwrap();
+        let caller = catalog
+            .add_untyped("caller", component_bytes("caller"))
+            .unwrap();
         let info = catalog.component(provider).unwrap();
         assert_eq!(info.name(), "greeter");
         assert_eq!(info.digest().to_string().len(), 64);
@@ -465,13 +615,19 @@ world caller { import api; }"#;
                 .collect::<Vec<_>>(),
             [(provider, "greeter".into()), (caller, "caller".into())]
         );
-        assert!(catalog.add("greeter", component_bytes("provider")).is_err());
+        assert!(
+            catalog
+                .add_untyped("greeter", component_bytes("provider"))
+                .is_err()
+        );
     }
 
     #[test]
     fn rejects_handles_from_another_catalog() {
         let mut first = Catalog::new().unwrap();
-        let provider = first.add("greeter", component_bytes("provider")).unwrap();
+        let provider = first
+            .add_untyped("greeter", component_bytes("provider"))
+            .unwrap();
         let second = Catalog::new().unwrap();
         assert!(matches!(
             second.component(provider),

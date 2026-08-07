@@ -1,7 +1,7 @@
 //! Immutable, programmatic capability policy construction.
 //! Policy grants refer to opaque catalog handles instead of names copied from configuration files.
 
-use crate::catalog::{Catalog, CatalogError, ComponentId};
+use crate::catalog::{Catalog, CatalogError, ComponentId, ComponentRef};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -100,14 +100,21 @@ impl Policy {
 
 impl PolicyBuilder<'_> {
     /// Includes a component that needs no other grants in the runtime.
-    pub fn include(mut self, component: ComponentId) -> Result<Self, PolicyError> {
+    pub fn include(mut self, component: impl ComponentRef) -> Result<Self, PolicyError> {
+        let component = component.id();
         self.catalog.component(component)?;
         self.include_component(component);
         Ok(self)
     }
 
     /// Permits a caller's typed imports to be satisfied by a provider.
-    pub fn link(mut self, caller: ComponentId, provider: ComponentId) -> Result<Self, PolicyError> {
+    pub fn link(
+        mut self,
+        caller: impl ComponentRef,
+        provider: impl ComponentRef,
+    ) -> Result<Self, PolicyError> {
+        let caller = caller.id();
+        let provider = provider.id();
         let caller_info = self.catalog.component(caller)?;
         let provider_info = self.catalog.component(provider)?;
         let matches = caller_info.imports().iter().any(|import| {
@@ -134,9 +141,10 @@ impl PolicyBuilder<'_> {
     /// Permits one component import to be implemented by the embedding host.
     pub fn allow_host_import(
         mut self,
-        component: ComponentId,
+        component: impl ComponentRef,
         interface: impl Into<String>,
     ) -> Result<Self, PolicyError> {
+        let component = component.id();
         let interface = interface.into();
         let info = self.catalog.component(component)?;
         if !info.imports().iter().any(|import| import == &interface) {
@@ -158,12 +166,12 @@ impl PolicyBuilder<'_> {
 
     pub fn read_only_dir(
         self,
-        component: ComponentId,
+        component: impl ComponentRef,
         host: impl Into<PathBuf>,
         guest: impl Into<PathBuf>,
     ) -> Result<Self, PolicyError> {
         self.directory(
-            component,
+            component.id(),
             host.into(),
             guest.into(),
             DirectoryAccess::ReadOnly,
@@ -172,12 +180,12 @@ impl PolicyBuilder<'_> {
 
     pub fn read_write_dir(
         self,
-        component: ComponentId,
+        component: impl ComponentRef,
         host: impl Into<PathBuf>,
         guest: impl Into<PathBuf>,
     ) -> Result<Self, PolicyError> {
         self.directory(
-            component,
+            component.id(),
             host.into(),
             guest.into(),
             DirectoryAccess::ReadWrite,
@@ -314,9 +322,11 @@ world caller { import api; }"#;
     #[test]
     fn builds_handle_based_grants() {
         let mut catalog = Catalog::new().unwrap();
-        let caller = catalog.add("caller", component_bytes("caller")).unwrap();
+        let caller = catalog
+            .add_untyped("caller", component_bytes("caller"))
+            .unwrap();
         let provider = catalog
-            .add("provider", component_bytes("provider"))
+            .add_untyped("provider", component_bytes("provider"))
             .unwrap();
         let policy = Policy::builder(&catalog)
             .link(caller, provider)
@@ -331,7 +341,9 @@ world caller { import api; }"#;
     #[test]
     fn grants_only_real_host_imports() {
         let mut catalog = Catalog::new().unwrap();
-        let caller = catalog.add("caller", component_bytes("caller")).unwrap();
+        let caller = catalog
+            .add_untyped("caller", component_bytes("caller"))
+            .unwrap();
         let policy = Policy::builder(&catalog)
             .allow_host_import(caller, "demo:policy/api@0.1.0")
             .unwrap()
@@ -347,7 +359,7 @@ world caller { import api; }"#;
     fn rejects_unrelated_links_and_foreign_handles() {
         let mut catalog = Catalog::new().unwrap();
         let provider = catalog
-            .add("provider", component_bytes("provider"))
+            .add_untyped("provider", component_bytes("provider"))
             .unwrap();
         assert!(matches!(
             Policy::builder(&catalog).link(provider, provider),
@@ -355,7 +367,9 @@ world caller { import api; }"#;
         ));
 
         let mut other = Catalog::new().unwrap();
-        let foreign = other.add("caller", component_bytes("caller")).unwrap();
+        let foreign = other
+            .add_untyped("caller", component_bytes("caller"))
+            .unwrap();
         assert!(matches!(
             Policy::builder(&catalog).read_only_dir(foreign, "/tmp", "/tmp"),
             Err(PolicyError::Catalog(CatalogError::ForeignComponent))
@@ -365,7 +379,9 @@ world caller { import api; }"#;
     #[test]
     fn rejects_invalid_directory_grants() {
         let mut catalog = Catalog::new().unwrap();
-        let caller = catalog.add("caller", component_bytes("caller")).unwrap();
+        let caller = catalog
+            .add_untyped("caller", component_bytes("caller"))
+            .unwrap();
         assert!(matches!(
             Policy::builder(&catalog).read_only_dir(caller, std::env::temp_dir(), "/a/../b"),
             Err(PolicyError::RelativeGuestPath(_))
