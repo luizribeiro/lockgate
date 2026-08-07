@@ -66,8 +66,8 @@ wit/
   core.wit               optional dynamic registry owned by Lockgate
 examples/demo/
   build.rs               builds and stages executable demo components
-  src/policy.rs          application-assigned identity and authority
-  src/demo.rs            narrated calls and event rendering
+  src/main.rs            catalog, policy, planning, calls, and narration
+  src/artifacts.rs       staged component artifact lookup
   components/            five standalone Rust component crates
   packages/              checked-in versioned demo WIT package
   sandbox/               demo filesystem input
@@ -156,7 +156,7 @@ Directory grants require an existing host directory and a normalized absolute PO
 1. Copy a crate under `examples/demo/components/` and define its world in `wit/world.wit`.
 2. Depend on the root `tangent:core` WIT only if needed; use its import-free `plugin` world for ordinary components and `consumer` only for runtime-selected calls.
 3. For typed calls, add the provider's versioned WIT package as a cargo-component target dependency and call the generated Rust binding normally.
-4. Add the component in `examples/demo/src/policy.rs`, retain the returned handles, and grant only its required authority.
+4. Add the component in `examples/demo/src/main.rs`, retain the returned handles, and grant only its required authority.
 5. Add the component ID to `IDS` in `examples/demo/build.rs`.
 6. Run `cargo run -p lockgate-demo`.
 
