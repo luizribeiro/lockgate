@@ -1,11 +1,7 @@
 package demo:filereader@0.1.0;
 
-interface runner {
-  read: func(path: string) -> result<string, string>;
-  run: func() -> result<string, string>;
-}
-
 world plugin {
-  include lockgate:core/plugin@0.1.0;
-  export runner;
+  import demo:host/services@0.1.0;
+  export demo:host/runnable@0.1.0;
+  export demo:host/file-reader@0.1.0;
 }

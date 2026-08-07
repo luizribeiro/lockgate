@@ -1,0 +1,25 @@
+// The application-owned contract for host-visible plugin roles and host services.
+package demo:host@0.1.0;
+
+interface services {
+  log: func(message: string);
+}
+
+interface runnable {
+  run: func() -> result<string, string>;
+}
+
+interface file-reader {
+  read: func(path: string) -> result<string, string>;
+}
+
+world runnable-plugin {
+  import services;
+  export runnable;
+}
+
+world file-reader-plugin {
+  import services;
+  export runnable;
+  export file-reader;
+}

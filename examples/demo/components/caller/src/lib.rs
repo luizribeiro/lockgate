@@ -2,12 +2,14 @@
 mod bindings;
 
 use bindings::demo::greeter::greeter;
-use bindings::exports::demo::caller::runner::Guest;
+use bindings::demo::host::services;
+use bindings::exports::demo::host::runnable::Guest;
 
 struct Caller;
 
 impl Guest for Caller {
     fn run() -> Result<String, String> {
+        services::log("caller is invoking its greeter sibling");
         Ok(greeter::greet("world"))
     }
 }

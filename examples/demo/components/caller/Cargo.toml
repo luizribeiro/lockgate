@@ -16,7 +16,7 @@ package = "demo:caller"
 path = "wit"
 
 [package.metadata.component.target.dependencies]
-"lockgate:core" = { path = "../../../../wit" }
+"demo:host" = { path = "../../wit/packages/host" }
 "demo:greeter" = { path = "../../packages/demo-greeter-0.1.0.wasm" }
 
 [workspace]

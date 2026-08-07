@@ -14,6 +14,10 @@ fn main() {
 
     println!(
         "cargo:rerun-if-changed={}",
+        demo.join("wit/packages/host/package.wit").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
         repository.join("wit/core.wit").display()
     );
     println!(
