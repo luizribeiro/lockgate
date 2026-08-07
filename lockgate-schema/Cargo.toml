@@ -1,0 +1,9 @@
+[package]
+name = "lockgate-schema"
+version = "0.1.0"
+edition = "2024"
+description = "Shared WIT contract extraction for lockgate"
+
+[dependencies]
+anyhow = "1.0.100"
+wit-parser = "0.255.0"

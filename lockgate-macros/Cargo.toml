@@ -1,0 +1,17 @@
+[package]
+name = "lockgate-macros"
+version = "0.1.0"
+edition = "2024"
+description = "Binding generation for lockgate"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+heck = "0.5.0"
+lockgate-schema = { version = "0.1.0", path = "../lockgate-schema" }
+proc-macro2 = "1.0.103"
+proc-macro-crate = "3.4.0"
+quote = "1.0.42"
+syn = "2.0.110"
+wit-parser = "0.255.0"
