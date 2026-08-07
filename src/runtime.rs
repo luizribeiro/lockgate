@@ -43,7 +43,11 @@ impl<H: 'static> HasData for HasHost<H> {
 /// An observable cross-component broker event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    DirectCall { target: String },
+    SiblingCall {
+        caller: String,
+        provider: String,
+        target: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -229,15 +233,25 @@ impl<H: Send + 'static> Runtime<H> {
             observer,
         }));
         let runtime = Self { plan, table };
+        let mut linkers = HashMap::new();
         for component in runtime.plan.order.clone() {
-            runtime.instantiate(
+            let linker = runtime.prepare_linker(
                 component,
-                &host_factory,
                 &configure_linker,
                 requirements
                     .get(&component)
                     .map(Vec::as_slice)
                     .unwrap_or(&[]),
+            )?;
+            linkers.insert(component, linker);
+        }
+        for component in runtime.plan.order.clone() {
+            runtime.instantiate(
+                component,
+                &host_factory,
+                linkers
+                    .remove(&component)
+                    .expect("every included component has a prepared linker"),
             )?;
         }
         Ok(runtime)
@@ -266,13 +280,12 @@ impl<H: Send + 'static> Runtime<H> {
         Ok(runtime.healthy)
     }
 
-    fn instantiate(
+    fn prepare_linker(
         &self,
         component: ComponentId,
-        host_factory: &HostFactory<H>,
         configure_linker: &LinkerConfig<H>,
         requirements: &[WorldRequirement<H>],
-    ) -> Result<(), RuntimeBuildError> {
+    ) -> Result<Linker<PluginStore<H>>, RuntimeBuildError> {
         let entry = self.plan.catalog.entry(component)?;
         let component_plan =
             self.plan
@@ -301,6 +314,7 @@ impl<H: Send + 'static> Runtime<H> {
         wire_direct_imports(
             &mut linker,
             &self.table,
+            &entry.name,
             component_plan.direct_imports.values(),
         )
         .map_err(|error| instantiate_error(&entry.name, error))?;
@@ -309,6 +323,23 @@ impl<H: Send + 'static> Runtime<H> {
                 .map_err(|error| instantiate_error(&entry.name, error))?;
         }
 
+        Ok(linker)
+    }
+
+    fn instantiate(
+        &self,
+        component: ComponentId,
+        host_factory: &HostFactory<H>,
+        linker: Linker<PluginStore<H>>,
+    ) -> Result<(), RuntimeBuildError> {
+        let entry = self.plan.catalog.entry(component)?;
+        let component_plan =
+            self.plan
+                .component(component)
+                .map_err(|_| RuntimeBuildError::NotIncluded {
+                    component: entry.name.clone(),
+                })?;
+        let engine = self.plan.catalog.engine();
         let mut wasi = WasiCtxBuilder::new();
         for directory in &component_plan.directories {
             preopen(&mut wasi, directory).map_err(|error| instantiate_error(&entry.name, error))?;
@@ -425,6 +456,7 @@ impl<H: Send + 'static> ComponentRuntime<H> {
 fn wire_direct_imports<'a, H: Send + 'static>(
     linker: &mut Linker<PluginStore<H>>,
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
+    caller: &str,
     imports: impl Iterator<Item = &'a ResolvedImport>,
 ) -> Result<(), anyhow::Error> {
     for import in imports {
@@ -432,10 +464,13 @@ fn wire_direct_imports<'a, H: Send + 'static>(
         for (function, target) in &import.functions {
             let target = target.clone();
             let runtimes = Arc::clone(runtimes);
+            let caller = caller.to_owned();
             instance.func_new(function, move |_store, _ty, params, results| {
                 emit(
                     &Arc::downgrade(&runtimes),
-                    Event::DirectCall {
+                    Event::SiblingCall {
+                        caller: caller.clone(),
+                        provider: target.component_name.clone(),
                         target: target.key(),
                     },
                 );

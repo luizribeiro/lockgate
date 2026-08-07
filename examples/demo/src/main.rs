@@ -113,7 +113,11 @@ fn configure_host(
 
 fn print_event(event: Event) {
     match event {
-        Event::DirectCall { target } => println!("  [direct] -> {target}"),
+        Event::SiblingCall {
+            caller,
+            provider,
+            target,
+        } => println!("  [sibling] {caller} -> {provider} ({target})"),
     }
 }
 
