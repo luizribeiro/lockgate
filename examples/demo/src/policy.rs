@@ -17,11 +17,11 @@ pub(crate) struct DemoPlan {
 pub(crate) fn build() -> Result<DemoPlan> {
     let root = root()?;
     let mut catalog = Catalog::new()?;
-    let greeter = add(&mut catalog, &root, "greeter")?;
-    let caller = add(&mut catalog, &root, "caller")?;
-    let filereader = add(&mut catalog, &root, "filereader")?;
-    let naughty = add(&mut catalog, &root, "naughty")?;
-    let dynamic = add(&mut catalog, &root, "dynamic")?;
+    let greeter = catalog.add("greeter", component_bytes("greeter")?)?;
+    let caller = catalog.add("caller", component_bytes("caller")?)?;
+    let filereader = catalog.add("filereader", component_bytes("filereader")?)?;
+    let naughty = catalog.add("naughty", component_bytes("naughty")?)?;
+    let dynamic = catalog.add("dynamic", component_bytes("dynamic")?)?;
     print_catalog(&catalog, [greeter, caller, filereader, naughty, dynamic])?;
 
     let greet = catalog.export(greeter, "demo:greeter/greeter@0.1.0#greet")?;
@@ -43,10 +43,9 @@ pub(crate) fn build() -> Result<DemoPlan> {
 }
 
 pub(crate) fn build_naughty() -> Result<(Catalog, Policy)> {
-    let root = root()?;
     let mut catalog = Catalog::new()?;
-    let greeter = add(&mut catalog, &root, "greeter")?;
-    let naughty = add(&mut catalog, &root, "naughty")?;
+    let greeter = catalog.add("greeter", component_bytes("greeter")?)?;
+    let naughty = catalog.add("naughty", component_bytes("naughty")?)?;
     let policy = Policy::builder(&catalog)
         .include(greeter)?
         .include(naughty)?
@@ -60,13 +59,12 @@ fn root() -> Result<PathBuf> {
         .context("failed to resolve the staged demo root")
 }
 
-fn add(catalog: &mut Catalog, root: &Path, name: &str) -> Result<ComponentId> {
-    let path = root
+fn component_bytes(name: &str) -> Result<Vec<u8>> {
+    let path = Path::new(env!("LOCKGATE_DEMO_ROOT"))
         .join("components")
         .join(name)
         .join(format!("{name}.wasm"));
-    let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    Ok(catalog.add(name, bytes)?)
+    fs::read(&path).with_context(|| format!("failed to read {}", path.display()))
 }
 
 fn print_catalog(catalog: &Catalog, components: [ComponentId; 5]) -> Result<()> {
