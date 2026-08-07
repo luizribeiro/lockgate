@@ -2,7 +2,7 @@
 
 use std::{env, fs, path::PathBuf, process::Command};
 
-const IDS: [&str; 5] = ["greeter", "caller", "filereader", "naughty", "dynamic"];
+const IDS: [&str; 4] = ["greeter", "caller", "filereader", "dynamic"];
 
 fn main() {
     let demo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());

@@ -68,7 +68,7 @@ examples/demo/
   build.rs               builds and stages executable demo components
   src/main.rs            catalog, policy, planning, calls, and narration
   src/artifacts.rs       staged component artifact lookup
-  components/            five standalone Rust component crates
+  components/            four standalone Rust component crates
   packages/              checked-in versioned demo WIT package
   sandbox/               demo filesystem input
   wit/                    editable demo-owned shared contracts
@@ -121,7 +121,7 @@ world consumer {
 }
 ```
 
-Greeter, caller, and naughty share one immutable demo contract at `examples/demo/packages/demo-greeter-0.1.0.wasm`. Its editable source is `examples/demo/wit/packages/greeter/package.wit`. Rebuild the package explicitly when publishing a contract version:
+Greeter and caller share one immutable demo contract at `examples/demo/packages/demo-greeter-0.1.0.wasm`. Its editable source is `examples/demo/wit/packages/greeter/package.wit`. Rebuild the package explicitly when publishing a contract version:
 
 ```console
 cd examples/demo
@@ -165,8 +165,8 @@ Directory grants require an existing host directory and a normalized absolute PO
 - Inspect `examples/demo/components/caller/src/lib.rs`: it contains no dynamic `Value`, handle, or registry reference—only `greeter::greet`.
 - Remove `.link(caller, greeter)` from the example policy. `Plan::new` refuses caller's real decoded import before any store exists.
 - Give caller and provider different signatures. Planning reports both structural types before guest code runs.
-- Run the default demo. Naughty shows a missing-authority plan refusal; dynamic shows an allowed exact lookup followed by an ungranted runtime `denied`; the host continues.
-- Change filereader's guest path away from `/shared`. WASI returns an error because no other directory is preopened.
+- Run the default demo. Dynamic shows an allowed exact lookup followed by an ungranted runtime `denied`; the host continues.
+- Run `cargo test -p lockgate-demo`. The filesystem test calls filereader with `/etc/passwd` while only `/shared` is preopened and verifies that WASI denies it without making the component unhealthy.
 - Run `cargo test -p lockgate` for identity, foreign handles/policies, directory validation, missing and ambiguous providers, complete structural signatures, unsupported types, fuel, health, depth, and cycle coverage.
 
 ## Current API substitutions and limits

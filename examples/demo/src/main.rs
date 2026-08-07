@@ -1,10 +1,11 @@
-//! Builds and narrates the end-to-end Lockgate demo, including direct,
-//! filesystem, dynamic, and rejected calls.
+//! Builds and narrates direct, filesystem, and dynamic Lockgate calls.
 
 use anyhow::Result;
 use lockgate::{Catalog, ComponentId, Event, Plan, Policy, Runtime, Val};
 
 mod artifacts;
+#[cfg(test)]
+mod tests;
 
 fn main() -> Result<()> {
     let root = artifacts::root()?;
@@ -12,9 +13,8 @@ fn main() -> Result<()> {
     let greeter = catalog.add("greeter", artifacts::component_bytes("greeter")?)?;
     let caller = catalog.add("caller", artifacts::component_bytes("caller")?)?;
     let filereader = catalog.add("filereader", artifacts::component_bytes("filereader")?)?;
-    let naughty = catalog.add("naughty", artifacts::component_bytes("naughty")?)?;
     let dynamic = catalog.add("dynamic", artifacts::component_bytes("dynamic")?)?;
-    print_catalog(&catalog, [greeter, caller, filereader, naughty, dynamic])?;
+    print_catalog(&catalog, [greeter, caller, filereader, dynamic])?;
 
     let greet = catalog.export(greeter, "demo:greeter/greeter@0.1.0#greet")?;
     let caller_run = catalog.export(caller, "demo:caller/runner@0.1.0#run")?;
@@ -27,30 +27,7 @@ fn main() -> Result<()> {
         .build();
     let plan = Plan::new(catalog, policy)?;
 
-    let mut naughty_catalog = Catalog::new()?;
-    let greeter = naughty_catalog.add("greeter", artifacts::component_bytes("greeter")?)?;
-    let naughty = naughty_catalog.add("naughty", artifacts::component_bytes("naughty")?)?;
-    let naughty_policy = Policy::builder(&naughty_catalog)
-        .include(greeter)?
-        .include(naughty)?
-        .build();
-    let Err(naughty_error) = Plan::new(naughty_catalog, naughty_policy) else {
-        anyhow::bail!("naughty unexpectedly produced a valid plan");
-    };
-    println!();
-    println!("[plan] naughty  REFUSED {naughty_error}");
-
-    let runtime = Runtime::with_observer(plan, |event| match event {
-        Event::DirectCall { target } => println!("  [direct] -> {target}"),
-        Event::DynamicLookup {
-            caller,
-            target,
-            allowed,
-        } => println!(
-            "  [dynamic] {caller} -> {target}  {}",
-            if allowed { "ALLOWED" } else { "DENIED" }
-        ),
-    })?;
+    let runtime = Runtime::with_observer(plan, print_event)?;
     println!("\n[call] caller.run()");
     let values = runtime.call(caller_run, &[])?;
     println!("  => {}", render_values(&values));
@@ -58,8 +35,6 @@ fn main() -> Result<()> {
     println!("\n[call] filereader.run()");
     let values = runtime.call(filereader_run, &[])?;
     println!("  => {}", render_values(&values));
-
-    println!("\n[call] naughty.run()\n  => unavailable (incomplete policy was refused)");
 
     println!("\n[call] dynamic.run()");
     let values = runtime.call(dynamic_run, &[])?;
@@ -69,7 +44,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn print_catalog(catalog: &Catalog, components: [ComponentId; 5]) -> Result<()> {
+fn print_event(event: Event) {
+    match event {
+        Event::DirectCall { target } => println!("  [direct] -> {target}"),
+        Event::DynamicLookup {
+            caller,
+            target,
+            allowed,
+        } => println!(
+            "  [dynamic] {caller} -> {target}  {}",
+            if allowed { "ALLOWED" } else { "DENIED" }
+        ),
+    }
+}
+
+fn print_catalog(catalog: &Catalog, components: [ComponentId; 4]) -> Result<()> {
     for component in components {
         let info = catalog.component(component)?;
         let exports = info
