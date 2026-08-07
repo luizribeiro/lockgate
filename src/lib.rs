@@ -16,12 +16,14 @@ pub use catalog::{
 pub use lockgate_macros::{bindgen, bindings};
 pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
 pub use runtime::{
-    Event, HasHost, PluginStore, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError,
+    Event, HasHost, HostComponent, HostContext, PluginStore, Runtime, RuntimeBuildError,
+    RuntimeBuilder, RuntimeError,
 };
 
 #[doc(hidden)]
 pub mod __private {
     pub use crate::binding::{BindingExport, BindingImport, ComponentBinding};
+    pub use crate::runtime::HostContextData;
     pub use anyhow::Result as AnyResult;
     pub use wasmtime::Store as WasmtimeStore;
     pub use wasmtime::component::Instance as WasmtimeInstance;

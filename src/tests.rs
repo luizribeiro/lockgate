@@ -1,7 +1,10 @@
 //! Cross-layer tests for discovery, planning, authority, and fuel isolation.
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
-use crate::{Catalog, CatalogError, PluginStore, Policy, Runtime, RuntimeBuildError, RuntimeError};
+use crate::{
+    Catalog, CatalogError, HostContext, PluginStore, Policy, Runtime, RuntimeBuildError,
+    RuntimeError,
+};
 use std::error::Error as _;
 use wasmtime::{Store, component::Instance};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
@@ -17,9 +20,7 @@ mod typed_bindings {
     }
 }
 
-struct SharedHost;
-
-impl typed_bindings::demo::admission::services::Host for SharedHost {
+impl typed_bindings::demo::admission::services::Host for HostContext<()> {
     fn log(&mut self, _message: String) {}
 }
 
@@ -40,16 +41,16 @@ fn application_bindings_share_imported_host_interfaces() {
     );
 
     let engine = wasmtime::Engine::default();
-    let mut first = Linker::<PluginStore<SharedHost>>::new(&engine);
-    typed_bindings::RunnablePlugin::add_to_linker::<_, HasHost<SharedHost>>(
+    let mut first = Linker::<PluginStore<()>>::new(&engine);
+    typed_bindings::RunnablePlugin::add_to_linker::<_, HasHost<()>>(
         &mut first,
-        PluginStore::host_mut,
+        PluginStore::context_mut,
     )
     .unwrap();
-    let mut second = Linker::<PluginStore<SharedHost>>::new(&engine);
-    typed_bindings::SecondaryPlugin::add_to_linker::<_, HasHost<SharedHost>>(
+    let mut second = Linker::<PluginStore<()>>::new(&engine);
+    typed_bindings::SecondaryPlugin::add_to_linker::<_, HasHost<()>>(
         &mut second,
-        PluginStore::host_mut,
+        PluginStore::context_mut,
     )
     .unwrap();
 }

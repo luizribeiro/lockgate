@@ -1,21 +1,17 @@
 //! Builds and narrates typed host calls, sibling forwarding, and filesystem isolation.
 
 use anyhow::Result;
-use lockgate::{Catalog, ComponentId, Event, HasHost, PluginStore, Policy, Runtime};
+use lockgate::{Catalog, ComponentId, Event, HasHost, HostContext, PluginStore, Policy, Runtime};
 use wasmtime::component::Linker;
 
-mod runnable_bindings {
-    lockgate::bindgen!({
+mod bindings {
+    lockgate::bindings! {
         path: "wit/packages/host",
-        world: "runnable-plugin",
-    });
-}
-
-mod file_reader_bindings {
-    lockgate::bindgen!({
-        path: "wit/packages/host",
-        world: "file-reader-plugin",
-    });
+        worlds: {
+            RunnablePlugin: "runnable-plugin",
+            FileReaderPlugin: "file-reader-plugin",
+        },
+    }
 }
 
 mod artifacts;
@@ -24,19 +20,9 @@ mod tests;
 
 const HOST_SERVICES: &str = "demo:host/services@0.1.0";
 
-struct DemoHost {
-    component: String,
-}
-
-impl runnable_bindings::demo::host::services::Host for DemoHost {
+impl bindings::demo::host::services::Host for HostContext<()> {
     fn log(&mut self, message: String) {
-        println!("  [host] {}: {message}", self.component);
-    }
-}
-
-impl file_reader_bindings::demo::host::services::Host for DemoHost {
-    fn log(&mut self, message: String) {
-        println!("  [host] {}: {message}", self.component);
+        println!("  [host] {}: {message}", self.component().name());
     }
 }
 
@@ -44,11 +30,9 @@ fn main() -> Result<()> {
     let root = artifacts::root()?;
     let mut catalog = Catalog::new()?;
     let greeter = catalog.add_untyped("greeter", artifacts::component_bytes("greeter")?)?;
-    let caller = catalog.add::<runnable_bindings::RunnablePlugin>(
-        "caller",
-        artifacts::component_bytes("caller")?,
-    )?;
-    let filereader = catalog.add::<file_reader_bindings::FileReaderPlugin>(
+    let caller =
+        catalog.add::<bindings::RunnablePlugin>("caller", artifacts::component_bytes("caller")?)?;
+    let filereader = catalog.add::<bindings::FileReaderPlugin>(
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
@@ -62,9 +46,7 @@ fn main() -> Result<()> {
         .build();
     let runtime = Runtime::builder(catalog, policy)
         .with_host(
-            |_, name| DemoHost {
-                component: name.into(),
-            },
+            |_, _| (),
             move |component, linker| {
                 configure_host(component, caller.id(), filereader.id(), linker)
             },
@@ -91,17 +73,12 @@ fn configure_host(
     component: ComponentId,
     caller: ComponentId,
     filereader: ComponentId,
-    linker: &mut Linker<PluginStore<DemoHost>>,
+    linker: &mut Linker<PluginStore<()>>,
 ) -> anyhow::Result<()> {
-    if component == caller {
-        runnable_bindings::RunnablePlugin::add_to_linker::<_, HasHost<DemoHost>>(
+    if component == caller || component == filereader {
+        bindings::demo::host::services::add_to_linker::<_, HasHost<()>>(
             linker,
-            PluginStore::host_mut,
-        )?;
-    } else if component == filereader {
-        file_reader_bindings::FileReaderPlugin::add_to_linker::<_, HasHost<DemoHost>>(
-            linker,
-            PluginStore::host_mut,
+            PluginStore::context_mut,
         )?;
     }
     Ok(())

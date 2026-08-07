@@ -1,6 +1,6 @@
 //! Exercises security properties that would distract from the narrated demo.
 
-use super::{DemoHost, HOST_SERVICES, artifacts, file_reader_bindings};
+use super::{HOST_SERVICES, artifacts, bindings};
 use anyhow::Result;
 use lockgate::{Catalog, HasHost, PluginStore, Policy, Runtime};
 
@@ -8,7 +8,7 @@ use lockgate::{Catalog, HasHost, PluginStore, Policy, Runtime};
 fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
     let root = artifacts::root()?;
     let mut catalog = Catalog::new()?;
-    let filereader = catalog.add::<file_reader_bindings::FileReaderPlugin>(
+    let filereader = catalog.add::<bindings::FileReaderPlugin>(
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
@@ -18,13 +18,11 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
         .build();
     let runtime = Runtime::builder(catalog, policy)
         .with_host(
-            |_, name| DemoHost {
-                component: name.into(),
-            },
+            |_, _| (),
             |_, linker| {
-                file_reader_bindings::FileReaderPlugin::add_to_linker::<_, HasHost<DemoHost>>(
+                bindings::demo::host::services::add_to_linker::<_, HasHost<()>>(
                     linker,
-                    PluginStore::host_mut,
+                    PluginStore::context_mut,
                 )?;
                 Ok(())
             },

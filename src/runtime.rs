@@ -28,15 +28,23 @@ const MAX_DEPTH: usize = 8;
 static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
 type Observer = Arc<dyn Fn(Event) + Send + Sync>;
-type HostFactory<H> = Arc<dyn Fn(ComponentId, &str) -> H + Send + Sync>;
-type LinkerConfig<H> =
-    Arc<dyn Fn(ComponentId, &mut Linker<PluginStore<H>>) -> anyhow::Result<()> + Send + Sync>;
+type StateFactory<S> = Arc<dyn Fn(ComponentId, &str) -> S + Send + Sync>;
+type LinkerConfig<S> =
+    Arc<dyn Fn(ComponentId, &mut Linker<PluginStore<S>>) -> anyhow::Result<()> + Send + Sync>;
 
-/// Projects generated host bindings from a [`PluginStore`] to its application state.
-pub struct HasHost<H>(std::marker::PhantomData<fn() -> H>);
+/// Projects generated host bindings from a [`PluginStore`] to its host context.
+pub struct HasHost<S>(std::marker::PhantomData<fn() -> S>);
 
-impl<H: 'static> HasData for HasHost<H> {
-    type Data<'a> = &'a mut H;
+impl<S: 'static> HasData for HasHost<S> {
+    type Data<'a> = &'a mut HostContext<S>;
+}
+
+/// Internal projection used by generated application binding installers.
+#[doc(hidden)]
+pub struct HostContextData<S>(std::marker::PhantomData<fn() -> S>);
+
+impl<S: 'static> HasData for HostContextData<S> {
+    type Data<'a> = &'a mut HostContext<S>;
 }
 
 /// An observable cross-component broker event.
@@ -72,25 +80,78 @@ impl Drop for CallGuard {
     }
 }
 
+/// The identity of the component associated with a host call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostComponent {
+    id: ComponentId,
+    name: String,
+}
+
+impl HostComponent {
+    /// Returns the catalog identity of this component.
+    pub fn id(&self) -> ComponentId {
+        self.id
+    }
+
+    /// Returns the application-assigned component name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Runtime-owned component context and application-defined state exposed to host bindings.
+pub struct HostContext<S = ()> {
+    component: HostComponent,
+    state: S,
+}
+
+impl<S> HostContext<S> {
+    fn new(component: ComponentId, name: String, state: S) -> Self {
+        Self {
+            component: HostComponent {
+                id: component,
+                name,
+            },
+            state,
+        }
+    }
+
+    /// Returns the identity of the component making host calls.
+    pub fn component(&self) -> &HostComponent {
+        &self.component
+    }
+
+    /// Returns the application-defined state associated with this component.
+    pub fn state(&self) -> &S {
+        &self.state
+    }
+
+    /// Returns mutable application-defined state associated with this component.
+    pub fn state_mut(&mut self) -> &mut S {
+        &mut self.state
+    }
+}
+
 /// Per-component store data available to application-defined host bindings.
-pub struct PluginStore<H: Send + 'static = ()> {
-    host: H,
-    component_name: String,
+pub struct PluginStore<S: Send + 'static = ()> {
+    context: HostContext<S>,
     wasi: WasiCtx,
     resources: ResourceTable,
 }
 
-impl<H: Send + 'static> PluginStore<H> {
-    pub fn host(&self) -> &H {
-        &self.host
+impl<S: Send + 'static> PluginStore<S> {
+    /// Returns the component context projected into generated host bindings.
+    pub fn context(&self) -> &HostContext<S> {
+        &self.context
     }
 
-    pub fn host_mut(&mut self) -> &mut H {
-        &mut self.host
+    /// Returns the mutable component context projected into generated host bindings.
+    pub fn context_mut(&mut self) -> &mut HostContext<S> {
+        &mut self.context
     }
 
     pub fn component_name(&self) -> &str {
-        &self.component_name
+        self.context.component.name()
     }
 
     pub fn resources_mut(&mut self) -> &mut ResourceTable {
@@ -98,7 +159,7 @@ impl<H: Send + 'static> PluginStore<H> {
     }
 }
 
-impl<H: Send + 'static> WasiView for PluginStore<H> {
+impl<S: Send + 'static> WasiView for PluginStore<S> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi,
@@ -130,7 +191,7 @@ pub struct RuntimeBuilder<H: Send + 'static = ()> {
     catalog: Catalog,
     policy: Policy,
     observer: Option<Observer>,
-    host_factory: HostFactory<H>,
+    state_factory: StateFactory<H>,
     configure_linker: LinkerConfig<H>,
 }
 
@@ -210,7 +271,7 @@ impl Runtime<()> {
             catalog,
             policy,
             observer: None,
-            host_factory: Arc::new(|_, _| ()),
+            state_factory: Arc::new(|_, _| ()),
             configure_linker: Arc::new(|_, _| Ok(())),
         }
     }
@@ -220,7 +281,7 @@ impl<H: Send + 'static> Runtime<H> {
     fn build(
         plan: Plan,
         observer: Option<Observer>,
-        host_factory: HostFactory<H>,
+        state_factory: StateFactory<H>,
         configure_linker: LinkerConfig<H>,
     ) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
@@ -237,7 +298,7 @@ impl<H: Send + 'static> Runtime<H> {
         for component in runtime.plan.order.clone() {
             runtime.instantiate(
                 component,
-                &host_factory,
+                &state_factory,
                 prepared
                     .remove(&component)
                     .expect("every included component has a prepared instance"),
@@ -334,7 +395,7 @@ impl<H: Send + 'static> Runtime<H> {
     fn instantiate(
         &self,
         component: ComponentId,
-        host_factory: &HostFactory<H>,
+        state_factory: &StateFactory<H>,
         instance: InstancePre<PluginStore<H>>,
     ) -> Result<(), RuntimeBuildError> {
         let entry = self.plan.catalog.entry(component)?;
@@ -350,8 +411,11 @@ impl<H: Send + 'static> Runtime<H> {
             preopen(&mut wasi, directory).map_err(|error| instantiate_error(&entry.name, error))?;
         }
         let state = PluginStore {
-            host: host_factory(component, &entry.name),
-            component_name: entry.name.clone(),
+            context: HostContext::new(
+                component,
+                entry.name.clone(),
+                state_factory(component, &entry.name),
+            ),
             wasi: wasi.build(),
             resources: ResourceTable::new(),
         };
@@ -390,7 +454,7 @@ impl RuntimeBuilder<()> {
             catalog: self.catalog,
             policy: self.policy,
             observer: self.observer,
-            host_factory: Arc::new(state),
+            state_factory: Arc::new(state),
             configure_linker: Arc::new(configure_linker),
         }
     }
@@ -409,7 +473,7 @@ impl<H: Send + 'static> RuntimeBuilder<H> {
         Runtime::build(
             plan,
             self.observer,
-            self.host_factory,
+            self.state_factory,
             self.configure_linker,
         )
     }
@@ -649,6 +713,19 @@ world consumer { import api; }"#;
             .unwrap()
             .encode()
             .unwrap()
+    }
+
+    #[test]
+    fn host_context_keeps_component_identity_separate_from_user_state() {
+        let mut catalog = Catalog::new().unwrap();
+        let component = catalog.add_untyped("provider", provider_bytes()).unwrap();
+        let mut context = HostContext::new(component, "provider".into(), vec![1]);
+
+        context.state_mut().push(2);
+
+        assert_eq!(context.component().id(), component);
+        assert_eq!(context.component().name(), "provider");
+        assert_eq!(context.state(), &[1, 2]);
     }
 
     #[test]
