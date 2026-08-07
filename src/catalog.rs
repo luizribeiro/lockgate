@@ -74,6 +74,7 @@ pub struct ComponentInfo<'a> {
 pub(crate) struct ComponentEntry {
     pub(crate) name: String,
     digest: ArtifactDigest,
+    binding_exports: Vec<lockgate_schema::Export>,
     pub(crate) imports: Vec<String>,
     pub(crate) direct_imports: Vec<DirectImport>,
     pub(crate) exports: Vec<ExportInfo>,
@@ -161,6 +162,30 @@ impl Catalog {
         })
     }
 
+    /// Admits an existing artifact against an additional generated application binding.
+    ///
+    /// The returned handle refers to the same catalog entry and compiled component. Admission
+    /// requires every export described by `B` to exist with the same WIT type; a failed check
+    /// leaves the catalog unchanged.
+    pub fn admit<B: ComponentBinding>(
+        &self,
+        component: impl ComponentRef,
+    ) -> Result<Component<B>, CatalogError> {
+        let id = component.id();
+        let entry = self.entry(id)?;
+        validate_binding(B::EXPORTS, &entry.binding_exports).map_err(|source| {
+            CatalogError::WorldMismatch {
+                name: entry.name.clone(),
+                world: B::WORLD.into(),
+                source,
+            }
+        })?;
+        Ok(Component {
+            id,
+            binding: PhantomData,
+        })
+    }
+
     /// Decodes and compiles an artifact without requiring an application binding.
     pub fn add_untyped(
         &mut self,
@@ -190,6 +215,7 @@ impl Catalog {
         self.components.push(ComponentEntry {
             name: name.clone(),
             digest: inspected.digest,
+            binding_exports: inspected.binding_exports,
             imports: inspected.imports,
             direct_imports: inspected.direct_imports,
             exports: inspected.exports,
@@ -562,15 +588,72 @@ fn interface_names(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasmtime::{Store, component::Instance};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
     const WIT: &str = r#"package demo:catalog@0.1.0;
 
 interface api { greet: func(name: string) -> string; }
+interface health { ping: func() -> bool; }
 
 world provider { export api; }
+world multi-provider { export api; export health; }
 world caller { import api; }"#;
+
+    struct GreeterBinding;
+
+    impl ComponentBinding for GreeterBinding {
+        const WORLD: &'static str = "greeter";
+        const EXPORTS: &'static [BindingExport] = &[BindingExport {
+            interface: "demo:catalog/api@0.1.0",
+            item: "greet",
+            signature: "freestanding(string)->string",
+        }];
+
+        fn bind<H: Send + 'static>(
+            _store: &mut Store<crate::PluginStore<H>>,
+            _instance: &Instance,
+        ) -> anyhow::Result<Self> {
+            Ok(Self)
+        }
+    }
+
+    struct HealthBinding;
+
+    impl ComponentBinding for HealthBinding {
+        const WORLD: &'static str = "health-check";
+        const EXPORTS: &'static [BindingExport] = &[BindingExport {
+            interface: "demo:catalog/health@0.1.0",
+            item: "ping",
+            signature: "freestanding()->bool",
+        }];
+
+        fn bind<H: Send + 'static>(
+            _store: &mut Store<crate::PluginStore<H>>,
+            _instance: &Instance,
+        ) -> anyhow::Result<Self> {
+            Ok(Self)
+        }
+    }
+
+    struct MissingBinding;
+
+    impl ComponentBinding for MissingBinding {
+        const WORLD: &'static str = "missing";
+        const EXPORTS: &'static [BindingExport] = &[BindingExport {
+            interface: "demo:catalog/missing@0.1.0",
+            item: "run",
+            signature: "freestanding()->unit",
+        }];
+
+        fn bind<H: Send + 'static>(
+            _store: &mut Store<crate::PluginStore<H>>,
+            _instance: &Instance,
+        ) -> anyhow::Result<Self> {
+            Ok(Self)
+        }
+    }
 
     fn component_bytes(world_name: &str) -> Vec<u8> {
         let mut resolve = Resolve::new();
@@ -633,6 +716,35 @@ world caller { import api; }"#;
             second.component(provider),
             Err(CatalogError::ForeignComponent)
         ));
+    }
+
+    #[test]
+    fn admits_one_artifact_under_multiple_bindings() {
+        let mut catalog = Catalog::new().unwrap();
+        let greeter = catalog
+            .add::<GreeterBinding>("combined", component_bytes("multi-provider"))
+            .unwrap();
+
+        let health = catalog.admit::<HealthBinding>(greeter).unwrap();
+
+        assert_eq!(greeter.id(), health.id());
+        assert_eq!(catalog.components().count(), 1);
+        assert_eq!(catalog.component(health).unwrap().name(), "combined");
+    }
+
+    #[test]
+    fn failed_additional_admission_leaves_the_catalog_unchanged() {
+        let mut catalog = Catalog::new().unwrap();
+        let greeter = catalog
+            .add::<GreeterBinding>("greeter", component_bytes("provider"))
+            .unwrap();
+        let digest = catalog.component(greeter).unwrap().digest();
+
+        let error = catalog.admit::<MissingBinding>(greeter).unwrap_err();
+
+        assert!(matches!(error, CatalogError::WorldMismatch { .. }));
+        assert_eq!(catalog.components().count(), 1);
+        assert_eq!(catalog.component(greeter).unwrap().digest(), digest);
     }
 
     #[test]
