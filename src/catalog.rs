@@ -246,6 +246,23 @@ impl FunctionSignature {
     }
 }
 
+impl fmt::Display for ExportInfo {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}{}", self.target, self.signature)
+    }
+}
+
+impl fmt::Display for FunctionSignature {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "({}) -> ", self.params.join(", "))?;
+        match self.results.as_slice() {
+            [] => write!(formatter, "()"),
+            [result] => write!(formatter, "{result}"),
+            results => write!(formatter, "({})", results.join(", ")),
+        }
+    }
+}
+
 impl fmt::Display for ArtifactDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
@@ -450,6 +467,14 @@ world caller { import api; }"#;
         assert_eq!(info.exports()[0].signature().params(), ["string"]);
         assert_eq!(info.exports()[0].signature().results(), ["string"]);
         assert_eq!(
+            info.exports()[0].signature().to_string(),
+            "(string) -> string"
+        );
+        assert_eq!(
+            info.exports()[0].to_string(),
+            "demo:catalog/api@0.1.0#greet(string) -> string"
+        );
+        assert_eq!(
             catalog
                 .components()
                 .map(|component| (component.id(), component.name().to_owned()))
@@ -468,5 +493,20 @@ world caller { import api; }"#;
             second.component(provider),
             Err(CatalogError::ForeignComponent)
         ));
+    }
+
+    #[test]
+    fn displays_empty_and_multiple_function_results() {
+        let empty = FunctionSignature {
+            params: Vec::new(),
+            results: Vec::new(),
+        };
+        assert_eq!(empty.to_string(), "() -> ()");
+
+        let multiple = FunctionSignature {
+            params: vec!["string".into(), "u32".into()],
+            results: vec!["bool".into(), "string".into()],
+        };
+        assert_eq!(multiple.to_string(), "(string, u32) -> (bool, string)");
     }
 }

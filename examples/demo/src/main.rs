@@ -59,19 +59,7 @@ fn print_catalog(catalog: &Catalog) {
         let exports = info
             .exports()
             .iter()
-            .map(|export| {
-                let signature = export.signature();
-                let results = match signature.results() {
-                    [] => "()".into(),
-                    [result] => result.clone(),
-                    results => format!("({})", results.join(", ")),
-                };
-                format!(
-                    "{}({}) -> {results}",
-                    export.target(),
-                    signature.params().join(", ")
-                )
-            })
+            .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ");
         println!("[load] {:<12} ok   provides {exports}", info.name());
