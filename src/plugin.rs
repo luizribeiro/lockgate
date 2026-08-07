@@ -14,6 +14,7 @@ use wit_parser::{Resolve, Type as WitType, TypeDefKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Signature {
+    pub(crate) async_: bool,
     pub(crate) params: Vec<Type>,
     pub(crate) results: Vec<Type>,
 }
@@ -44,70 +45,61 @@ impl fmt::Display for Signature {
     }
 }
 
-pub(crate) fn validate_wit_interface(
+pub(crate) fn validate_introspectable_interface(
     resolve: &Resolve,
     interface: wit_parser::InterfaceId,
 ) -> Result<()> {
     for function in resolve.interfaces[interface].functions.values() {
-        if function.kind.is_async() {
-            bail!("async plugin functions are unsupported");
-        }
-        if function.kind.resource().is_some() {
-            bail!("resource methods are unsupported");
-        }
         for param in &function.params {
-            validate_wit_type(resolve, param.ty)?;
+            validate_wit_type_for_introspection(resolve, param.ty)?;
         }
         if let Some(result) = function.result {
-            validate_wit_type(resolve, result)?;
+            validate_wit_type_for_introspection(resolve, result)?;
         }
     }
     Ok(())
 }
 
-fn validate_wit_type(resolve: &Resolve, ty: WitType) -> Result<()> {
+fn validate_wit_type_for_introspection(resolve: &Resolve, ty: WitType) -> Result<()> {
     let WitType::Id(id) = ty else {
-        if ty == WitType::ErrorContext {
-            bail!("error-context values cannot cross plugin stores");
-        }
         return Ok(());
     };
     match &resolve.types[id].kind {
         TypeDefKind::Record(record) => record
             .fields
             .iter()
-            .try_for_each(|field| validate_wit_type(resolve, field.ty)),
+            .try_for_each(|field| validate_wit_type_for_introspection(resolve, field.ty)),
         TypeDefKind::Tuple(tuple) => tuple
             .types
             .iter()
-            .try_for_each(|ty| validate_wit_type(resolve, *ty)),
+            .try_for_each(|ty| validate_wit_type_for_introspection(resolve, *ty)),
         TypeDefKind::Variant(variant) => variant
             .cases
             .iter()
             .filter_map(|case| case.ty)
-            .try_for_each(|ty| validate_wit_type(resolve, ty)),
+            .try_for_each(|ty| validate_wit_type_for_introspection(resolve, ty)),
         TypeDefKind::Option(ty) | TypeDefKind::List(ty) | TypeDefKind::Type(ty) => {
-            validate_wit_type(resolve, *ty)
+            validate_wit_type_for_introspection(resolve, *ty)
         }
         TypeDefKind::Result(result) => result
             .ok
             .into_iter()
             .chain(result.err)
-            .try_for_each(|ty| validate_wit_type(resolve, ty)),
+            .try_for_each(|ty| validate_wit_type_for_introspection(resolve, ty)),
         TypeDefKind::Map(key, value) => {
-            validate_wit_type(resolve, *key)?;
-            validate_wit_type(resolve, *value)
-        }
-        TypeDefKind::Resource | TypeDefKind::Handle(_) => {
-            bail!("resource handles are unsupported")
-        }
-        TypeDefKind::Future(_) | TypeDefKind::Stream(_) => {
-            bail!("async value types are unsupported")
+            validate_wit_type_for_introspection(resolve, *key)?;
+            validate_wit_type_for_introspection(resolve, *value)
         }
         TypeDefKind::FixedLengthList(_, _) => {
             bail!("fixed-length lists are unsupported by Wasmtime 47's component type API")
         }
-        TypeDefKind::Flags(_) | TypeDefKind::Enum(_) => Ok(()),
+        TypeDefKind::Future(ty) | TypeDefKind::Stream(ty) => ty
+            .map(|ty| validate_wit_type_for_introspection(resolve, ty))
+            .unwrap_or(Ok(())),
+        TypeDefKind::Resource
+        | TypeDefKind::Handle(_)
+        | TypeDefKind::Flags(_)
+        | TypeDefKind::Enum(_) => Ok(()),
         TypeDefKind::Unknown => unreachable!("resolved WIT cannot contain unknown types"),
     }
 }
@@ -144,41 +136,48 @@ pub(crate) fn interface_functions(
 
 impl Signature {
     fn from_component(function: &ComponentFunc) -> Result<Self> {
-        if function.async_() {
-            bail!("async plugin functions are unsupported");
-        }
-        let signature = Self {
+        Ok(Self {
+            async_: function.async_(),
             params: function.params().map(|(_, ty)| ty).collect(),
             results: function.results().collect(),
-        };
-        for ty in signature.params.iter().chain(&signature.results) {
-            validate_type(ty)?;
-        }
-        Ok(signature)
+        })
     }
 }
 
-fn validate_type(ty: &Type) -> Result<()> {
+pub(crate) fn validate_cross_store_signature(signature: &Signature) -> Result<()> {
+    if signature.async_ {
+        bail!("async functions are unsupported");
+    }
+    signature
+        .params
+        .iter()
+        .chain(&signature.results)
+        .try_for_each(validate_cross_store_type)
+}
+
+fn validate_cross_store_type(ty: &Type) -> Result<()> {
     match ty {
-        Type::List(list) => validate_type(&list.ty()),
+        Type::List(list) => validate_cross_store_type(&list.ty()),
         Type::Map(map) => {
-            validate_type(&map.key())?;
-            validate_type(&map.value())
+            validate_cross_store_type(&map.key())?;
+            validate_cross_store_type(&map.value())
         }
         Type::Record(record) => record
             .fields()
-            .try_for_each(|field| validate_type(&field.ty)),
-        Type::Tuple(tuple) => tuple.types().try_for_each(|ty| validate_type(&ty)),
+            .try_for_each(|field| validate_cross_store_type(&field.ty)),
+        Type::Tuple(tuple) => tuple
+            .types()
+            .try_for_each(|ty| validate_cross_store_type(&ty)),
         Type::Variant(variant) => variant
             .cases()
             .filter_map(|case| case.ty)
-            .try_for_each(|ty| validate_type(&ty)),
-        Type::Option(option) => validate_type(&option.ty()),
+            .try_for_each(|ty| validate_cross_store_type(&ty)),
+        Type::Option(option) => validate_cross_store_type(&option.ty()),
         Type::Result(result) => result
             .ok()
             .into_iter()
             .chain(result.err())
-            .try_for_each(|ty| validate_type(&ty)),
+            .try_for_each(|ty| validate_cross_store_type(&ty)),
         Type::Own(_) | Type::Borrow(_) => bail!("resource handles are unsupported"),
         Type::Future(_) | Type::Stream(_) => bail!("async value types are unsupported"),
         Type::ErrorContext => bail!("error-context values cannot cross plugin stores"),

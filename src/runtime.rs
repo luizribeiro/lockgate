@@ -148,6 +148,8 @@ pub enum RuntimeBuildError {
         expected: String,
         actual: String,
     },
+    #[error("sibling target `{target}` uses unsupported cross-store types: {reason}")]
+    UnsupportedSiblingType { target: String, reason: String },
     #[error("component `{component}` has multiple grants for guest directory `{guest}`")]
     DuplicateGuestDirectory { component: String, guest: String },
     #[error("component `{component}` is not included in the policy")]

@@ -2,7 +2,7 @@
 //! A catalog hashes exact artifacts and exposes the imports and exports decoded from their WIT.
 
 use crate::plugin::{
-    DirectImport, Signature, interface_functions, type_name, validate_wit_interface,
+    DirectImport, Signature, interface_functions, type_name, validate_introspectable_interface,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -282,9 +282,11 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
         if interface.starts_with("wasi:") {
             continue;
         }
-        validate_wit_interface(&resolve, *id).map_err(|source| CatalogError::InvalidComponent {
-            name: name.into(),
-            source,
+        validate_introspectable_interface(&resolve, *id).map_err(|source| {
+            CatalogError::InvalidComponent {
+                name: name.into(),
+                source,
+            }
         })?;
         let functions =
             interface_functions(engine, &component, &interface, true).map_err(|source| {
@@ -313,7 +315,7 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
                 _ => None,
             })
             .expect("exported interface was collected from this world");
-        validate_wit_interface(&resolve, interface_id).map_err(|source| {
+        validate_introspectable_interface(&resolve, interface_id).map_err(|source| {
             CatalogError::InvalidComponent {
                 name: name.into(),
                 source,
@@ -370,7 +372,7 @@ fn validate_world_interfaces(
             if imported && name.starts_with("wasi:") {
                 continue;
             }
-            validate_wit_interface(resolve, *id).map_err(|source| {
+            validate_introspectable_interface(resolve, *id).map_err(|source| {
                 CatalogError::InvalidComponent {
                     name: component_name.into(),
                     source,

@@ -3,6 +3,7 @@
 
 use crate::{
     catalog::{Catalog, CatalogError, ComponentId, ExportInfo},
+    plugin::validate_cross_store_signature,
     policy::{DirectoryGrant, Policy},
     runtime::RuntimeBuildError,
 };
@@ -120,6 +121,12 @@ impl Plan {
                 let mut functions = Vec::new();
                 for (function, expected) in &import.functions {
                     let target_name = format!("{}#{function}", import.interface);
+                    validate_cross_store_signature(expected).map_err(|error| {
+                        RuntimeBuildError::UnsupportedSiblingType {
+                            target: target_name.clone(),
+                            reason: error.to_string(),
+                        }
+                    })?;
                     let export = provider_entry
                         .exports
                         .iter()
@@ -129,6 +136,12 @@ impl Plan {
                             provider: provider_entry.name.clone(),
                             target: target_name.clone(),
                         })?;
+                    validate_cross_store_signature(&export.runtime_signature).map_err(|error| {
+                        RuntimeBuildError::UnsupportedSiblingType {
+                            target: target_name.clone(),
+                            reason: error.to_string(),
+                        }
+                    })?;
                     if &export.runtime_signature != expected {
                         return Err(RuntimeBuildError::TypeMismatch {
                             target: target_name,

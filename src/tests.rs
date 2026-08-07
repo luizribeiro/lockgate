@@ -45,19 +45,31 @@ world caller { import api; }"#;
 }
 
 #[test]
-fn catalog_rejects_cross_store_resource_imports() {
+fn plan_rejects_resource_handles_only_when_linked_across_stores() {
     let wit = r#"package demo:resources@0.1.0;
 
 interface api {
   resource file;
   run: func(input: borrow<file>);
 }
-world caller { import api; }"#;
+world caller { import api; }
+world provider { export api; }"#;
     let mut catalog = Catalog::new().unwrap();
-    let error = catalog
+    let caller = catalog
         .add("caller", component_bytes(wit, "caller"))
-        .unwrap_err();
-    assert!(error.source().unwrap().to_string().contains("resource"));
+        .unwrap();
+    let provider = catalog
+        .add("provider", component_bytes(wit, "provider"))
+        .unwrap();
+    let policy = Policy::builder(&catalog)
+        .link(caller, provider)
+        .unwrap()
+        .build();
+    assert!(matches!(
+        Runtime::builder(catalog, policy).build(),
+        Err(RuntimeBuildError::UnsupportedSiblingType { reason, .. })
+            if reason.contains("resource")
+    ));
 }
 
 #[test]
