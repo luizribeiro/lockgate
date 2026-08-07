@@ -1,8 +1,8 @@
 //! Builds and narrates typed host calls, sibling forwarding, and filesystem isolation.
 
 use anyhow::Result;
-use lockgate::{Catalog, ComponentId, Event, PluginStore, Policy, Runtime};
-use wasmtime::component::{HasSelf, Linker};
+use lockgate::{Catalog, ComponentId, Event, HasHost, PluginStore, Policy, Runtime};
+use wasmtime::component::Linker;
 
 mod runnable_bindings {
     wasmtime::component::bindgen!({
@@ -28,15 +28,15 @@ struct DemoHost {
     component: String,
 }
 
-impl runnable_bindings::demo::host::services::Host for PluginStore<DemoHost> {
+impl runnable_bindings::demo::host::services::Host for DemoHost {
     fn log(&mut self, message: String) {
-        println!("  [host] {}: {message}", self.host().component);
+        println!("  [host] {}: {message}", self.component);
     }
 }
 
-impl file_reader_bindings::demo::host::services::Host for PluginStore<DemoHost> {
+impl file_reader_bindings::demo::host::services::Host for DemoHost {
     fn log(&mut self, message: String) {
-        println!("  [host] {}: {message}", self.host().component);
+        println!("  [host] {}: {message}", self.component);
     }
 }
 
@@ -98,11 +98,15 @@ fn configure_host(
     linker: &mut Linker<PluginStore<DemoHost>>,
 ) -> anyhow::Result<()> {
     if component == caller {
-        runnable_bindings::RunnablePlugin::add_to_linker::<_, HasSelf<_>>(linker, |state| state)?;
+        runnable_bindings::RunnablePlugin::add_to_linker::<_, HasHost<DemoHost>>(
+            linker,
+            PluginStore::host_mut,
+        )?;
     } else if component == filereader {
-        file_reader_bindings::FileReaderPlugin::add_to_linker::<_, HasSelf<_>>(linker, |state| {
-            state
-        })?;
+        file_reader_bindings::FileReaderPlugin::add_to_linker::<_, HasHost<DemoHost>>(
+            linker,
+            PluginStore::host_mut,
+        )?;
     }
     Ok(())
 }

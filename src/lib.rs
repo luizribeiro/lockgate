@@ -9,7 +9,9 @@ pub mod runtime;
 
 pub use catalog::{ArtifactDigest, Catalog, CatalogError, ComponentId, ComponentInfo};
 pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
-pub use runtime::{Event, PluginStore, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError};
+pub use runtime::{
+    Event, HasHost, PluginStore, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError,
+};
 
 #[cfg(test)]
 mod tests;

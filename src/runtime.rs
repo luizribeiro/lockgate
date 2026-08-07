@@ -18,7 +18,7 @@ use std::{
 use thiserror::Error;
 use wasmtime::{
     Store,
-    component::{Component, Instance, Linker, ResourceTable, Val},
+    component::{Component, HasData, Instance, Linker, ResourceTable, Val},
 };
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
@@ -32,6 +32,13 @@ type LinkerConfig<H> =
     Arc<dyn Fn(ComponentId, &mut Linker<PluginStore<H>>) -> anyhow::Result<()> + Send + Sync>;
 type WorldRequirement<H> =
     Arc<dyn Fn(&Linker<PluginStore<H>>, &Component) -> anyhow::Result<()> + Send + Sync>;
+
+/// Projects generated host bindings from a [`PluginStore`] to its application state.
+pub struct HasHost<H>(std::marker::PhantomData<fn() -> H>);
+
+impl<H: 'static> HasData for HasHost<H> {
+    type Data<'a> = &'a mut H;
+}
 
 /// An observable cross-component broker event.
 #[derive(Clone, Debug, PartialEq, Eq)]

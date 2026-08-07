@@ -2,8 +2,7 @@
 
 use super::{DemoHost, HOST_SERVICES, artifacts, file_reader_bindings};
 use anyhow::Result;
-use lockgate::{Catalog, Policy, Runtime};
-use wasmtime::component::HasSelf;
+use lockgate::{Catalog, HasHost, PluginStore, Policy, Runtime};
 
 #[test]
 fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
@@ -20,9 +19,9 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
                 component: name.into(),
             },
             |_, linker| {
-                file_reader_bindings::FileReaderPlugin::add_to_linker::<_, HasSelf<_>>(
+                file_reader_bindings::FileReaderPlugin::add_to_linker::<_, HasHost<DemoHost>>(
                     linker,
-                    |state| state,
+                    PluginStore::host_mut,
                 )?;
                 Ok(())
             },
