@@ -302,6 +302,53 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                 #lockgate::__private::BindingImport { interface: #interface }
             }
         });
+        let host_imports = resolve.worlds[selected.id]
+            .imports
+            .values()
+            .filter_map(|item| match item {
+                WorldItem::Interface { id, .. } => {
+                    Some((resolve.id_of(*id).expect("validated named import"), *id))
+                }
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        let host_bounds = host_imports.values().map(|id| {
+            let path = interface_module_path(&resolve, *id);
+            quote! {
+                #lockgate::HostContext<S>:
+                    super::__lockgate_shared_imports::#(#path)::*::Host,
+            }
+        });
+        let installers = host_imports.iter().enumerate().map(|(index, (_, id))| {
+            let installer = format_ident!("__lockgate_install_host_import_{index}");
+            let path = interface_module_path(&resolve, *id);
+            quote! {
+                fn #installer<S: Send + 'static>(
+                    linker: &mut ::wasmtime::component::Linker<
+                        #lockgate::PluginStore<S>,
+                    >,
+                ) -> #lockgate::__private::AnyResult<()>
+                where
+                    #lockgate::HostContext<S>:
+                        super::__lockgate_shared_imports::#(#path)::*::Host,
+                {
+                    super::__lockgate_shared_imports::#(#path)::*::add_to_linker::<
+                        _,
+                        #lockgate::__private::HostContextData<S>,
+                    >(linker, #lockgate::PluginStore::context_mut)?;
+                    Ok(())
+                }
+            }
+        });
+        let installer_entries = host_imports.keys().enumerate().map(|(index, interface)| {
+            let installer = format_ident!("__lockgate_install_host_import_{index}");
+            quote! {
+                #lockgate::__private::HostImportBinding {
+                    interface: #interface,
+                    install: #installer::<S>,
+                }
+            }
+        });
         let remappings = resolve.worlds[selected.id]
             .imports
             .iter()
@@ -332,6 +379,8 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                 });
 
                 const _: () = {
+                    #(#installers)*
+
                     impl #lockgate::__private::ComponentBinding for #rust_name {
                         const WORLD: &'static str = #world;
                         const EXPORTS: &'static [#lockgate::__private::BindingExport] =
@@ -346,6 +395,18 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                             instance: &#lockgate::__private::WasmtimeInstance,
                         ) -> #lockgate::__private::AnyResult<Self> {
                             Ok(Self::new(&mut *store, instance)?)
+                        }
+                    }
+
+                    impl<S: Send + 'static> #lockgate::__private::ApplicationBinding<S>
+                        for #rust_name
+                    where
+                        #(#host_bounds)*
+                    {
+                        fn host_imports() -> ::std::vec::Vec<
+                            #lockgate::__private::HostImportBinding<S>,
+                        > {
+                            ::std::vec![#(#installer_entries),*]
                         }
                     }
                 };

@@ -22,7 +22,9 @@ pub use runtime::{
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::binding::{BindingExport, BindingImport, ComponentBinding};
+    pub use crate::binding::{
+        ApplicationBinding, BindingExport, BindingImport, ComponentBinding, HostImportBinding,
+    };
     pub use crate::runtime::HostContextData;
     pub use anyhow::Result as AnyResult;
     pub use wasmtime::Store as WasmtimeStore;
