@@ -2,7 +2,7 @@
 
 use super::artifacts;
 use anyhow::Result;
-use lockgate::{Catalog, Plan, Policy, Runtime, Val};
+use lockgate::{Catalog, Policy, Runtime, Val};
 
 #[test]
 fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
@@ -12,7 +12,7 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
     let policy = Policy::builder(&catalog)
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
         .build();
-    let runtime = Runtime::new(Plan::new(catalog, policy)?)?;
+    let runtime = Runtime::builder(catalog, policy).build()?;
 
     let values = runtime.call(
         filereader,

@@ -5,9 +5,9 @@ use crate::{
     catalog::{Catalog, CatalogError, ComponentId, ExportInfo},
     plugin::Signature,
     policy::{DirectoryGrant, Policy},
+    runtime::RuntimeBuildError,
 };
 use std::collections::{HashMap, HashSet};
-use thiserror::Error;
 use wasmtime::component::types::Type;
 
 const REGISTRY_INTERFACE: &str = "tangent:core/registry@0.1.0";
@@ -36,50 +36,17 @@ pub(crate) struct ComponentPlan {
 }
 
 /// A catalog and policy compiled into deterministic provider selections.
-pub struct Plan {
+pub(crate) struct Plan {
     pub(crate) catalog: Catalog,
     pub(crate) components: HashMap<ComponentId, ComponentPlan>,
     pub(crate) order: Vec<ComponentId>,
 }
 
-/// An error found before any component store is created.
-#[derive(Debug, Error)]
-pub enum PlanError {
-    #[error("policy belongs to a different catalog")]
-    ForeignPolicy,
-    #[error(transparent)]
-    Catalog(#[from] CatalogError),
-    #[error("component `{caller}` has multiple authorized providers for `{interface}`")]
-    AmbiguousProvider { caller: String, interface: String },
-    #[error("component `{caller}` has no authorized provider for `{interface}`")]
-    MissingProvider { caller: String, interface: String },
-    #[error("provider `{provider}` does not export `{target}` required by `{caller}`")]
-    MissingFunction {
-        caller: String,
-        provider: String,
-        target: String,
-    },
-    #[error("type mismatch for {target}: caller expects {expected}, provider exports {actual}")]
-    TypeMismatch {
-        target: String,
-        expected: String,
-        actual: String,
-    },
-    #[error("component `{component}` has multiple grants for guest directory `{guest}`")]
-    DuplicateGuestDirectory { component: String, guest: String },
-    #[error("component `{caller}` has multiple dynamic grants named `{target}`")]
-    AmbiguousLookup { caller: String, target: String },
-    #[error("dynamic target `{target}` uses types unsupported by the registry encoding")]
-    UnsupportedDynamicType { target: String },
-    #[error("component `{component}` imports the dynamic registry without enabling it")]
-    RegistryNotEnabled { component: String },
-}
-
 impl Plan {
     /// Resolves all authority granted by a policy against the catalog's decoded WIT.
-    pub fn new(catalog: Catalog, policy: Policy) -> Result<Self, PlanError> {
+    pub(crate) fn new(catalog: Catalog, policy: Policy) -> Result<Self, RuntimeBuildError> {
         if policy.catalog_identity() != catalog.identity() {
-            return Err(PlanError::ForeignPolicy);
+            return Err(RuntimeBuildError::ForeignPolicy);
         }
 
         let mut components = policy
@@ -101,7 +68,7 @@ impl Plan {
                 .iter()
                 .any(|existing| existing.guest() == grant.guest())
             {
-                return Err(PlanError::DuplicateGuestDirectory {
+                return Err(RuntimeBuildError::DuplicateGuestDirectory {
                     component: entry.name.clone(),
                     guest: grant.guest().display().to_string(),
                 });
@@ -111,7 +78,7 @@ impl Plan {
         for grant in policy.lookups() {
             let target = target_from_export(&catalog, grant.provider(), grant.target())?;
             if !dynamic_signature_supported(&target.signature) {
-                return Err(PlanError::UnsupportedDynamicType {
+                return Err(RuntimeBuildError::UnsupportedDynamicType {
                     target: target.key(),
                 });
             }
@@ -121,7 +88,7 @@ impl Plan {
                 .ok_or(CatalogError::ForeignComponent)?
                 .lookups;
             if lookups.insert(target.key(), target.clone()).is_some() {
-                return Err(PlanError::AmbiguousLookup {
+                return Err(RuntimeBuildError::AmbiguousLookup {
                     caller: caller_name,
                     target: target.key(),
                 });
@@ -142,7 +109,7 @@ impl Plan {
                 .any(|import| import == REGISTRY_INTERFACE)
                 && !components.get(&caller).unwrap().registry
             {
-                return Err(PlanError::RegistryNotEnabled {
+                return Err(RuntimeBuildError::RegistryNotEnabled {
                     component: caller_entry.name.clone(),
                 });
             }
@@ -161,13 +128,13 @@ impl Plan {
                     })
                     .collect::<HashSet<_>>();
                 if providers.is_empty() {
-                    return Err(PlanError::MissingProvider {
+                    return Err(RuntimeBuildError::MissingProvider {
                         caller: caller_entry.name.clone(),
                         interface: import.interface.clone(),
                     });
                 }
                 if providers.len() > 1 {
-                    return Err(PlanError::AmbiguousProvider {
+                    return Err(RuntimeBuildError::AmbiguousProvider {
                         caller: caller_entry.name.clone(),
                         interface: import.interface.clone(),
                     });
@@ -181,13 +148,13 @@ impl Plan {
                         .exports
                         .iter()
                         .find(|export| export.target() == target_name)
-                        .ok_or_else(|| PlanError::MissingFunction {
+                        .ok_or_else(|| RuntimeBuildError::MissingFunction {
                             caller: caller_entry.name.clone(),
                             provider: provider_entry.name.clone(),
                             target: target_name.clone(),
                         })?;
                     if &export.runtime_signature != expected {
-                        return Err(PlanError::TypeMismatch {
+                        return Err(RuntimeBuildError::TypeMismatch {
                             target: target_name,
                             expected: expected.to_string(),
                             actual: export.runtime_signature.to_string(),
@@ -213,10 +180,6 @@ impl Plan {
             components,
             order: policy.components().to_vec(),
         })
-    }
-
-    pub fn catalog(&self) -> &Catalog {
-        &self.catalog
     }
 
     pub(crate) fn component(&self, id: ComponentId) -> Result<&ComponentPlan, CatalogError> {
@@ -329,7 +292,7 @@ world caller { import api; }"#;
         let second = Catalog::new().unwrap();
         assert!(matches!(
             Plan::new(second, policy),
-            Err(PlanError::ForeignPolicy)
+            Err(RuntimeBuildError::ForeignPolicy)
         ));
     }
 }

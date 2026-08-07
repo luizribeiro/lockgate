@@ -1,7 +1,7 @@
 //! Cross-layer tests for discovery, planning, registry authority, and fuel isolation.
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
-use crate::{Catalog, Plan, PlanError, Policy, Runtime, RuntimeError};
+use crate::{Catalog, Policy, Runtime, RuntimeBuildError, RuntimeError};
 use std::error::Error as _;
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
@@ -79,8 +79,8 @@ world provider { export api; }"#;
         .unwrap()
         .build();
     assert!(matches!(
-        Plan::new(catalog, policy),
-        Err(PlanError::MissingProvider { caller, interface })
+        Runtime::builder(catalog, policy).build(),
+        Err(RuntimeBuildError::MissingProvider { caller, interface })
             if caller == "caller" && interface == "demo:missing/api@0.1.0"
     ));
 }
@@ -108,8 +108,8 @@ world provider { export api; }"#;
         .unwrap()
         .build();
     assert!(matches!(
-        Plan::new(catalog, policy),
-        Err(PlanError::AmbiguousProvider { .. })
+        Runtime::builder(catalog, policy).build(),
+        Err(RuntimeBuildError::AmbiguousProvider { .. })
     ));
 }
 
@@ -128,7 +128,7 @@ fn plan_compares_complete_structural_types() {
         .link(caller, provider)
         .unwrap()
         .build();
-    let error = match Plan::new(catalog, policy) {
+    let error = match Runtime::builder(catalog, policy).build() {
         Ok(_) => panic!("mismatched structural types unexpectedly planned"),
         Err(error) => error.to_string(),
     };
@@ -150,8 +150,8 @@ fn registry_import_requires_explicit_policy_authority() {
         .unwrap();
     let policy = Policy::builder(&catalog).include(dynamic).unwrap().build();
     assert!(matches!(
-        Plan::new(catalog, policy),
-        Err(PlanError::RegistryNotEnabled { .. })
+        Runtime::builder(catalog, policy).build(),
+        Err(RuntimeBuildError::RegistryNotEnabled { .. })
     ));
 }
 
@@ -168,8 +168,7 @@ fn unused_registry_authority_is_harmless() {
         .enable_registry(component)
         .unwrap()
         .build();
-    let plan = Plan::new(catalog, policy).unwrap();
-    assert!(Runtime::new(plan).is_ok());
+    assert!(Runtime::builder(catalog, policy).build().is_ok());
 }
 
 #[test]
@@ -192,8 +191,8 @@ world provider { export api; }"#;
         .unwrap()
         .build();
     assert!(matches!(
-        Plan::new(catalog, policy),
-        Err(PlanError::UnsupportedDynamicType { .. })
+        Runtime::builder(catalog, policy).build(),
+        Err(RuntimeBuildError::UnsupportedDynamicType { .. })
     ));
 
     let provider_wit = r#"package demo:dynamic-duplicate@0.1.0;
@@ -219,8 +218,8 @@ world provider { export api; }"#;
         .unwrap()
         .build();
     assert!(matches!(
-        Plan::new(catalog, policy),
-        Err(PlanError::AmbiguousLookup { .. })
+        Runtime::builder(catalog, policy).build(),
+        Err(RuntimeBuildError::AmbiguousLookup { .. })
     ));
 }
 
@@ -238,7 +237,7 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
     let mut catalog = Catalog::new().unwrap();
     let looping = catalog.add("looping", bytes).unwrap();
     let policy = Policy::builder(&catalog).include(looping).unwrap().build();
-    let runtime = Runtime::new(Plan::new(catalog, policy).unwrap()).unwrap();
+    let runtime = Runtime::builder(catalog, policy).build().unwrap();
     assert!(matches!(
         runtime.call(looping, "demo:fuel/api@0.1.0#run", &[]),
         Err(RuntimeError::Trapped { .. })

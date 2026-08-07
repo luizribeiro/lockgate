@@ -1,11 +1,11 @@
-//! Isolated component execution for a validated [`Plan`](crate::Plan).
+//! Validated construction and isolated execution of capability-scoped components.
 //! Each component receives its own store, WASI context, fuel budget, and dynamic handle table.
 
 use crate::{
-    ComponentId, Plan,
-    catalog::CatalogError,
-    plan::{ResolvedImport, Target},
-    policy::{DirectoryAccess, DirectoryGrant},
+    ComponentId,
+    catalog::{Catalog, CatalogError},
+    plan::{Plan, ResolvedImport, Target},
+    policy::{DirectoryAccess, DirectoryGrant, Policy},
     tangent::core::registry,
 };
 use std::{
@@ -105,13 +105,46 @@ pub struct Runtime {
     table: Arc<Mutex<RuntimeTable>>,
 }
 
-/// A typed failure while instantiating or calling a planned component.
+/// Configures a runtime before any component is instantiated.
+pub struct RuntimeBuilder {
+    catalog: Catalog,
+    policy: Policy,
+    observer: Option<Observer>,
+}
+
+/// A typed failure while validating or instantiating a runtime.
 #[derive(Debug, Error)]
-pub enum RuntimeError {
+pub enum RuntimeBuildError {
+    #[error("policy belongs to a different catalog")]
+    ForeignPolicy,
     #[error(transparent)]
     Catalog(#[from] CatalogError),
-    #[error("component `{component}` is not included in the plan")]
-    NotPlanned { component: String },
+    #[error("component `{caller}` has multiple authorized providers for `{interface}`")]
+    AmbiguousProvider { caller: String, interface: String },
+    #[error("component `{caller}` has no authorized provider for `{interface}`")]
+    MissingProvider { caller: String, interface: String },
+    #[error("provider `{provider}` does not export `{target}` required by `{caller}`")]
+    MissingFunction {
+        caller: String,
+        provider: String,
+        target: String,
+    },
+    #[error("type mismatch for {target}: caller expects {expected}, provider exports {actual}")]
+    TypeMismatch {
+        target: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("component `{component}` has multiple grants for guest directory `{guest}`")]
+    DuplicateGuestDirectory { component: String, guest: String },
+    #[error("component `{caller}` has multiple dynamic grants named `{target}`")]
+    AmbiguousLookup { caller: String, target: String },
+    #[error("dynamic target `{target}` uses types unsupported by the registry encoding")]
+    UnsupportedDynamicType { target: String },
+    #[error("component `{component}` imports the dynamic registry without enabling it")]
+    RegistryNotEnabled { component: String },
+    #[error("component `{component}` is not included in the policy")]
+    NotIncluded { component: String },
     #[error("component `{component}` imports `{interface}` without an authorized provider")]
     ImportDenied {
         component: String,
@@ -125,6 +158,15 @@ pub enum RuntimeError {
         #[source]
         source: anyhow::Error,
     },
+    #[error("runtime synchronization state was poisoned during construction")]
+    Poisoned,
+}
+
+/// A typed failure while calling an instantiated component.
+#[derive(Debug, Error)]
+pub enum RuntimeError {
+    #[error(transparent)]
+    Catalog(#[from] CatalogError),
     #[error("component `{component}` is unavailable")]
     Unavailable { component: String },
     #[error("component `{component}` is unhealthy")]
@@ -146,20 +188,16 @@ pub enum RuntimeError {
 }
 
 impl Runtime {
-    /// Instantiates every component included in a validated plan.
-    pub fn new(plan: Plan) -> Result<Self, RuntimeError> {
-        Self::build(plan, None)
+    /// Begins configuring a runtime for a catalog and its policy.
+    pub fn builder(catalog: Catalog, policy: Policy) -> RuntimeBuilder {
+        RuntimeBuilder {
+            catalog,
+            policy,
+            observer: None,
+        }
     }
 
-    /// Instantiates a plan and sends broker events to an application observer.
-    pub fn with_observer(
-        plan: Plan,
-        observer: impl Fn(Event) + Send + Sync + 'static,
-    ) -> Result<Self, RuntimeError> {
-        Self::build(plan, Some(Arc::new(observer)))
-    }
-
-    fn build(plan: Plan, observer: Option<Observer>) -> Result<Self, RuntimeError> {
+    fn build(plan: Plan, observer: Option<Observer>) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
             identity: NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed),
             components: HashMap::new(),
@@ -191,16 +229,12 @@ impl Runtime {
         Ok(runtime.healthy)
     }
 
-    pub fn plan(&self) -> &Plan {
-        &self.plan
-    }
-
-    fn instantiate(&self, component: ComponentId) -> Result<(), RuntimeError> {
+    fn instantiate(&self, component: ComponentId) -> Result<(), RuntimeBuildError> {
         let entry = self.plan.catalog.entry(component)?;
         let component_plan =
             self.plan
                 .component(component)
-                .map_err(|_| RuntimeError::NotPlanned {
+                .map_err(|_| RuntimeBuildError::NotIncluded {
                     component: entry.name.clone(),
                 })?;
         for import in &entry.direct_imports {
@@ -208,7 +242,7 @@ impl Runtime {
                 .direct_imports
                 .contains_key(&import.interface)
             {
-                return Err(RuntimeError::ImportDenied {
+                return Err(RuntimeBuildError::ImportDenied {
                     component: entry.name.clone(),
                     interface: import.interface.clone(),
                 });
@@ -220,7 +254,7 @@ impl Runtime {
             .any(|import| import == REGISTRY_INTERFACE)
             && !component_plan.registry
         {
-            return Err(RuntimeError::RegistryDenied {
+            return Err(RuntimeBuildError::RegistryDenied {
                 component: entry.name.clone(),
             });
         }
@@ -265,10 +299,24 @@ impl Runtime {
         }));
         self.table
             .lock()
-            .map_err(|_| RuntimeError::Poisoned)?
+            .map_err(|_| RuntimeBuildError::Poisoned)?
             .components
             .insert(component, runtime);
         Ok(())
+    }
+}
+
+impl RuntimeBuilder {
+    /// Sends broker events to an application observer from the start of instantiation.
+    pub fn with_observer(mut self, observer: impl Fn(Event) + Send + Sync + 'static) -> Self {
+        self.observer = Some(Arc::new(observer));
+        self
+    }
+
+    /// Validates the complete policy, then instantiates every included component.
+    pub fn build(self) -> Result<Runtime, RuntimeBuildError> {
+        let plan = Plan::new(self.catalog, self.policy)?;
+        Runtime::build(plan, self.observer)
     }
 }
 
@@ -421,8 +469,8 @@ fn enter_call(runtime: u64, target: &Target) -> Result<CallGuard, RuntimeError> 
     })
 }
 
-fn instantiate_error(component: &str, source: anyhow::Error) -> RuntimeError {
-    RuntimeError::Instantiation {
+fn instantiate_error(component: &str, source: anyhow::Error) -> RuntimeBuildError {
+    RuntimeBuildError::Instantiation {
         component: component.into(),
         source,
     }

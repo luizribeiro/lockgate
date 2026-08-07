@@ -1,7 +1,7 @@
 //! Builds and narrates direct, filesystem, and dynamic Lockgate calls.
 
 use anyhow::Result;
-use lockgate::{Catalog, ComponentId, Event, Plan, Policy, Runtime, Val};
+use lockgate::{Catalog, ComponentId, Event, Policy, Runtime, Val};
 
 mod artifacts;
 #[cfg(test)]
@@ -21,9 +21,9 @@ fn main() -> Result<()> {
         .allow_lookup(dynamic, greeter, "demo:greeter/greeter@0.1.0#greet")?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
         .build();
-    let plan = Plan::new(catalog, policy)?;
-
-    let runtime = Runtime::with_observer(plan, print_event)?;
+    let runtime = Runtime::builder(catalog, policy)
+        .with_observer(print_event)
+        .build()?;
     println!("\n[call] caller.run()");
     let values = runtime.call(caller, "demo:caller/runner@0.1.0#run", &[])?;
     println!("  => {}", render_values(&values));
