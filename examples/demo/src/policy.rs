@@ -60,7 +60,7 @@ fn root() -> Result<PathBuf> {
 }
 
 fn component_bytes(name: &str) -> Result<Vec<u8>> {
-    let path = Path::new(env!("LOCKGATE_DEMO_ROOT"))
+    let path = root()?
         .join("components")
         .join(name)
         .join(format!("{name}.wasm"));
