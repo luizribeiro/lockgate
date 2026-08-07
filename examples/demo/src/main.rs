@@ -26,20 +26,22 @@ fn main() -> Result<()> {
             if allowed { "ALLOWED" } else { "DENIED" }
         ),
     })?;
-    run_and_print(&runtime, demo.caller_run, "caller.run()");
-    run_and_print(&runtime, demo.filereader_run, "filereader.run()");
+    println!("\n[call] caller.run()");
+    let values = runtime.call(demo.caller_run, &[])?;
+    println!("  => {}", render_values(&values));
+
+    println!("\n[call] filereader.run()");
+    let values = runtime.call(demo.filereader_run, &[])?;
+    println!("  => {}", render_values(&values));
+
     println!("\n[call] naughty.run()\n  => unavailable (incomplete policy was refused)");
-    run_and_print(&runtime, demo.dynamic_run, "dynamic.run()");
+
+    println!("\n[call] dynamic.run()");
+    let values = runtime.call(demo.dynamic_run, &[])?;
+    println!("  => {}", render_values(&values));
+
     println!("\n[host] still running");
     Ok(())
-}
-
-fn run_and_print(runtime: &Runtime, export: lockgate::ExportId, label: &str) {
-    println!("\n[call] {label}");
-    match runtime.call(export, &[]) {
-        Ok(values) => println!("  => {}", render_values(&values)),
-        Err(error) => println!("  => ERROR {error:#}"),
-    }
 }
 
 fn render_values(values: &[Val]) -> String {
