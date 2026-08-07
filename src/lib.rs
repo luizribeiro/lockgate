@@ -1,5 +1,5 @@
-//! Capability-scoped WebAssembly component runtime.
-//! The initial public surface is minimal while the prototype is extracted into a library.
+//! Capability-scoped WebAssembly component applications with runtime-discovered linking.
+//! Catalogs discover artifacts, policies grant authority, and runtime builders validate before instantiation.
 
 pub mod catalog;
 mod plan;

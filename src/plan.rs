@@ -1,5 +1,5 @@
-//! Validated execution planning for a catalog and its immutable policy.
-//! Plans resolve authorized providers exactly while leaving ungranted imports to fail per instance.
+//! Private preflight validation and provider resolution for runtime construction.
+//! Every included import is authorized and structurally checked before any store is created.
 
 use crate::{
     catalog::{Catalog, CatalogError, ComponentId, ExportInfo},

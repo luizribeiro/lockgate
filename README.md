@@ -12,45 +12,46 @@ Lockgate deliberately keeps three kinds of identity separate:
 - Lockgate computes a SHA-256 digest over the exact artifact bytes.
 - Package, interface, and function names come from the WIT embedded in the component.
 
-Policy code therefore uses opaque catalog handles rather than names copied out of Wasm files:
+Policy code therefore uses opaque catalog handles for component identity and verifies canonical WIT targets against the selected artifacts:
 
 ```rust,no_run
-use lockgate::{Catalog, Plan, Policy, Runtime};
+use lockgate::{Catalog, Policy, Runtime};
 
 # fn example(
 #     greeter_wasm: &[u8],
 #     caller_wasm: &[u8],
 #     dynamic_wasm: &[u8],
+#     filereader_wasm: &[u8],
 #     shared_dir: &std::path::Path,
 # ) -> Result<(), Box<dyn std::error::Error>> {
 let mut catalog = Catalog::new()?;
 let greeter = catalog.add("greeter", greeter_wasm)?;
 let caller = catalog.add("caller", caller_wasm)?;
 let dynamic = catalog.add("dynamic", dynamic_wasm)?;
-let greet = catalog.export(
-    greeter,
-    "demo:greeter/greeter@0.1.0#greet",
-)?;
-let caller_run = catalog.export(
-    caller,
-    "demo:caller/runner@0.1.0#run",
-)?;
+let filereader = catalog.add("filereader", filereader_wasm)?;
 
 let policy = Policy::builder(&catalog)
     .link(caller, greeter)?
-    .allow_lookup(dynamic, greet)?
-    .read_only_dir(caller, shared_dir, "/shared")?
+    .allow_lookup(
+        dynamic,
+        greeter,
+        "demo:greeter/greeter@0.1.0#greet",
+    )?
+    .read_only_dir(filereader, shared_dir, "/shared")?
     .build();
 
-let plan = Plan::new(catalog, policy)?;
-let runtime = Runtime::new(plan)?;
-let values = runtime.call(caller_run, &[])?;
+let runtime = Runtime::builder(catalog, policy).build()?;
+let values = runtime.call(
+    caller,
+    "demo:caller/runner@0.1.0#run",
+    &[],
+)?;
 assert_eq!(values.len(), 1);
 # Ok(())
 # }
 ```
 
-All four lifecycle stages are public. `Plan` performs deterministic, side-effect-free authority and structural-type validation; `Runtime` is the first stage allowed to instantiate or execute a component. Parsers and configuration-file formats remain outside Lockgate's core API.
+The public lifecycle is `Catalog` → `Policy` → `Runtime`. `RuntimeBuilder::build` performs deterministic, side-effect-free authority and structural-type validation before it creates any component store. Parsers and configuration-file formats remain outside Lockgate's core API.
 
 ## Repository layout
 
@@ -58,7 +59,7 @@ All four lifecycle stages are public. `Plan` performs deterministic, side-effect
 src/
   catalog.rs             artifact identity and decoded component metadata
   policy.rs              immutable programmatic grants
-  plan.rs                provider resolution and complete preflight validation
+  plan.rs                private provider resolution and preflight validation
   plugin.rs              shared structural type validation helpers
   runtime.rs             isolated stores and broker forwarding
   runtime/dynamic.rs     optional runtime-typed registry broker
@@ -66,7 +67,7 @@ wit/
   core.wit               optional dynamic registry owned by Lockgate
 examples/demo/
   build.rs               builds and stages executable demo components
-  src/main.rs            catalog, policy, planning, calls, and narration
+  src/main.rs            catalog, policy, runtime construction, calls, and narration
   src/artifacts.rs       staged component artifact lookup
   components/            four standalone Rust component crates
   packages/              checked-in versioned demo WIT package
@@ -138,14 +139,14 @@ Ordinary component builds consume that package and never regenerate it implicitl
 
 `Policy` contains only catalog-owned handles. Grants automatically include their caller and provider; `.include(component)` adds a standalone component. An optional capability granted but not imported remains harmless.
 
-`Plan` validates every included component before any store exists. For each typed component import it:
+`RuntimeBuilder::build` validates every included component before any store exists. For each typed component import it:
 
 1. requires exactly one explicitly linked provider for the whole interface;
 2. resolves every required function from that exact provider artifact;
 3. structurally compares the caller's expected signature with the provider's actual signature;
 4. rejects missing, ambiguous, incomplete, or mismatched links with named errors.
 
-`Runtime` gives each component its own Wasmtime `Store`, resource table, WASI context, bounded dynamic handle table, and fuel budget. It installs typed imports with `Linker::instance(...).func_new(...)`, begins with no preopens and network denied, and emits typed `Event` values instead of printing. The application decides whether and how to log broker crossings.
+`RuntimeBuilder` accepts an optional observer before validation and instantiation, so initialization cannot create an observation gap. `Runtime` then gives each component its own Wasmtime `Store`, resource table, WASI context, bounded dynamic handle table, and fuel budget. It installs typed imports with `Linker::instance(...).func_new(...)`, begins with no preopens and network denied, and emits typed `Event` values instead of printing. The application decides whether and how to log broker crossings.
 
 The runtime table lives outside every store. Wasmtime 47 requires forwarding callbacks and store data to satisfy `Send` bounds, so Lockgate uses `Arc<Mutex<...>>` with a separate lock per component. An identity-based RAII call stack rejects cycles and depth greater than eight before locking a callee, including mixed direct/dynamic chains. Fuel exhaustion becomes a trapped call, marks that component unhealthy, and leaves unrelated stores available.
 
@@ -163,8 +164,8 @@ Directory grants require an existing host directory and a normalized absolute PO
 ## Acceptance experiments
 
 - Inspect `examples/demo/components/caller/src/lib.rs`: it contains no dynamic `Value`, handle, or registry reference—only `greeter::greet`.
-- Remove `.link(caller, greeter)` from the example policy. `Plan::new` refuses caller's real decoded import before any store exists.
-- Give caller and provider different signatures. Planning reports both structural types before guest code runs.
+- Remove `.link(caller, greeter)` from the example policy. `RuntimeBuilder::build` refuses caller's real decoded import before any store exists.
+- Give caller and provider different signatures. Runtime construction reports both structural types before guest code runs.
 - Run the default demo. Dynamic shows an allowed exact lookup followed by an ungranted runtime `denied`; the host continues.
 - Run `cargo test -p lockgate-demo`. The filesystem test calls filereader with `/etc/passwd` while only `/shared` is preopened and verifies that WASI denies it without making the component unhealthy.
 - Run `cargo test -p lockgate` for identity, foreign handles/policies, directory validation, missing and ambiguous providers, complete structural signatures, unsupported types, fuel, health, depth, and cycle coverage.
@@ -179,4 +180,4 @@ The flake currently pins Rust 1.97.1, `cargo-component` 0.21.1, `wasm-tools` 1.2
 - Resource handles and `error-context` cannot cross independent stores. Async functions, futures, and streams remain explicit non-goals.
 - Wasmtime 47's public dynamic type conversion does not expose fixed-length lists and currently contains a `todo!()` for them. Lockgate rejects those from decoded WIT before runtime introspection rather than panicking.
 - The optional dynamic registry intentionally supports only `bool`, `s32`, `u32`, `string`, and `list<string>`. Typed forwarding supports Wasmtime's broader structural value set.
-- Dynamic grants name an exact `ExportId`. Unknown and existing-but-ungranted target strings are both denied without revealing catalog contents; repeated allowed lookups reuse one per-store handle.
+- Host calls and dynamic grants identify an exact component handle and canonical WIT target. Unknown and existing-but-ungranted target strings are both denied without revealing catalog contents; repeated allowed lookups reuse one per-store handle.

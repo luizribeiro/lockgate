@@ -5,7 +5,7 @@ use crate::catalog::{Catalog, CatalogError, ComponentId};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-/// A fully validated and immutable set of component grants.
+/// An immutable set of component grants ready for runtime validation.
 pub struct Policy {
     catalog: u64,
     components: Vec<ComponentId>,
@@ -102,7 +102,7 @@ impl Policy {
 }
 
 impl PolicyBuilder<'_> {
-    /// Includes a component that needs no other grants in the execution plan.
+    /// Includes a component that needs no other grants in the runtime.
     pub fn include(mut self, component: ComponentId) -> Result<Self, PolicyError> {
         self.catalog.component(component)?;
         self.include_component(component);
