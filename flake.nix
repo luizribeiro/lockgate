@@ -18,7 +18,7 @@
           overlays = [ rust-overlay.overlays.default ];
         };
         rust = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "clippy" "rust-src" "rustfmt" ];
+          extensions = [ "clippy" "rust-analyzer" "rust-src" "rustfmt" ];
           targets = [ "wasm32-wasip1" "wasm32-wasip2" ];
         };
       in {
