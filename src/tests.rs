@@ -8,10 +8,50 @@ use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_compon
 use wit_parser::{ManglingAndAbi, Resolve};
 
 mod typed_bindings {
-    crate::bindgen!({
+    crate::bindings! {
         path: "src/testdata/admission.wit",
-        world: "runnable-plugin",
-    });
+        worlds: {
+            RunnablePlugin: "runnable-plugin",
+            SecondaryPlugin: "secondary-plugin",
+        },
+    }
+}
+
+struct SharedHost;
+
+impl typed_bindings::demo::admission::services::Host for SharedHost {
+    fn log(&mut self, _message: String) {}
+}
+
+#[test]
+fn application_bindings_share_imported_host_interfaces() {
+    use crate::{HasHost, binding::ComponentBinding};
+    use wasmtime::component::Linker;
+
+    assert_eq!(
+        <typed_bindings::RunnablePlugin as ComponentBinding>::IMPORTS,
+        &[crate::binding::BindingImport {
+            interface: "demo:admission/services@0.1.0",
+        }]
+    );
+    assert_eq!(
+        <typed_bindings::SecondaryPlugin as ComponentBinding>::IMPORTS,
+        <typed_bindings::RunnablePlugin as ComponentBinding>::IMPORTS,
+    );
+
+    let engine = wasmtime::Engine::default();
+    let mut first = Linker::<PluginStore<SharedHost>>::new(&engine);
+    typed_bindings::RunnablePlugin::add_to_linker::<_, HasHost<SharedHost>>(
+        &mut first,
+        PluginStore::host_mut,
+    )
+    .unwrap();
+    let mut second = Linker::<PluginStore<SharedHost>>::new(&engine);
+    typed_bindings::SecondaryPlugin::add_to_linker::<_, HasHost<SharedHost>>(
+        &mut second,
+        PluginStore::host_mut,
+    )
+    .unwrap();
 }
 
 fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {

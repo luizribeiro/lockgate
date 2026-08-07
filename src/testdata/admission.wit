@@ -12,3 +12,8 @@ world runnable-plugin {
   import services;
   export runnable;
 }
+
+world secondary-plugin {
+  import services;
+  export runnable;
+}
