@@ -42,7 +42,7 @@ pub(crate) fn build() -> Result<DemoPlan> {
     })
 }
 
-pub(crate) fn naughty_error() -> Result<String> {
+pub(crate) fn build_naughty() -> Result<(Catalog, Policy)> {
     let root = root()?;
     let mut catalog = Catalog::new()?;
     let greeter = add(&mut catalog, &root, "greeter")?;
@@ -51,10 +51,7 @@ pub(crate) fn naughty_error() -> Result<String> {
         .include(greeter)?
         .include(naughty)?
         .build();
-    match Plan::new(catalog, policy) {
-        Ok(_) => anyhow::bail!("naughty unexpectedly produced a valid plan"),
-        Err(error) => Ok(error.to_string()),
-    }
+    Ok((catalog, policy))
 }
 
 fn root() -> Result<PathBuf> {

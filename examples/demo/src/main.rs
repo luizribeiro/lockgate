@@ -2,14 +2,18 @@
 //! filesystem, dynamic, and rejected calls.
 
 use anyhow::Result;
-use lockgate::{Event, Runtime, Val};
+use lockgate::{Event, Plan, Runtime, Val};
 
 mod policy;
 
 fn main() -> Result<()> {
     let demo = policy::build()?;
+    let (naughty_catalog, naughty_policy) = policy::build_naughty()?;
+    let Err(naughty_error) = Plan::new(naughty_catalog, naughty_policy) else {
+        anyhow::bail!("naughty unexpectedly produced a valid plan");
+    };
     println!();
-    println!("[plan] naughty  REFUSED {}", policy::naughty_error()?);
+    println!("[plan] naughty  REFUSED {naughty_error}");
 
     let runtime = Runtime::with_observer(demo.plan, |event| match event {
         Event::DirectCall { target } => println!("  [direct] -> {target}"),
