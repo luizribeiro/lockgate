@@ -148,6 +148,20 @@ impl Catalog {
         Ok(ComponentInfo { id, entry })
     }
 
+    /// Iterates over discovered component metadata in insertion order.
+    pub fn components(&self) -> impl ExactSizeIterator<Item = ComponentInfo<'_>> {
+        self.components
+            .iter()
+            .enumerate()
+            .map(move |(index, entry)| ComponentInfo {
+                id: ComponentId {
+                    catalog: self.identity,
+                    index,
+                },
+                entry,
+            })
+    }
+
     pub(crate) fn export(
         &self,
         component: ComponentId,
@@ -428,12 +442,20 @@ world caller { import api; }"#;
     fn assigns_identity_and_discovers_wit() {
         let mut catalog = Catalog::new().unwrap();
         let provider = catalog.add("greeter", component_bytes("provider")).unwrap();
+        let caller = catalog.add("caller", component_bytes("caller")).unwrap();
         let info = catalog.component(provider).unwrap();
         assert_eq!(info.name(), "greeter");
         assert_eq!(info.digest().to_string().len(), 64);
         assert_eq!(info.exports()[0].target(), "demo:catalog/api@0.1.0#greet");
         assert_eq!(info.exports()[0].signature().params(), ["string"]);
         assert_eq!(info.exports()[0].signature().results(), ["string"]);
+        assert_eq!(
+            catalog
+                .components()
+                .map(|component| (component.id(), component.name().to_owned()))
+                .collect::<Vec<_>>(),
+            [(provider, "greeter".into()), (caller, "caller".into())]
+        );
         assert!(catalog.add("greeter", component_bytes("provider")).is_err());
     }
 

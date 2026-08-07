@@ -1,7 +1,7 @@
 //! Builds and narrates direct, filesystem, and dynamic Lockgate calls.
 
 use anyhow::Result;
-use lockgate::{Catalog, ComponentId, Event, Policy, Runtime, Val};
+use lockgate::{Catalog, Event, Policy, Runtime, Val};
 
 mod artifacts;
 #[cfg(test)]
@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     let caller = catalog.add("caller", artifacts::component_bytes("caller")?)?;
     let filereader = catalog.add("filereader", artifacts::component_bytes("filereader")?)?;
     let dynamic = catalog.add("dynamic", artifacts::component_bytes("dynamic")?)?;
-    print_catalog(&catalog, [greeter, caller, filereader, dynamic])?;
+    print_catalog(&catalog);
 
     let policy = Policy::builder(&catalog)
         .link(caller, greeter)?
@@ -54,9 +54,8 @@ fn print_event(event: Event) {
     }
 }
 
-fn print_catalog(catalog: &Catalog, components: [ComponentId; 4]) -> Result<()> {
-    for component in components {
-        let info = catalog.component(component)?;
+fn print_catalog(catalog: &Catalog) {
+    for info in catalog.components() {
         let exports = info
             .exports()
             .iter()
@@ -77,7 +76,6 @@ fn print_catalog(catalog: &Catalog, components: [ComponentId; 4]) -> Result<()> 
             .join(", ");
         println!("[load] {:<12} ok   provides {exports}", info.name());
     }
-    Ok(())
 }
 
 fn render_values(values: &[Val]) -> String {
