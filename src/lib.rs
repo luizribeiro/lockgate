@@ -8,8 +8,8 @@ pub mod policy;
 pub mod runtime;
 
 pub use catalog::{ArtifactDigest, Catalog, CatalogError, ComponentId, ComponentInfo};
-pub use policy::{DirectoryAccess, Policy, PolicyBuilder, PolicyError};
-pub use runtime::{Event, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError};
+pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
+pub use runtime::{Event, PluginStore, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError};
 pub use wasmtime::component::Val;
 
 pub(crate) const REGISTRY_INTERFACE: &str = "lockgate:core/registry@0.1.0";

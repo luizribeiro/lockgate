@@ -19,7 +19,7 @@ use std::{
 use thiserror::Error;
 use wasmtime::{
     Store,
-    component::{HasSelf, Instance, Linker, ResourceTable, Val},
+    component::{Component, HasSelf, Instance, Linker, ResourceTable, Val},
 };
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
@@ -30,6 +30,11 @@ const MAX_DEPTH: usize = 8;
 static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
 type Observer = Arc<dyn Fn(Event) + Send + Sync>;
+type HostFactory<H> = Arc<dyn Fn(ComponentId, &str) -> H + Send + Sync>;
+type LinkerConfig<H> =
+    Arc<dyn Fn(ComponentId, &mut Linker<PluginStore<H>>) -> anyhow::Result<()> + Send + Sync>;
+type WorldRequirement<H> =
+    Arc<dyn Fn(&Linker<PluginStore<H>>, &Component) -> anyhow::Result<()> + Send + Sync>;
 
 /// An observable cross-component broker event.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,17 +72,37 @@ impl Drop for CallGuard {
     }
 }
 
-struct StoreState {
+/// Per-component store data available to application-defined host bindings.
+pub struct PluginStore<H: Send + 'static = ()> {
+    host: H,
     component_name: String,
     wasi: WasiCtx,
     resources: ResourceTable,
-    runtimes: Weak<Mutex<RuntimeTable>>,
+    runtimes: Weak<Mutex<RuntimeTable<H>>>,
     lookups: HashMap<String, Target>,
     handles: HashMap<u32, Target>,
     target_handles: HashMap<String, u32>,
 }
 
-impl WasiView for StoreState {
+impl<H: Send + 'static> PluginStore<H> {
+    pub fn host(&self) -> &H {
+        &self.host
+    }
+
+    pub fn host_mut(&mut self) -> &mut H {
+        &mut self.host
+    }
+
+    pub fn component_name(&self) -> &str {
+        &self.component_name
+    }
+
+    pub fn resources_mut(&mut self) -> &mut ResourceTable {
+        &mut self.resources
+    }
+}
+
+impl<H: Send + 'static> WasiView for PluginStore<H> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi,
@@ -86,29 +111,32 @@ impl WasiView for StoreState {
     }
 }
 
-struct ComponentRuntime {
-    store: Store<StoreState>,
+struct ComponentRuntime<H: Send + 'static> {
+    store: Store<PluginStore<H>>,
     instance: Instance,
     healthy: bool,
 }
 
-struct RuntimeTable {
+struct RuntimeTable<H: Send + 'static> {
     identity: u64,
-    components: HashMap<ComponentId, Arc<Mutex<ComponentRuntime>>>,
+    components: HashMap<ComponentId, Arc<Mutex<ComponentRuntime<H>>>>,
     observer: Option<Observer>,
 }
 
 /// A fully instantiated set of isolated component stores.
-pub struct Runtime {
+pub struct Runtime<H: Send + 'static = ()> {
     plan: Plan,
-    table: Arc<Mutex<RuntimeTable>>,
+    table: Arc<Mutex<RuntimeTable<H>>>,
 }
 
 /// Configures a runtime before any component is instantiated.
-pub struct RuntimeBuilder {
+pub struct RuntimeBuilder<H: Send + 'static = ()> {
     catalog: Catalog,
     policy: Policy,
     observer: Option<Observer>,
+    host_factory: HostFactory<H>,
+    configure_linker: LinkerConfig<H>,
+    requirements: HashMap<ComponentId, Vec<WorldRequirement<H>>>,
 }
 
 /// A typed failure while validating or instantiating a runtime.
@@ -186,17 +214,28 @@ pub enum RuntimeError {
     Poisoned,
 }
 
-impl Runtime {
+impl Runtime<()> {
     /// Begins configuring a runtime for a catalog and its policy.
-    pub fn builder(catalog: Catalog, policy: Policy) -> RuntimeBuilder {
+    pub fn builder(catalog: Catalog, policy: Policy) -> RuntimeBuilder<()> {
         RuntimeBuilder {
             catalog,
             policy,
             observer: None,
+            host_factory: Arc::new(|_, _| ()),
+            configure_linker: Arc::new(|_, _| Ok(())),
+            requirements: HashMap::new(),
         }
     }
+}
 
-    fn build(plan: Plan, observer: Option<Observer>) -> Result<Self, RuntimeBuildError> {
+impl<H: Send + 'static> Runtime<H> {
+    fn build(
+        plan: Plan,
+        observer: Option<Observer>,
+        host_factory: HostFactory<H>,
+        configure_linker: LinkerConfig<H>,
+        requirements: HashMap<ComponentId, Vec<WorldRequirement<H>>>,
+    ) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
             identity: NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed),
             components: HashMap::new(),
@@ -204,7 +243,15 @@ impl Runtime {
         }));
         let runtime = Self { plan, table };
         for component in runtime.plan.order.clone() {
-            runtime.instantiate(component)?;
+            runtime.instantiate(
+                component,
+                &host_factory,
+                &configure_linker,
+                requirements
+                    .get(&component)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+            )?;
         }
         Ok(runtime)
     }
@@ -220,6 +267,21 @@ impl Runtime {
         invoke_target(&self.table, &target, params)
     }
 
+    /// Runs a typed application binding against one component instance.
+    pub fn with_instance<R>(
+        &self,
+        component: ComponentId,
+        call: impl FnOnce(&mut Store<PluginStore<H>>, &Instance) -> anyhow::Result<R>,
+    ) -> Result<R, RuntimeError> {
+        let entry = self.plan.catalog.entry(component)?;
+        with_component(&self.table, component, &entry.name, |runtime| {
+            let ComponentRuntime {
+                store, instance, ..
+            } = runtime;
+            call(store, instance)
+        })
+    }
+
     /// Reports whether a component has avoided a trapping call.
     pub fn is_healthy(&self, component: ComponentId) -> Result<bool, RuntimeError> {
         let name = self.plan.catalog.component(component)?.name().to_owned();
@@ -228,7 +290,13 @@ impl Runtime {
         Ok(runtime.healthy)
     }
 
-    fn instantiate(&self, component: ComponentId) -> Result<(), RuntimeBuildError> {
+    fn instantiate(
+        &self,
+        component: ComponentId,
+        host_factory: &HostFactory<H>,
+        configure_linker: &LinkerConfig<H>,
+        requirements: &[WorldRequirement<H>],
+    ) -> Result<(), RuntimeBuildError> {
         let entry = self.plan.catalog.entry(component)?;
         let component_plan =
             self.plan
@@ -240,6 +308,7 @@ impl Runtime {
             if !component_plan
                 .direct_imports
                 .contains_key(&import.interface)
+                && !component_plan.host_imports.contains(&import.interface)
             {
                 return Err(RuntimeBuildError::ImportDenied {
                     component: entry.name.clone(),
@@ -264,18 +333,25 @@ impl Runtime {
             .map_err(|error| instantiate_error(&entry.name, error.into()))?;
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|error| instantiate_error(&entry.name, error.into()))?;
+        configure_linker(component, &mut linker)
+            .map_err(|error| instantiate_error(&entry.name, error))?;
         wire_direct_imports(
             &mut linker,
             &self.table,
             component_plan.direct_imports.values(),
         )
         .map_err(|error| instantiate_error(&entry.name, error))?;
+        for requirement in requirements {
+            requirement(&linker, &entry.component)
+                .map_err(|error| instantiate_error(&entry.name, error))?;
+        }
 
         let mut wasi = WasiCtxBuilder::new();
         for directory in &component_plan.directories {
             preopen(&mut wasi, directory).map_err(|error| instantiate_error(&entry.name, error))?;
         }
-        let state = StoreState {
+        let state = PluginStore {
+            host: host_factory(component, &entry.name),
             component_name: entry.name.clone(),
             wasi: wasi.build(),
             resources: ResourceTable::new(),
@@ -305,21 +381,65 @@ impl Runtime {
     }
 }
 
-impl RuntimeBuilder {
+impl RuntimeBuilder<()> {
+    /// Supplies application state and generated host bindings for every component store.
+    pub fn with_host<H: Send + 'static>(
+        self,
+        state: impl Fn(ComponentId, &str) -> H + Send + Sync + 'static,
+        configure_linker: impl Fn(ComponentId, &mut Linker<PluginStore<H>>) -> anyhow::Result<()>
+        + Send
+        + Sync
+        + 'static,
+    ) -> RuntimeBuilder<H> {
+        RuntimeBuilder {
+            catalog: self.catalog,
+            policy: self.policy,
+            observer: self.observer,
+            host_factory: Arc::new(state),
+            configure_linker: Arc::new(configure_linker),
+            requirements: HashMap::new(),
+        }
+    }
+}
+
+impl<H: Send + 'static> RuntimeBuilder<H> {
     /// Sends broker events to an application observer from the start of instantiation.
     pub fn with_observer(mut self, observer: impl Fn(Event) + Send + Sync + 'static) -> Self {
         self.observer = Some(Arc::new(observer));
         self
     }
 
+    /// Requires a generated application world to match before a component store is created.
+    pub fn require_world(
+        mut self,
+        component: ComponentId,
+        validate: impl Fn(&Linker<PluginStore<H>>, &Component) -> anyhow::Result<()>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<Self, CatalogError> {
+        self.catalog.component(component)?;
+        self.requirements
+            .entry(component)
+            .or_default()
+            .push(Arc::new(validate));
+        Ok(self)
+    }
+
     /// Validates the complete policy, then instantiates every included component.
-    pub fn build(self) -> Result<Runtime, RuntimeBuildError> {
+    pub fn build(self) -> Result<Runtime<H>, RuntimeBuildError> {
         let plan = Plan::new(self.catalog, self.policy)?;
-        Runtime::build(plan, self.observer)
+        Runtime::build(
+            plan,
+            self.observer,
+            self.host_factory,
+            self.configure_linker,
+            self.requirements,
+        )
     }
 }
 
-impl ComponentRuntime {
+impl<H: Send + 'static> ComponentRuntime<H> {
     fn call(&mut self, target: &Target, params: &[Val]) -> Result<Vec<Val>, anyhow::Error> {
         let interface = self
             .instance
@@ -343,9 +463,9 @@ impl ComponentRuntime {
     }
 }
 
-fn wire_direct_imports<'a>(
-    linker: &mut Linker<StoreState>,
-    runtimes: &Arc<Mutex<RuntimeTable>>,
+fn wire_direct_imports<'a, H: Send + 'static>(
+    linker: &mut Linker<PluginStore<H>>,
+    runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     imports: impl Iterator<Item = &'a ResolvedImport>,
 ) -> Result<(), anyhow::Error> {
     for import in imports {
@@ -375,7 +495,7 @@ fn wire_direct_imports<'a>(
     Ok(())
 }
 
-fn emit(runtimes: &Weak<Mutex<RuntimeTable>>, event: Event) {
+fn emit<H: Send + 'static>(runtimes: &Weak<Mutex<RuntimeTable<H>>>, event: Event) {
     let observer = runtimes
         .upgrade()
         .and_then(|runtimes| runtimes.lock().ok()?.observer.clone());
@@ -384,45 +504,59 @@ fn emit(runtimes: &Weak<Mutex<RuntimeTable>>, event: Event) {
     }
 }
 
-fn invoke_target(
-    runtimes: &Arc<Mutex<RuntimeTable>>,
+fn invoke_target<H: Send + 'static>(
+    runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     target: &Target,
     params: &[Val],
 ) -> Result<Vec<Val>, RuntimeError> {
+    with_component(
+        runtimes,
+        target.component,
+        &target.component_name,
+        |runtime| runtime.call(target, params),
+    )
+}
+
+fn with_component<H: Send + 'static, R>(
+    runtimes: &Arc<Mutex<RuntimeTable<H>>>,
+    component: ComponentId,
+    component_name: &str,
+    call: impl FnOnce(&mut ComponentRuntime<H>) -> anyhow::Result<R>,
+) -> Result<R, RuntimeError> {
     let runtime_identity = runtimes
         .lock()
         .map_err(|_| RuntimeError::Poisoned)?
         .identity;
-    let _guard = enter_call(runtime_identity, target)?;
-    let runtime = runtime_for(runtimes, target.component, &target.component_name)?;
-    let mut runtime = try_runtime_lock(&runtime, &target.component_name)?;
+    let _guard = enter_component(runtime_identity, component, component_name)?;
+    let runtime = runtime_for(runtimes, component, component_name)?;
+    let mut runtime = try_runtime_lock(&runtime, component_name)?;
     if !runtime.healthy {
         return Err(RuntimeError::Unhealthy {
-            component: target.component_name.clone(),
+            component: component_name.into(),
         });
     }
     runtime
         .store
         .set_fuel(FUEL)
         .map_err(|source| RuntimeError::Trapped {
-            component: target.component_name.clone(),
+            component: component_name.into(),
             source: source.into(),
         })?;
-    let result = runtime.call(target, params);
+    let result = call(&mut runtime);
     if result.is_err() {
         runtime.healthy = false;
     }
     result.map_err(|source| RuntimeError::Trapped {
-        component: target.component_name.clone(),
+        component: component_name.into(),
         source,
     })
 }
 
-fn runtime_for(
-    runtimes: &Arc<Mutex<RuntimeTable>>,
+fn runtime_for<H: Send + 'static>(
+    runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     component: ComponentId,
     name: &str,
-) -> Result<Arc<Mutex<ComponentRuntime>>, RuntimeError> {
+) -> Result<Arc<Mutex<ComponentRuntime<H>>>, RuntimeError> {
     runtimes
         .lock()
         .map_err(|_| RuntimeError::Poisoned)?
@@ -434,10 +568,10 @@ fn runtime_for(
         })
 }
 
-fn try_runtime_lock<'a>(
-    runtime: &'a Mutex<ComponentRuntime>,
+fn try_runtime_lock<'a, H: Send + 'static>(
+    runtime: &'a Mutex<ComponentRuntime<H>>,
     name: &str,
-) -> Result<MutexGuard<'a, ComponentRuntime>, RuntimeError> {
+) -> Result<MutexGuard<'a, ComponentRuntime<H>>, RuntimeError> {
     match runtime.try_lock() {
         Ok(runtime) => Ok(runtime),
         Err(TryLockError::WouldBlock) => Err(RuntimeError::Busy {
@@ -447,11 +581,17 @@ fn try_runtime_lock<'a>(
     }
 }
 
+#[cfg(test)]
 fn enter_call(runtime: u64, target: &Target) -> Result<CallGuard, RuntimeError> {
-    let frame = Frame {
-        runtime,
-        component: target.component,
-    };
+    enter_component(runtime, target.component, &target.component_name)
+}
+
+fn enter_component(
+    runtime: u64,
+    component: ComponentId,
+    component_name: &str,
+) -> Result<CallGuard, RuntimeError> {
+    let frame = Frame { runtime, component };
     CALL_STACK.with(|stack| {
         let mut stack = stack.borrow_mut();
         let runtime_depth = stack.iter().filter(|item| item.runtime == runtime).count();
@@ -460,7 +600,7 @@ fn enter_call(runtime: u64, target: &Target) -> Result<CallGuard, RuntimeError> 
         }
         if stack.contains(&frame) {
             return Err(RuntimeError::Cycle {
-                component: target.component_name.clone(),
+                component: component_name.into(),
             });
         }
         stack.push(frame);

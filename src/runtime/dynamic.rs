@@ -1,11 +1,11 @@
 //! Optional runtime-typed registry host implementation.
 //! Exact lookup grants become bounded per-store handles before values cross into another store.
 
-use super::{Event, StoreState, emit, invoke_target};
+use super::{Event, PluginStore, emit, invoke_target};
 use crate::{lockgate::core::registry, plan::Target};
 use wasmtime::component::{Val, types::Type};
 
-impl registry::Host for StoreState {
+impl<H: Send + 'static> registry::Host for PluginStore<H> {
     fn lookup(&mut self, target: String) -> Result<u32, registry::InvokeError> {
         let Some(resolved) = self.lookups.get(&target).cloned() else {
             emit(

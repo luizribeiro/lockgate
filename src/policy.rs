@@ -10,6 +10,7 @@ pub struct Policy {
     catalog: u64,
     components: Vec<ComponentId>,
     links: Vec<LinkGrant>,
+    host_imports: Vec<HostImportGrant>,
     lookups: Vec<LookupGrant>,
     directories: Vec<DirectoryGrant>,
     registries: Vec<ComponentId>,
@@ -20,6 +21,7 @@ pub struct PolicyBuilder<'a> {
     catalog: &'a Catalog,
     components: Vec<ComponentId>,
     links: Vec<LinkGrant>,
+    host_imports: Vec<HostImportGrant>,
     lookups: Vec<LookupGrant>,
     directories: Vec<DirectoryGrant>,
     registries: Vec<ComponentId>,
@@ -29,6 +31,12 @@ pub struct PolicyBuilder<'a> {
 pub struct LinkGrant {
     caller: ComponentId,
     provider: ComponentId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostImportGrant {
+    component: ComponentId,
+    interface: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +66,11 @@ pub enum PolicyError {
     Catalog(#[from] CatalogError),
     #[error("component `{caller}` imports no interface exported by `{provider}`")]
     NoMatchingImport { caller: String, provider: String },
+    #[error("component `{component}` does not import host interface `{interface}`")]
+    NoSuchHostImport {
+        component: String,
+        interface: String,
+    },
     #[error("guest directory path must be normalized absolute POSIX: `{0}`")]
     RelativeGuestPath(PathBuf),
     #[error("host directory does not exist or is not a directory: `{0}`")]
@@ -70,6 +83,7 @@ impl Policy {
             catalog,
             components: Vec::new(),
             links: Vec::new(),
+            host_imports: Vec::new(),
             lookups: Vec::new(),
             directories: Vec::new(),
             registries: Vec::new(),
@@ -78,6 +92,10 @@ impl Policy {
 
     pub fn links(&self) -> &[LinkGrant] {
         &self.links
+    }
+
+    pub fn host_imports(&self) -> &[HostImportGrant] {
+        &self.host_imports
     }
 
     pub fn lookups(&self) -> &[LookupGrant] {
@@ -131,6 +149,31 @@ impl PolicyBuilder<'_> {
         }
         self.include_component(caller);
         self.include_component(provider);
+        Ok(self)
+    }
+
+    /// Permits one component import to be implemented by the embedding host.
+    pub fn allow_host_import(
+        mut self,
+        component: ComponentId,
+        interface: impl Into<String>,
+    ) -> Result<Self, PolicyError> {
+        let interface = interface.into();
+        let info = self.catalog.component(component)?;
+        if !info.imports().iter().any(|import| import == &interface) {
+            return Err(PolicyError::NoSuchHostImport {
+                component: info.name().into(),
+                interface,
+            });
+        }
+        self.include_component(component);
+        let grant = HostImportGrant {
+            component,
+            interface,
+        };
+        if !self.host_imports.contains(&grant) {
+            self.host_imports.push(grant);
+        }
         Ok(self)
     }
 
@@ -203,6 +246,7 @@ impl PolicyBuilder<'_> {
             catalog: self.catalog.identity(),
             components: self.components,
             links: self.links,
+            host_imports: self.host_imports,
             lookups: self.lookups,
             directories: self.directories,
             registries: self.registries,
@@ -268,6 +312,16 @@ impl LinkGrant {
 
     pub fn provider(&self) -> ComponentId {
         self.provider
+    }
+}
+
+impl HostImportGrant {
+    pub fn component(&self) -> ComponentId {
+        self.component
+    }
+
+    pub fn interface(&self) -> &str {
+        &self.interface
     }
 }
 
@@ -348,6 +402,21 @@ world caller { import api; }"#;
         assert_eq!(policy.links().len(), 1);
         assert_eq!(policy.lookups().len(), 1);
         assert_eq!(policy.directories()[0].access(), DirectoryAccess::ReadOnly);
+    }
+
+    #[test]
+    fn grants_only_real_host_imports() {
+        let mut catalog = Catalog::new().unwrap();
+        let caller = catalog.add("caller", component_bytes("caller")).unwrap();
+        let policy = Policy::builder(&catalog)
+            .allow_host_import(caller, "demo:policy/api@0.1.0")
+            .unwrap()
+            .build();
+        assert_eq!(policy.host_imports().len(), 1);
+        assert!(matches!(
+            Policy::builder(&catalog).allow_host_import(caller, "demo:policy/missing@0.1.0"),
+            Err(PolicyError::NoSuchHostImport { .. })
+        ));
     }
 
     #[test]

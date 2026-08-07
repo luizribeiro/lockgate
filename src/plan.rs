@@ -29,6 +29,7 @@ pub(crate) struct ResolvedImport {
 #[derive(Default)]
 pub(crate) struct ComponentPlan {
     pub(crate) direct_imports: HashMap<String, ResolvedImport>,
+    pub(crate) host_imports: HashSet<String>,
     pub(crate) lookups: HashMap<String, Target>,
     pub(crate) directories: Vec<DirectoryGrant>,
     pub(crate) registry: bool,
@@ -58,6 +59,14 @@ impl Plan {
         for component in policy.registries() {
             catalog.entry(*component)?;
             components.get_mut(component).unwrap().registry = true;
+        }
+        for grant in policy.host_imports() {
+            catalog.entry(grant.component())?;
+            components
+                .get_mut(&grant.component())
+                .ok_or(CatalogError::ForeignComponent)?
+                .host_imports
+                .insert(grant.interface().into());
         }
         for grant in policy.directories() {
             let entry = catalog.entry(grant.component())?;
@@ -113,6 +122,14 @@ impl Plan {
                 });
             }
             for import in &caller_entry.direct_imports {
+                if components
+                    .get(&caller)
+                    .unwrap()
+                    .host_imports
+                    .contains(&import.interface)
+                {
+                    continue;
+                }
                 let providers = links
                     .iter()
                     .filter(|(linked_caller, _)| *linked_caller == caller)
