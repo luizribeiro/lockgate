@@ -3,19 +3,13 @@
 
 use anyhow::Result;
 use lockgate::{Event, Runtime, Val};
-use std::path::Path;
 
 mod policy;
 
 fn main() -> Result<()> {
-    run(Path::new(env!("LOCKGATE_DEMO_ROOT")))
-}
-
-fn run(root: &Path) -> Result<()> {
-    let root = root.canonicalize()?;
-    let demo = policy::build(&root)?;
+    let demo = policy::build()?;
     println!();
-    println!("[plan] naughty  REFUSED {}", policy::naughty_error(&root)?);
+    println!("[plan] naughty  REFUSED {}", policy::naughty_error()?);
 
     let runtime = Runtime::with_observer(demo.plan, |event| match event {
         Event::DirectCall { target } => println!("  [direct] -> {target}"),

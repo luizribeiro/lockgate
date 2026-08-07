@@ -2,7 +2,10 @@
 
 use anyhow::{Context, Result};
 use lockgate::{Catalog, ComponentId, ExportId, Plan, Policy};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub(crate) struct DemoPlan {
     pub(crate) plan: Plan,
@@ -11,13 +14,14 @@ pub(crate) struct DemoPlan {
     pub(crate) dynamic_run: ExportId,
 }
 
-pub(crate) fn build(root: &Path) -> Result<DemoPlan> {
+pub(crate) fn build() -> Result<DemoPlan> {
+    let root = root()?;
     let mut catalog = Catalog::new()?;
-    let greeter = add(&mut catalog, root, "greeter")?;
-    let caller = add(&mut catalog, root, "caller")?;
-    let filereader = add(&mut catalog, root, "filereader")?;
-    let naughty = add(&mut catalog, root, "naughty")?;
-    let dynamic = add(&mut catalog, root, "dynamic")?;
+    let greeter = add(&mut catalog, &root, "greeter")?;
+    let caller = add(&mut catalog, &root, "caller")?;
+    let filereader = add(&mut catalog, &root, "filereader")?;
+    let naughty = add(&mut catalog, &root, "naughty")?;
+    let dynamic = add(&mut catalog, &root, "dynamic")?;
     print_catalog(&catalog, [greeter, caller, filereader, naughty, dynamic])?;
 
     let greet = catalog.export(greeter, "demo:greeter/greeter@0.1.0#greet")?;
@@ -38,10 +42,11 @@ pub(crate) fn build(root: &Path) -> Result<DemoPlan> {
     })
 }
 
-pub(crate) fn naughty_error(root: &Path) -> Result<String> {
+pub(crate) fn naughty_error() -> Result<String> {
+    let root = root()?;
     let mut catalog = Catalog::new()?;
-    let greeter = add(&mut catalog, root, "greeter")?;
-    let naughty = add(&mut catalog, root, "naughty")?;
+    let greeter = add(&mut catalog, &root, "greeter")?;
+    let naughty = add(&mut catalog, &root, "naughty")?;
     let policy = Policy::builder(&catalog)
         .include(greeter)?
         .include(naughty)?
@@ -50,6 +55,12 @@ pub(crate) fn naughty_error(root: &Path) -> Result<String> {
         Ok(_) => anyhow::bail!("naughty unexpectedly produced a valid plan"),
         Err(error) => Ok(error.to_string()),
     }
+}
+
+fn root() -> Result<PathBuf> {
+    Path::new(env!("LOCKGATE_DEMO_ROOT"))
+        .canonicalize()
+        .context("failed to resolve the staged demo root")
 }
 
 fn add(catalog: &mut Catalog, root: &Path, name: &str) -> Result<ComponentId> {
