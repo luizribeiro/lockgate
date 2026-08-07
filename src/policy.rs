@@ -1,7 +1,7 @@
 //! Immutable, programmatic capability policy construction.
 //! Policy grants refer to opaque catalog handles instead of names copied from configuration files.
 
-use crate::catalog::{Catalog, CatalogError, ComponentId, ExportId};
+use crate::catalog::{Catalog, CatalogError, ComponentId};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -31,10 +31,11 @@ pub struct LinkGrant {
     provider: ComponentId,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LookupGrant {
     caller: ComponentId,
-    export: ExportId,
+    provider: ComponentId,
+    target: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,17 +138,22 @@ impl PolicyBuilder<'_> {
     pub fn allow_lookup(
         mut self,
         caller: ComponentId,
-        export: ExportId,
+        provider: ComponentId,
+        target: impl Into<String>,
     ) -> Result<Self, PolicyError> {
+        let target = target.into();
         self.catalog.component(caller)?;
-        self.catalog.export_entry(export)?;
-        let provider = self.catalog.export_component(export)?;
+        self.catalog.export(provider, &target)?;
         self.include_component(caller);
         self.include_component(provider);
         if !self.registries.contains(&caller) {
             self.registries.push(caller);
         }
-        let grant = LookupGrant { caller, export };
+        let grant = LookupGrant {
+            caller,
+            provider,
+            target,
+        };
         if !self.lookups.contains(&grant) {
             self.lookups.push(grant);
         }
@@ -270,8 +276,12 @@ impl LookupGrant {
         self.caller
     }
 
-    pub fn export(&self) -> ExportId {
-        self.export
+    pub fn provider(&self) -> ComponentId {
+        self.provider
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
     }
 }
 
@@ -327,13 +337,10 @@ world caller { import api; }"#;
         let provider = catalog
             .add("provider", component_bytes("provider"))
             .unwrap();
-        let export = catalog
-            .export(provider, "demo:policy/api@0.1.0#run")
-            .unwrap();
         let policy = Policy::builder(&catalog)
             .link(caller, provider)
             .unwrap()
-            .allow_lookup(caller, export)
+            .allow_lookup(caller, provider, "demo:policy/api@0.1.0#run")
             .unwrap()
             .read_only_dir(caller, std::env::temp_dir(), "/shared")
             .unwrap()

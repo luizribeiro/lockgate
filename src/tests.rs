@@ -187,11 +187,8 @@ world provider { export api; }"#;
     let provider = catalog
         .add("provider", component_bytes(provider_wit, "provider"))
         .unwrap();
-    let export = catalog
-        .export(provider, "demo:dynamic-types/api@0.1.0#run")
-        .unwrap();
     let policy = Policy::builder(&catalog)
-        .allow_lookup(dynamic, export)
+        .allow_lookup(dynamic, provider, "demo:dynamic-types/api@0.1.0#run")
         .unwrap()
         .build();
     assert!(matches!(
@@ -215,16 +212,10 @@ world provider { export api; }"#;
     let second = catalog
         .add("second", component_bytes(provider_wit, "provider"))
         .unwrap();
-    let first = catalog
-        .export(first, "demo:dynamic-duplicate/api@0.1.0#run")
-        .unwrap();
-    let second = catalog
-        .export(second, "demo:dynamic-duplicate/api@0.1.0#run")
-        .unwrap();
     let policy = Policy::builder(&catalog)
-        .allow_lookup(dynamic, first)
+        .allow_lookup(dynamic, first, "demo:dynamic-duplicate/api@0.1.0#run")
         .unwrap()
-        .allow_lookup(dynamic, second)
+        .allow_lookup(dynamic, second, "demo:dynamic-duplicate/api@0.1.0#run")
         .unwrap()
         .build();
     assert!(matches!(
@@ -246,16 +237,15 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
     .unwrap();
     let mut catalog = Catalog::new().unwrap();
     let looping = catalog.add("looping", bytes).unwrap();
-    let run = catalog.export(looping, "demo:fuel/api@0.1.0#run").unwrap();
     let policy = Policy::builder(&catalog).include(looping).unwrap().build();
     let runtime = Runtime::new(Plan::new(catalog, policy).unwrap()).unwrap();
     assert!(matches!(
-        runtime.call(run, &[]),
+        runtime.call(looping, "demo:fuel/api@0.1.0#run", &[]),
         Err(RuntimeError::Trapped { .. })
     ));
     assert!(!runtime.is_healthy(looping).unwrap());
     assert!(matches!(
-        runtime.call(run, &[]),
+        runtime.call(looping, "demo:fuel/api@0.1.0#run", &[]),
         Err(RuntimeError::Unhealthy { .. })
     ));
 }

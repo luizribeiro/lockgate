@@ -16,28 +16,24 @@ fn main() -> Result<()> {
     let dynamic = catalog.add("dynamic", artifacts::component_bytes("dynamic")?)?;
     print_catalog(&catalog, [greeter, caller, filereader, dynamic])?;
 
-    let greet = catalog.export(greeter, "demo:greeter/greeter@0.1.0#greet")?;
-    let caller_run = catalog.export(caller, "demo:caller/runner@0.1.0#run")?;
-    let filereader_run = catalog.export(filereader, "demo:filereader/runner@0.1.0#run")?;
-    let dynamic_run = catalog.export(dynamic, "demo:dynamic/runner@0.1.0#run")?;
     let policy = Policy::builder(&catalog)
         .link(caller, greeter)?
-        .allow_lookup(dynamic, greet)?
+        .allow_lookup(dynamic, greeter, "demo:greeter/greeter@0.1.0#greet")?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
         .build();
     let plan = Plan::new(catalog, policy)?;
 
     let runtime = Runtime::with_observer(plan, print_event)?;
     println!("\n[call] caller.run()");
-    let values = runtime.call(caller_run, &[])?;
+    let values = runtime.call(caller, "demo:caller/runner@0.1.0#run", &[])?;
     println!("  => {}", render_values(&values));
 
     println!("\n[call] filereader.run()");
-    let values = runtime.call(filereader_run, &[])?;
+    let values = runtime.call(filereader, "demo:filereader/runner@0.1.0#run", &[])?;
     println!("  => {}", render_values(&values));
 
     println!("\n[call] dynamic.run()");
-    let values = runtime.call(dynamic_run, &[])?;
+    let values = runtime.call(dynamic, "demo:dynamic/runner@0.1.0#run", &[])?;
     println!("  => {}", render_values(&values));
 
     println!("\n[host] still running");

@@ -7,7 +7,7 @@ mod plugin;
 pub mod policy;
 pub mod runtime;
 
-pub use catalog::{ArtifactDigest, Catalog, CatalogError, ComponentId, ComponentInfo, ExportId};
+pub use catalog::{ArtifactDigest, Catalog, CatalogError, ComponentId, ComponentInfo};
 pub use plan::{Plan, PlanError};
 pub use policy::{DirectoryAccess, Policy, PolicyBuilder, PolicyError};
 pub use runtime::{Event, Runtime, RuntimeError};

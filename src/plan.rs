@@ -2,7 +2,7 @@
 //! Plans resolve authorized providers exactly while leaving ungranted imports to fail per instance.
 
 use crate::{
-    catalog::{Catalog, CatalogError, ComponentId, ExportId, ExportInfo},
+    catalog::{Catalog, CatalogError, ComponentId, ExportInfo},
     plugin::Signature,
     policy::{DirectoryGrant, Policy},
 };
@@ -109,7 +109,7 @@ impl Plan {
             plan.directories.push(grant.clone());
         }
         for grant in policy.lookups() {
-            let target = target_from_export(&catalog, grant.export())?;
+            let target = target_from_export(&catalog, grant.provider(), grant.target())?;
             if !dynamic_signature_supported(&target.signature) {
                 return Err(PlanError::UnsupportedDynamicType {
                     target: target.key(),
@@ -226,8 +226,12 @@ impl Plan {
             .ok_or(CatalogError::ForeignComponent)
     }
 
-    pub(crate) fn target(&self, export: ExportId) -> Result<Target, CatalogError> {
-        target_from_export(&self.catalog, export)
+    pub(crate) fn target(
+        &self,
+        component: ComponentId,
+        target: &str,
+    ) -> Result<Target, CatalogError> {
+        target_from_export(&self.catalog, component, target)
     }
 }
 
@@ -249,13 +253,16 @@ impl Target {
     }
 }
 
-fn target_from_export(catalog: &Catalog, export: ExportId) -> Result<Target, CatalogError> {
-    let component = catalog.export_component(export)?;
+fn target_from_export(
+    catalog: &Catalog,
+    component: ComponentId,
+    target: &str,
+) -> Result<Target, CatalogError> {
     let entry = catalog.entry(component)?;
     Ok(target_from_info(
         component,
         entry.name.clone(),
-        catalog.export_entry(export)?,
+        catalog.export(component, target)?,
     ))
 }
 

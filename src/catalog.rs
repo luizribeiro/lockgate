@@ -24,14 +24,6 @@ pub struct ComponentId {
     index: usize,
 }
 
-/// An opaque handle for one exported function in a catalog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ExportId {
-    catalog: u64,
-    component: usize,
-    export: usize,
-}
-
 /// The SHA-256 digest of the exact component bytes supplied to a catalog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ArtifactDigest([u8; 32]);
@@ -156,22 +148,20 @@ impl Catalog {
         Ok(ComponentInfo { id, entry })
     }
 
-    /// Resolves an exact `package/interface@version#function` export.
-    pub fn export(&self, component: ComponentId, target: &str) -> Result<ExportId, CatalogError> {
+    pub(crate) fn export(
+        &self,
+        component: ComponentId,
+        target: &str,
+    ) -> Result<&ExportInfo, CatalogError> {
         let entry = self.entry(component)?;
-        let export = entry
+        entry
             .exports
             .iter()
-            .position(|export| export.target == target)
+            .find(|export| export.target == target)
             .ok_or_else(|| CatalogError::ExportNotFound {
                 component: entry.name.clone(),
                 target: target.into(),
-            })?;
-        Ok(ExportId {
-            catalog: self.identity,
-            component: component.index,
-            export,
-        })
+            })
     }
 
     pub(crate) fn identity(&self) -> u64 {
@@ -189,24 +179,6 @@ impl Catalog {
         self.components
             .get(id.index)
             .ok_or(CatalogError::ForeignComponent)
-    }
-
-    pub(crate) fn export_entry(&self, id: ExportId) -> Result<&ExportInfo, CatalogError> {
-        if id.catalog != self.identity {
-            return Err(CatalogError::ForeignComponent);
-        }
-        self.components
-            .get(id.component)
-            .and_then(|component| component.exports.get(id.export))
-            .ok_or(CatalogError::ForeignComponent)
-    }
-
-    pub(crate) fn export_component(&self, id: ExportId) -> Result<ComponentId, CatalogError> {
-        self.export_entry(id)?;
-        Ok(ComponentId {
-            catalog: self.identity,
-            index: id.component,
-        })
     }
 }
 

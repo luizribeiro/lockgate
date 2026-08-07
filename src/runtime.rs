@@ -2,7 +2,7 @@
 //! Each component receives its own store, WASI context, fuel budget, and dynamic handle table.
 
 use crate::{
-    ComponentId, ExportId, Plan,
+    ComponentId, Plan,
     catalog::CatalogError,
     plan::{ResolvedImport, Target},
     policy::{DirectoryAccess, DirectoryGrant},
@@ -173,8 +173,13 @@ impl Runtime {
     }
 
     /// Calls an exact exported function with runtime component values.
-    pub fn call(&self, export: ExportId, params: &[Val]) -> Result<Vec<Val>, RuntimeError> {
-        let target = self.plan.target(export)?;
+    pub fn call(
+        &self,
+        component: ComponentId,
+        target: &str,
+        params: &[Val],
+    ) -> Result<Vec<Val>, RuntimeError> {
+        let target = self.plan.target(component, target)?;
         invoke_target(&self.table, &target, params)
     }
 
@@ -466,27 +471,21 @@ world provider { export api; }"#;
     fn call_guards_reject_cycles_and_depth_without_leaking_frames() {
         let mut catalog = Catalog::new().unwrap();
         let mut components = Vec::new();
-        let mut exports = Vec::new();
         for index in 0..=MAX_DEPTH {
             let component = catalog
                 .add(format!("provider-{index}"), provider_bytes())
                 .unwrap();
-            exports.push(
-                catalog
-                    .export(component, "demo:stack/api@0.1.0#run")
-                    .unwrap(),
-            );
             components.push(component);
         }
         let mut policy = Policy::builder(&catalog);
-        for component in components {
-            policy = policy.include(component).unwrap();
+        for component in &components {
+            policy = policy.include(*component).unwrap();
         }
         let policy = policy.build();
         let plan = Plan::new(catalog, policy).unwrap();
-        let targets = exports
+        let targets = components
             .into_iter()
-            .map(|export| plan.target(export).unwrap())
+            .map(|component| plan.target(component, "demo:stack/api@0.1.0#run").unwrap())
             .collect::<Vec<_>>();
 
         let first = enter_call(7, &targets[0]).unwrap();

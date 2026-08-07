@@ -9,13 +9,16 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
     let root = artifacts::root()?;
     let mut catalog = Catalog::new()?;
     let filereader = catalog.add("filereader", artifacts::component_bytes("filereader")?)?;
-    let read = catalog.export(filereader, "demo:filereader/runner@0.1.0#read")?;
     let policy = Policy::builder(&catalog)
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
         .build();
     let runtime = Runtime::new(Plan::new(catalog, policy)?)?;
 
-    let values = runtime.call(read, &[Val::String("/etc/passwd".into())])?;
+    let values = runtime.call(
+        filereader,
+        "demo:filereader/runner@0.1.0#read",
+        &[Val::String("/etc/passwd".into())],
+    )?;
 
     assert!(matches!(
         values.as_slice(),
