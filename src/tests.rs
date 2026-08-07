@@ -60,18 +60,28 @@ world caller { import api; }"#;
 }
 
 #[test]
-fn plan_requires_an_explicit_provider() {
+fn plan_requires_an_explicit_link_even_when_the_provider_is_present() {
     let wit = r#"package demo:missing@0.1.0;
 interface api { run: func(); }
-world caller { import api; }"#;
+world caller { import api; }
+world provider { export api; }"#;
     let mut catalog = Catalog::new().unwrap();
     let caller = catalog
         .add("caller", component_bytes(wit, "caller"))
         .unwrap();
-    let policy = Policy::builder(&catalog).include(caller).unwrap().build();
+    let provider = catalog
+        .add("provider", component_bytes(wit, "provider"))
+        .unwrap();
+    let policy = Policy::builder(&catalog)
+        .include(caller)
+        .unwrap()
+        .include(provider)
+        .unwrap()
+        .build();
     assert!(matches!(
         Plan::new(catalog, policy),
-        Err(PlanError::MissingProvider { .. })
+        Err(PlanError::MissingProvider { caller, interface })
+            if caller == "caller" && interface == "demo:missing/api@0.1.0"
     ));
 }
 
