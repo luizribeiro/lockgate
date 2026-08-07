@@ -629,6 +629,7 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 mod tests {
     use super::*;
     use crate::{Catalog, Policy};
+    use std::sync::atomic::AtomicUsize;
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -695,5 +696,36 @@ world provider { export api; }"#;
         ));
         drop(guards);
         assert!(enter_call(7, &targets[0]).is_ok());
+    }
+
+    #[test]
+    fn required_worlds_fail_before_any_store_is_created() {
+        let mut catalog = Catalog::new().unwrap();
+        let first = catalog.add("first", provider_bytes()).unwrap();
+        let second = catalog.add("second", provider_bytes()).unwrap();
+        let policy = Policy::builder(&catalog)
+            .include(first)
+            .unwrap()
+            .include(second)
+            .unwrap()
+            .build();
+        let creations = Arc::new(AtomicUsize::new(0));
+        let factory_creations = Arc::clone(&creations);
+        let result = Runtime::builder(catalog, policy)
+            .with_host(
+                move |_, _| {
+                    factory_creations.fetch_add(1, Ordering::Relaxed);
+                },
+                |_, _| Ok(()),
+            )
+            .require_world(second, |_, _| anyhow::bail!("required world mismatch"))
+            .unwrap()
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(RuntimeBuildError::Instantiation { .. })
+        ));
+        assert_eq!(creations.load(Ordering::Relaxed), 0);
     }
 }
