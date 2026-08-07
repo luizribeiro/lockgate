@@ -92,8 +92,6 @@ pub enum CatalogError {
     },
     #[error("component handle does not belong to this catalog")]
     ForeignComponent,
-    #[error("component `{component}` does not export `{target}`")]
-    ExportNotFound { component: String, target: String },
 }
 
 impl Catalog {
@@ -159,22 +157,6 @@ impl Catalog {
                     index,
                 },
                 entry,
-            })
-    }
-
-    pub(crate) fn export(
-        &self,
-        component: ComponentId,
-        target: &str,
-    ) -> Result<&ExportInfo, CatalogError> {
-        let entry = self.entry(component)?;
-        entry
-            .exports
-            .iter()
-            .find(|export| export.target == target)
-            .ok_or_else(|| CatalogError::ExportNotFound {
-                component: entry.name.clone(),
-                target: target.into(),
             })
     }
 

@@ -1,8 +1,9 @@
 //! Cross-layer tests for discovery, planning, authority, and fuel isolation.
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
-use crate::{Catalog, Policy, Runtime, RuntimeBuildError, RuntimeError};
+use crate::{Catalog, PluginStore, Policy, Runtime, RuntimeBuildError, RuntimeError};
 use std::error::Error as _;
+use wasmtime::{Store, component::Instance};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -154,13 +155,26 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
     let looping = catalog.add("looping", bytes).unwrap();
     let policy = Policy::builder(&catalog).include(looping).unwrap().build();
     let runtime = Runtime::builder(catalog, policy).build().unwrap();
+    let call_loop = |store: &mut Store<PluginStore>, instance: &Instance| {
+        let interface = instance
+            .get_export_index(&mut *store, None, "demo:fuel/api@0.1.0")
+            .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
+        let function = instance
+            .get_export_index(&mut *store, Some(&interface), "run")
+            .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
+        let function = instance
+            .get_func(&mut *store, function)
+            .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
+        function.call(store, &[], &mut [])?;
+        Ok(())
+    };
     assert!(matches!(
-        runtime.call(looping, "demo:fuel/api@0.1.0#run", &[]),
+        runtime.with_instance(looping, call_loop),
         Err(RuntimeError::Trapped { .. })
     ));
     assert!(!runtime.is_healthy(looping).unwrap());
     assert!(matches!(
-        runtime.call(looping, "demo:fuel/api@0.1.0#run", &[]),
+        runtime.with_instance(looping, call_loop),
         Err(RuntimeError::Unhealthy { .. })
     ));
 }

@@ -164,33 +164,12 @@ impl Plan {
             .get(&id)
             .ok_or(CatalogError::ForeignComponent)
     }
-
-    pub(crate) fn target(
-        &self,
-        component: ComponentId,
-        target: &str,
-    ) -> Result<Target, CatalogError> {
-        target_from_export(&self.catalog, component, target)
-    }
 }
 
 impl Target {
     pub(crate) fn key(&self) -> String {
         format!("{}#{}", self.interface, self.function)
     }
-}
-
-fn target_from_export(
-    catalog: &Catalog,
-    component: ComponentId,
-    target: &str,
-) -> Result<Target, CatalogError> {
-    let entry = catalog.entry(component)?;
-    Ok(target_from_info(
-        component,
-        entry.name.clone(),
-        catalog.export(component, target)?,
-    ))
 }
 
 fn target_from_info(component: ComponentId, component_name: String, export: &ExportInfo) -> Target {

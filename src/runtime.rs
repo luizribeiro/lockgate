@@ -234,17 +234,6 @@ impl<H: Send + 'static> Runtime<H> {
         Ok(runtime)
     }
 
-    /// Calls an exact exported function with runtime component values.
-    pub fn call(
-        &self,
-        component: ComponentId,
-        target: &str,
-        params: &[Val],
-    ) -> Result<Vec<Val>, RuntimeError> {
-        let target = self.plan.target(component, target)?;
-        invoke_target(&self.table, &target, params)
-    }
-
     /// Runs a typed application binding against one component instance.
     pub fn with_instance<R>(
         &self,
@@ -633,7 +622,16 @@ world provider { export api; }"#;
         let plan = Plan::new(catalog, policy).unwrap();
         let targets = components
             .into_iter()
-            .map(|component| plan.target(component, "demo:stack/api@0.1.0#run").unwrap())
+            .map(|component| {
+                let entry = plan.catalog.entry(component).unwrap();
+                let export = &entry.exports[0];
+                Target {
+                    component,
+                    component_name: entry.name.clone(),
+                    interface: export.interface().into(),
+                    function: export.function().into(),
+                }
+            })
             .collect::<Vec<_>>();
 
         let first = enter_call(7, &targets[0]).unwrap();
