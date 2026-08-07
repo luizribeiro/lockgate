@@ -1,4 +1,4 @@
-//! Cross-layer tests for discovery, planning, registry authority, and fuel isolation.
+//! Cross-layer tests for discovery, planning, authority, and fuel isolation.
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
 use crate::{Catalog, Policy, Runtime, RuntimeBuildError, RuntimeError};
@@ -137,90 +137,6 @@ fn plan_compares_complete_structural_types() {
     assert!(error.contains("enum"));
     assert!(error.contains("flags"));
     assert!(error.contains("record"));
-}
-
-#[test]
-fn registry_import_requires_explicit_policy_authority() {
-    let mut catalog = Catalog::new().unwrap();
-    let dynamic = catalog
-        .add(
-            "dynamic",
-            component_bytes(include_str!("../wit/core.wit"), "consumer"),
-        )
-        .unwrap();
-    let policy = Policy::builder(&catalog).include(dynamic).unwrap().build();
-    assert!(matches!(
-        Runtime::builder(catalog, policy).build(),
-        Err(RuntimeBuildError::RegistryNotEnabled { .. })
-    ));
-}
-
-#[test]
-fn unused_registry_authority_is_harmless() {
-    let mut catalog = Catalog::new().unwrap();
-    let component = catalog
-        .add(
-            "plain",
-            component_bytes(include_str!("../wit/core.wit"), "plugin"),
-        )
-        .unwrap();
-    let policy = Policy::builder(&catalog)
-        .enable_registry(component)
-        .unwrap()
-        .build();
-    assert!(Runtime::builder(catalog, policy).build().is_ok());
-}
-
-#[test]
-fn plan_rejects_ambiguous_and_unencodable_dynamic_grants() {
-    let provider_wit = r#"package demo:dynamic-types@0.1.0;
-interface api { run: func(value: s64) -> s64; }
-world provider { export api; }"#;
-    let mut catalog = Catalog::new().unwrap();
-    let dynamic = catalog
-        .add(
-            "dynamic",
-            component_bytes(include_str!("../wit/core.wit"), "consumer"),
-        )
-        .unwrap();
-    let provider = catalog
-        .add("provider", component_bytes(provider_wit, "provider"))
-        .unwrap();
-    let policy = Policy::builder(&catalog)
-        .allow_lookup(dynamic, provider, "demo:dynamic-types/api@0.1.0#run")
-        .unwrap()
-        .build();
-    assert!(matches!(
-        Runtime::builder(catalog, policy).build(),
-        Err(RuntimeBuildError::UnsupportedDynamicType { .. })
-    ));
-
-    let provider_wit = r#"package demo:dynamic-duplicate@0.1.0;
-interface api { run: func(value: string) -> string; }
-world provider { export api; }"#;
-    let mut catalog = Catalog::new().unwrap();
-    let dynamic = catalog
-        .add(
-            "dynamic",
-            component_bytes(include_str!("../wit/core.wit"), "consumer"),
-        )
-        .unwrap();
-    let first = catalog
-        .add("first", component_bytes(provider_wit, "provider"))
-        .unwrap();
-    let second = catalog
-        .add("second", component_bytes(provider_wit, "provider"))
-        .unwrap();
-    let policy = Policy::builder(&catalog)
-        .allow_lookup(dynamic, first, "demo:dynamic-duplicate/api@0.1.0#run")
-        .unwrap()
-        .allow_lookup(dynamic, second, "demo:dynamic-duplicate/api@0.1.0#run")
-        .unwrap()
-        .build();
-    assert!(matches!(
-        Runtime::builder(catalog, policy).build(),
-        Err(RuntimeBuildError::AmbiguousLookup { .. })
-    ));
 }
 
 #[test]

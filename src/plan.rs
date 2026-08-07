@@ -2,14 +2,11 @@
 //! Every included import is authorized and structurally checked before any store is created.
 
 use crate::{
-    REGISTRY_INTERFACE,
     catalog::{Catalog, CatalogError, ComponentId, ExportInfo},
-    plugin::Signature,
     policy::{DirectoryGrant, Policy},
     runtime::RuntimeBuildError,
 };
 use std::collections::{HashMap, HashSet};
-use wasmtime::component::types::Type;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Target {
@@ -17,7 +14,6 @@ pub(crate) struct Target {
     pub(crate) component_name: String,
     pub(crate) interface: String,
     pub(crate) function: String,
-    pub(crate) signature: Signature,
 }
 
 #[derive(Clone, Debug)]
@@ -30,9 +26,7 @@ pub(crate) struct ResolvedImport {
 pub(crate) struct ComponentPlan {
     pub(crate) direct_imports: HashMap<String, ResolvedImport>,
     pub(crate) host_imports: HashSet<String>,
-    pub(crate) lookups: HashMap<String, Target>,
     pub(crate) directories: Vec<DirectoryGrant>,
-    pub(crate) registry: bool,
 }
 
 /// A catalog and policy compiled into deterministic provider selections.
@@ -56,10 +50,6 @@ impl Plan {
             .map(|id| (id, ComponentPlan::default()))
             .collect::<HashMap<_, _>>();
 
-        for component in policy.registries() {
-            catalog.entry(*component)?;
-            components.get_mut(component).unwrap().registry = true;
-        }
         for grant in policy.host_imports() {
             catalog.entry(grant.component())?;
             components
@@ -83,26 +73,6 @@ impl Plan {
             }
             plan.directories.push(grant.clone());
         }
-        for grant in policy.lookups() {
-            let target = target_from_export(&catalog, grant.provider(), grant.target())?;
-            if !dynamic_signature_supported(&target.signature) {
-                return Err(RuntimeBuildError::UnsupportedDynamicType {
-                    target: target.key(),
-                });
-            }
-            let caller_name = catalog.entry(grant.caller())?.name.clone();
-            let lookups = &mut components
-                .get_mut(&grant.caller())
-                .ok_or(CatalogError::ForeignComponent)?
-                .lookups;
-            if lookups.insert(target.key(), target.clone()).is_some() {
-                return Err(RuntimeBuildError::AmbiguousLookup {
-                    caller: caller_name,
-                    target: target.key(),
-                });
-            }
-        }
-
         let links = policy
             .links()
             .iter()
@@ -111,16 +81,6 @@ impl Plan {
         for caller in policy.components() {
             let caller = *caller;
             let caller_entry = catalog.entry(caller)?;
-            if caller_entry
-                .imports
-                .iter()
-                .any(|import| import == REGISTRY_INTERFACE)
-                && !components.get(&caller).unwrap().registry
-            {
-                return Err(RuntimeBuildError::RegistryNotEnabled {
-                    component: caller_entry.name.clone(),
-                });
-            }
             for import in &caller_entry.direct_imports {
                 if components
                     .get(&caller)
@@ -214,18 +174,6 @@ impl Plan {
     }
 }
 
-fn dynamic_signature_supported(signature: &Signature) -> bool {
-    signature
-        .params
-        .iter()
-        .chain(&signature.results)
-        .all(|ty| match ty {
-            Type::Bool | Type::S32 | Type::U32 | Type::String => true,
-            Type::List(list) => list.ty() == Type::String,
-            _ => false,
-        })
-}
-
 impl Target {
     pub(crate) fn key(&self) -> String {
         format!("{}#{}", self.interface, self.function)
@@ -251,7 +199,6 @@ fn target_from_info(component: ComponentId, component_name: String, export: &Exp
         component_name,
         interface: export.interface().into(),
         function: export.function().into(),
-        signature: export.runtime_signature.clone(),
     }
 }
 

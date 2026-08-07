@@ -297,7 +297,7 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
             continue;
         };
         let interface = resolve.id_of(*id).expect("named interface was validated");
-        if interface.starts_with("wasi:") || interface == crate::REGISTRY_INTERFACE {
+        if interface.starts_with("wasi:") {
             continue;
         }
         validate_wit_interface(&resolve, *id).map_err(|source| CatalogError::InvalidComponent {
@@ -385,7 +385,7 @@ fn validate_world_interfaces(
                     name: component_name.into(),
                     source: anyhow::anyhow!("component contains an unnamed interface"),
                 })?;
-            if imported && (name.starts_with("wasi:") || name == crate::REGISTRY_INTERFACE) {
+            if imported && name.starts_with("wasi:") {
                 continue;
             }
             validate_wit_interface(resolve, *id).map_err(|source| {

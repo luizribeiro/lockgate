@@ -1,10 +1,9 @@
 //! Validated construction and isolated execution of capability-scoped components.
-//! Each component receives its own store, WASI context, fuel budget, and dynamic handle table.
+//! Each component receives its own store, WASI context, application state, and fuel budget.
 
 use crate::{
-    ComponentId, REGISTRY_INTERFACE,
+    ComponentId,
     catalog::{Catalog, CatalogError},
-    lockgate::core::registry,
     plan::{Plan, ResolvedImport, Target},
     policy::{DirectoryAccess, DirectoryGrant, Policy},
 };
@@ -19,11 +18,9 @@ use std::{
 use thiserror::Error;
 use wasmtime::{
     Store,
-    component::{Component, HasSelf, Instance, Linker, ResourceTable, Val},
+    component::{Component, Instance, Linker, ResourceTable, Val},
 };
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-
-mod dynamic;
 
 const FUEL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
@@ -39,14 +36,7 @@ type WorldRequirement<H> =
 /// An observable cross-component broker event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    DirectCall {
-        target: String,
-    },
-    DynamicLookup {
-        caller: String,
-        target: String,
-        allowed: bool,
-    },
+    DirectCall { target: String },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -78,10 +68,6 @@ pub struct PluginStore<H: Send + 'static = ()> {
     component_name: String,
     wasi: WasiCtx,
     resources: ResourceTable,
-    runtimes: Weak<Mutex<RuntimeTable<H>>>,
-    lookups: HashMap<String, Target>,
-    handles: HashMap<u32, Target>,
-    target_handles: HashMap<String, u32>,
 }
 
 impl<H: Send + 'static> PluginStore<H> {
@@ -164,12 +150,6 @@ pub enum RuntimeBuildError {
     },
     #[error("component `{component}` has multiple grants for guest directory `{guest}`")]
     DuplicateGuestDirectory { component: String, guest: String },
-    #[error("component `{caller}` has multiple dynamic grants named `{target}`")]
-    AmbiguousLookup { caller: String, target: String },
-    #[error("dynamic target `{target}` uses types unsupported by the registry encoding")]
-    UnsupportedDynamicType { target: String },
-    #[error("component `{component}` imports the dynamic registry without enabling it")]
-    RegistryNotEnabled { component: String },
     #[error("component `{component}` is not included in the policy")]
     NotIncluded { component: String },
     #[error("component `{component}` imports `{interface}` without an authorized provider")]
@@ -177,8 +157,6 @@ pub enum RuntimeBuildError {
         component: String,
         interface: String,
     },
-    #[error("component `{component}` imports the dynamic registry without enabling it")]
-    RegistryDenied { component: String },
     #[error("component `{component}` failed to instantiate")]
     Instantiation {
         component: String,
@@ -316,21 +294,8 @@ impl<H: Send + 'static> Runtime<H> {
                 });
             }
         }
-        if entry
-            .imports
-            .iter()
-            .any(|import| import == REGISTRY_INTERFACE)
-            && !component_plan.registry
-        {
-            return Err(RuntimeBuildError::RegistryDenied {
-                component: entry.name.clone(),
-            });
-        }
-
         let engine = self.plan.catalog.engine();
         let mut linker = Linker::new(engine);
-        registry::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)
-            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|error| instantiate_error(&entry.name, error.into()))?;
         configure_linker(component, &mut linker)
@@ -355,10 +320,6 @@ impl<H: Send + 'static> Runtime<H> {
             component_name: entry.name.clone(),
             wasi: wasi.build(),
             resources: ResourceTable::new(),
-            runtimes: Arc::downgrade(&self.table),
-            lookups: component_plan.lookups.clone(),
-            handles: HashMap::new(),
-            target_handles: HashMap::new(),
         };
         let mut store = Store::new(engine, state);
         store

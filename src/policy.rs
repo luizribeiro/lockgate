@@ -11,9 +11,7 @@ pub struct Policy {
     components: Vec<ComponentId>,
     links: Vec<LinkGrant>,
     host_imports: Vec<HostImportGrant>,
-    lookups: Vec<LookupGrant>,
     directories: Vec<DirectoryGrant>,
-    registries: Vec<ComponentId>,
 }
 
 /// A policy builder tied to one catalog.
@@ -22,9 +20,7 @@ pub struct PolicyBuilder<'a> {
     components: Vec<ComponentId>,
     links: Vec<LinkGrant>,
     host_imports: Vec<HostImportGrant>,
-    lookups: Vec<LookupGrant>,
     directories: Vec<DirectoryGrant>,
-    registries: Vec<ComponentId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,13 +33,6 @@ pub struct LinkGrant {
 pub struct HostImportGrant {
     component: ComponentId,
     interface: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LookupGrant {
-    caller: ComponentId,
-    provider: ComponentId,
-    target: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,9 +73,7 @@ impl Policy {
             components: Vec::new(),
             links: Vec::new(),
             host_imports: Vec::new(),
-            lookups: Vec::new(),
             directories: Vec::new(),
-            registries: Vec::new(),
         }
     }
 
@@ -98,16 +85,8 @@ impl Policy {
         &self.host_imports
     }
 
-    pub fn lookups(&self) -> &[LookupGrant] {
-        &self.lookups
-    }
-
     pub fn directories(&self) -> &[DirectoryGrant] {
         &self.directories
-    }
-
-    pub fn registries(&self) -> &[ComponentId] {
-        &self.registries
     }
 
     pub fn components(&self) -> &[ComponentId] {
@@ -177,42 +156,6 @@ impl PolicyBuilder<'_> {
         Ok(self)
     }
 
-    /// Permits an exact export to be resolved through the optional dynamic registry.
-    pub fn allow_lookup(
-        mut self,
-        caller: ComponentId,
-        provider: ComponentId,
-        target: impl Into<String>,
-    ) -> Result<Self, PolicyError> {
-        let target = target.into();
-        self.catalog.component(caller)?;
-        self.catalog.export(provider, &target)?;
-        self.include_component(caller);
-        self.include_component(provider);
-        if !self.registries.contains(&caller) {
-            self.registries.push(caller);
-        }
-        let grant = LookupGrant {
-            caller,
-            provider,
-            target,
-        };
-        if !self.lookups.contains(&grant) {
-            self.lookups.push(grant);
-        }
-        Ok(self)
-    }
-
-    /// Enables the optional dynamic registry without granting any target.
-    pub fn enable_registry(mut self, component: ComponentId) -> Result<Self, PolicyError> {
-        self.catalog.component(component)?;
-        self.include_component(component);
-        if !self.registries.contains(&component) {
-            self.registries.push(component);
-        }
-        Ok(self)
-    }
-
     pub fn read_only_dir(
         self,
         component: ComponentId,
@@ -247,9 +190,7 @@ impl PolicyBuilder<'_> {
             components: self.components,
             links: self.links,
             host_imports: self.host_imports,
-            lookups: self.lookups,
             directories: self.directories,
-            registries: self.registries,
         }
     }
 
@@ -325,20 +266,6 @@ impl HostImportGrant {
     }
 }
 
-impl LookupGrant {
-    pub fn caller(&self) -> ComponentId {
-        self.caller
-    }
-
-    pub fn provider(&self) -> ComponentId {
-        self.provider
-    }
-
-    pub fn target(&self) -> &str {
-        &self.target
-    }
-}
-
 impl DirectoryGrant {
     pub fn component(&self) -> ComponentId {
         self.component
@@ -394,13 +321,10 @@ world caller { import api; }"#;
         let policy = Policy::builder(&catalog)
             .link(caller, provider)
             .unwrap()
-            .allow_lookup(caller, provider, "demo:policy/api@0.1.0#run")
-            .unwrap()
             .read_only_dir(caller, std::env::temp_dir(), "/shared")
             .unwrap()
             .build();
         assert_eq!(policy.links().len(), 1);
-        assert_eq!(policy.lookups().len(), 1);
         assert_eq!(policy.directories()[0].access(), DirectoryAccess::ReadOnly);
     }
 

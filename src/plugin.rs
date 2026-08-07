@@ -105,7 +105,7 @@ fn validate_wit_type(resolve: &Resolve, ty: WitType) -> Result<()> {
             bail!("async value types are unsupported")
         }
         TypeDefKind::FixedLengthList(_, _) => {
-            bail!("fixed-length lists are unsupported by Wasmtime 47's dynamic type API")
+            bail!("fixed-length lists are unsupported by Wasmtime 47's component type API")
         }
         TypeDefKind::Flags(_) | TypeDefKind::Enum(_) => Ok(()),
         TypeDefKind::Unknown => unreachable!("resolved WIT cannot contain unknown types"),

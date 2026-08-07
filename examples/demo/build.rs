@@ -2,11 +2,10 @@
 
 use std::{env, fs, path::PathBuf, process::Command};
 
-const IDS: [&str; 4] = ["greeter", "caller", "filereader", "dynamic"];
+const IDS: [&str; 3] = ["greeter", "caller", "filereader"];
 
 fn main() {
     let demo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let repository = demo.join("../..").canonicalize().unwrap();
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let component_target = output.join("component-target");
     let staged = output.join("demo");
@@ -15,10 +14,6 @@ fn main() {
     println!(
         "cargo:rerun-if-changed={}",
         demo.join("wit/packages/host/package.wit").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        repository.join("wit/core.wit").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
