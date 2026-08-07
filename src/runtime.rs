@@ -3,6 +3,7 @@
 
 use crate::{
     Component, ComponentId, ComponentRef,
+    application::{HostBindings, StateFactory},
     binding::ComponentBinding,
     catalog::{Catalog, CatalogError},
     plan::{Plan, ResolvedImport, Target},
@@ -28,16 +29,6 @@ const MAX_DEPTH: usize = 8;
 static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
 type Observer = Arc<dyn Fn(Event) + Send + Sync>;
-type StateFactory<S> = Arc<dyn Fn(ComponentId, &str) -> S + Send + Sync>;
-type LinkerConfig<S> =
-    Arc<dyn Fn(ComponentId, &mut Linker<PluginStore<S>>) -> anyhow::Result<()> + Send + Sync>;
-
-/// Projects generated host bindings from a [`PluginStore`] to its host context.
-pub struct HasHost<S>(std::marker::PhantomData<fn() -> S>);
-
-impl<S: 'static> HasData for HasHost<S> {
-    type Data<'a> = &'a mut HostContext<S>;
-}
 
 /// Internal projection used by generated application binding installers.
 #[doc(hidden)]
@@ -192,7 +183,7 @@ pub struct RuntimeBuilder<H: Send + 'static = ()> {
     policy: Policy,
     observer: Option<Observer>,
     state_factory: StateFactory<H>,
-    configure_linker: LinkerConfig<H>,
+    host_bindings: HostBindings<H>,
 }
 
 /// A typed failure while validating or instantiating a runtime.
@@ -226,6 +217,13 @@ pub enum RuntimeBuildError {
     NotIncluded { component: String },
     #[error("component `{component}` imports `{interface}` without an authorized provider")]
     ImportDenied {
+        component: String,
+        interface: String,
+    },
+    #[error(
+        "component `{component}` was not admitted with host binding `{interface}` required by policy"
+    )]
+    HostBindingUnavailable {
         component: String,
         interface: String,
     },
@@ -272,7 +270,7 @@ impl Runtime<()> {
             policy,
             observer: None,
             state_factory: Arc::new(|_, _| ()),
-            configure_linker: Arc::new(|_, _| Ok(())),
+            host_bindings: HostBindings::new(),
         }
     }
 }
@@ -282,7 +280,7 @@ impl<H: Send + 'static> Runtime<H> {
         plan: Plan,
         observer: Option<Observer>,
         state_factory: StateFactory<H>,
-        configure_linker: LinkerConfig<H>,
+        host_bindings: HostBindings<H>,
     ) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
             identity: NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed),
@@ -292,7 +290,7 @@ impl<H: Send + 'static> Runtime<H> {
         let runtime = Self { plan, table };
         let mut prepared = HashMap::new();
         for component in runtime.plan.order.clone() {
-            let instance = runtime.prepare_instance(component, &configure_linker)?;
+            let instance = runtime.prepare_instance(component, &host_bindings)?;
             prepared.insert(component, instance);
         }
         for component in runtime.plan.order.clone() {
@@ -353,7 +351,7 @@ impl<H: Send + 'static> Runtime<H> {
     fn prepare_instance(
         &self,
         component: ComponentId,
-        configure_linker: &LinkerConfig<H>,
+        host_bindings: &HostBindings<H>,
     ) -> Result<InstancePre<PluginStore<H>>, RuntimeBuildError> {
         let entry = self.plan.catalog.entry(component)?;
         let component_plan =
@@ -378,8 +376,15 @@ impl<H: Send + 'static> Runtime<H> {
         let mut linker = Linker::new(engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|error| instantiate_error(&entry.name, error.into()))?;
-        configure_linker(component, &mut linker)
-            .map_err(|error| instantiate_error(&entry.name, error))?;
+        for interface in &component_plan.host_imports {
+            let installer = host_bindings
+                .installer(component, interface)
+                .ok_or_else(|| RuntimeBuildError::HostBindingUnavailable {
+                    component: entry.name.clone(),
+                    interface: interface.clone(),
+                })?;
+            installer(&mut linker).map_err(|error| instantiate_error(&entry.name, error))?;
+        }
         wire_direct_imports(
             &mut linker,
             &self.table,
@@ -440,27 +445,22 @@ impl<H: Send + 'static> Runtime<H> {
     }
 }
 
-impl RuntimeBuilder<()> {
-    /// Supplies application state and generated host bindings for every component store.
-    pub fn with_host<H: Send + 'static>(
-        self,
-        state: impl Fn(ComponentId, &str) -> H + Send + Sync + 'static,
-        configure_linker: impl Fn(ComponentId, &mut Linker<PluginStore<H>>) -> anyhow::Result<()>
-        + Send
-        + Sync
-        + 'static,
-    ) -> RuntimeBuilder<H> {
+impl<H: Send + 'static> RuntimeBuilder<H> {
+    pub(crate) fn from_application(
+        catalog: Catalog,
+        policy: Policy,
+        state_factory: StateFactory<H>,
+        host_bindings: HostBindings<H>,
+    ) -> Self {
         RuntimeBuilder {
-            catalog: self.catalog,
-            policy: self.policy,
-            observer: self.observer,
-            state_factory: Arc::new(state),
-            configure_linker: Arc::new(configure_linker),
+            catalog,
+            policy,
+            observer: None,
+            state_factory,
+            host_bindings,
         }
     }
-}
 
-impl<H: Send + 'static> RuntimeBuilder<H> {
     /// Sends broker events to an application observer from the start of instantiation.
     pub fn with_observer(mut self, observer: impl Fn(Event) + Send + Sync + 'static) -> Self {
         self.observer = Some(Arc::new(observer));
@@ -470,12 +470,7 @@ impl<H: Send + 'static> RuntimeBuilder<H> {
     /// Validates the complete policy, then instantiates every included component.
     pub fn build(self) -> Result<Runtime<H>, RuntimeBuildError> {
         let plan = Plan::new(self.catalog, self.policy)?;
-        Runtime::build(
-            plan,
-            self.observer,
-            self.state_factory,
-            self.configure_linker,
-        )
+        Runtime::build(plan, self.observer, self.state_factory, self.host_bindings)
     }
 }
 
@@ -678,7 +673,7 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Catalog, Policy};
+    use crate::{Application, Catalog, Policy};
     use std::sync::atomic::AtomicUsize;
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
@@ -726,6 +721,32 @@ world consumer { import api; }"#;
         assert_eq!(context.component().id(), component);
         assert_eq!(context.component().name(), "provider");
         assert_eq!(context.state(), &[1, 2]);
+    }
+
+    #[test]
+    fn application_shared_state_is_available_through_each_host_context() {
+        let shared = Arc::new(AtomicUsize::new(0));
+        let mut app = Application::with_state(Arc::clone(&shared)).unwrap();
+        let component = app.add_untyped("provider", provider_bytes()).unwrap();
+        let policy = Policy::builder(app.catalog())
+            .include(component)
+            .unwrap()
+            .build();
+        let runtime = app.runtime(policy).build().unwrap();
+
+        runtime
+            .with_instance(component, |store, _| {
+                assert!(Arc::ptr_eq(store.data().context().state(), &shared));
+                store
+                    .data()
+                    .context()
+                    .state()
+                    .fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(shared.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -779,29 +800,25 @@ world consumer { import api; }"#;
 
     #[test]
     fn all_linkers_are_preflighted_before_any_store_is_created() {
-        let mut catalog = Catalog::new().unwrap();
-        let first = catalog.add_untyped("first", provider_bytes()).unwrap();
-        let second = catalog.add_untyped("second", consumer_bytes()).unwrap();
-        let policy = Policy::builder(&catalog)
+        let creations = Arc::new(AtomicUsize::new(0));
+        let factory_creations = Arc::clone(&creations);
+        let mut app = Application::with_state_factory(move |_, _| {
+            factory_creations.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+        let first = app.add_untyped("first", provider_bytes()).unwrap();
+        let second = app.add_untyped("second", consumer_bytes()).unwrap();
+        let policy = Policy::builder(app.catalog())
             .include(first)
             .unwrap()
             .allow_host_import(second, "demo:stack/api@0.1.0")
             .unwrap()
             .build();
-        let creations = Arc::new(AtomicUsize::new(0));
-        let factory_creations = Arc::clone(&creations);
-        let result = Runtime::builder(catalog, policy)
-            .with_host(
-                move |_, _| {
-                    factory_creations.fetch_add(1, Ordering::Relaxed);
-                },
-                |_, _| Ok(()),
-            )
-            .build();
+        let result = app.runtime(policy).build();
 
         assert!(matches!(
             result,
-            Err(RuntimeBuildError::Instantiation { .. })
+            Err(RuntimeBuildError::HostBindingUnavailable { .. })
         ));
         assert_eq!(creations.load(Ordering::Relaxed), 0);
     }

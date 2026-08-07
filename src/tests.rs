@@ -2,8 +2,8 @@
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
 use crate::{
-    Catalog, CatalogError, HostContext, PluginStore, Policy, Runtime, RuntimeBuildError,
-    RuntimeError,
+    Application, Catalog, CatalogError, HostContext, PluginStore, Policy, Runtime,
+    RuntimeBuildError, RuntimeError,
 };
 use std::error::Error as _;
 use wasmtime::{Store, component::Instance};
@@ -26,8 +26,7 @@ impl typed_bindings::demo::admission::services::Host for HostContext<()> {
 
 #[test]
 fn application_bindings_share_imported_host_interfaces() {
-    use crate::{HasHost, binding::ComponentBinding};
-    use wasmtime::component::Linker;
+    use crate::binding::ComponentBinding;
 
     assert_eq!(
         <typed_bindings::RunnablePlugin as ComponentBinding>::IMPORTS,
@@ -40,19 +39,26 @@ fn application_bindings_share_imported_host_interfaces() {
         <typed_bindings::RunnablePlugin as ComponentBinding>::IMPORTS,
     );
 
-    let engine = wasmtime::Engine::default();
-    let mut first = Linker::<PluginStore<()>>::new(&engine);
-    typed_bindings::RunnablePlugin::add_to_linker::<_, HasHost<()>>(
-        &mut first,
-        PluginStore::context_mut,
-    )
-    .unwrap();
-    let mut second = Linker::<PluginStore<()>>::new(&engine);
-    typed_bindings::SecondaryPlugin::add_to_linker::<_, HasHost<()>>(
-        &mut second,
-        PluginStore::context_mut,
-    )
-    .unwrap();
+    let wit = r#"package demo:admission@0.1.0;
+
+interface services { log: func(message: string); }
+interface runnable { run: func() -> string; }
+world matching { import services; export runnable; }"#;
+    let mut app = Application::new().unwrap();
+    let runnable = app
+        .add::<typed_bindings::RunnablePlugin>("plugin", component_bytes(wit, "matching"))
+        .unwrap();
+    let secondary = app
+        .admit::<typed_bindings::SecondaryPlugin>(runnable)
+        .unwrap();
+    assert_eq!(app.host_installer_count(), 1);
+    let policy = Policy::builder(app.catalog())
+        .allow_host_import(secondary, "demo:admission/services@0.1.0")
+        .unwrap()
+        .build();
+    let runtime = app.runtime(policy).build().unwrap();
+
+    assert!(runtime.is_healthy(runnable).unwrap());
 }
 
 fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {

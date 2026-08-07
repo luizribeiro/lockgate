@@ -3,6 +3,7 @@
 
 extern crate self as lockgate;
 
+mod application;
 mod binding;
 pub mod catalog;
 mod plan;
@@ -10,14 +11,15 @@ mod plugin;
 pub mod policy;
 pub mod runtime;
 
+pub use application::Application;
 pub use catalog::{
     ArtifactDigest, Catalog, CatalogError, Component, ComponentId, ComponentInfo, ComponentRef,
 };
 pub use lockgate_macros::{bindgen, bindings};
 pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
 pub use runtime::{
-    Event, HasHost, HostComponent, HostContext, PluginStore, Runtime, RuntimeBuildError,
-    RuntimeBuilder, RuntimeError,
+    Event, HostComponent, HostContext, PluginStore, Runtime, RuntimeBuildError, RuntimeBuilder,
+    RuntimeError,
 };
 
 #[doc(hidden)]
