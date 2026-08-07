@@ -94,6 +94,7 @@ impl HostComponent {
 pub struct HostContext<S = ()> {
     component: HostComponent,
     state: S,
+    resources: ResourceTable,
 }
 
 impl<S> HostContext<S> {
@@ -104,6 +105,7 @@ impl<S> HostContext<S> {
                 name,
             },
             state,
+            resources: ResourceTable::new(),
         }
     }
 
@@ -121,13 +123,17 @@ impl<S> HostContext<S> {
     pub fn state_mut(&mut self) -> &mut S {
         &mut self.state
     }
+
+    /// Returns the resource table shared by application host bindings and WASI.
+    pub fn resources_mut(&mut self) -> &mut ResourceTable {
+        &mut self.resources
+    }
 }
 
 /// Per-component store data available to application-defined host bindings.
 pub struct PluginStore<S: Send + 'static = ()> {
     context: HostContext<S>,
     wasi: WasiCtx,
-    resources: ResourceTable,
 }
 
 impl<S: Send + 'static> PluginStore<S> {
@@ -146,7 +152,7 @@ impl<S: Send + 'static> PluginStore<S> {
     }
 
     pub fn resources_mut(&mut self) -> &mut ResourceTable {
-        &mut self.resources
+        self.context.resources_mut()
     }
 }
 
@@ -154,7 +160,7 @@ impl<S: Send + 'static> WasiView for PluginStore<S> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi,
-            table: &mut self.resources,
+            table: &mut self.context.resources,
         }
     }
 }
@@ -422,7 +428,6 @@ impl<H: Send + 'static> Runtime<H> {
                 state_factory(component, &entry.name),
             ),
             wasi: wasi.build(),
-            resources: ResourceTable::new(),
         };
         let mut store = Store::new(engine, state);
         store
@@ -721,6 +726,7 @@ world consumer { import api; }"#;
         assert_eq!(context.component().id(), component);
         assert_eq!(context.component().name(), "provider");
         assert_eq!(context.state(), &[1, 2]);
+        assert!(context.resources_mut().is_empty());
     }
 
     #[test]
