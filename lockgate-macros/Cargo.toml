@@ -14,6 +14,6 @@ proc-macro2 = "1.0.103"
 proc-macro-crate = "3.4.0"
 quote = "1.0.42"
 syn = { version = "2.0.110", features = ["full"] }
-wasmtime-wit-bindgen = { package = "wasmtime-internal-wit-bindgen", version = "47.0.3" }
-wasmtime-wit-parser = { package = "wit-parser", version = "0.252.0" }
+wasmtime-wit-bindgen.workspace = true
+wasmtime-wit-parser = { package = "wit-parser", version = "0.254.0" }
 wit-parser = "0.255.0"

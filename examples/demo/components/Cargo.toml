@@ -3,4 +3,4 @@ resolver = "3"
 members = ["caller", "filereader", "greeter"]
 
 [workspace.dependencies]
-wit-bindgen = "0.60.0"
+lockgate-plugin = { path = "../../../lockgate-plugin" }

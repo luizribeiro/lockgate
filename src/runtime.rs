@@ -9,61 +9,45 @@ use crate::{
     grants::{DirectoryAccess, DirectoryGrant, Grants},
     plan::{Plan, ResolvedImport, Target},
 };
+use lockgate_schema::PluginMetadata;
 use std::{
-    cell::RefCell,
     collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard, TryLockError, Weak},
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex, Weak},
 };
 use thiserror::Error;
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use wasmtime::{
     Store,
-    component::{Instance, InstancePre, Linker, ResourceTable, Val},
+    component::{Accessor, Instance, InstancePre, Linker, ResourceTable, Val},
 };
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 const FUEL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Frame {
-    component: ComponentId,
-}
 
-thread_local! {
-    static CALL_STACK: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
-}
-
-struct CallGuard(Frame);
-
-impl Drop for CallGuard {
-    fn drop(&mut self) {
-        CALL_STACK.with(|stack| {
-            let mut stack = stack.borrow_mut();
-            if let Some(position) = stack.iter().rposition(|frame| *frame == self.0) {
-                stack.remove(position);
-            }
-        });
-    }
-}
+type RuntimeCall<'a, R> = Pin<Box<dyn Future<Output = anyhow::Result<R>> + Send + 'a>>;
 
 /// Runtime-owned component context and application-defined state exposed to host bindings.
 pub struct HostContext<S = ()> {
-    component_name: String,
+    plugin: PluginMetadata,
     state: Arc<S>,
     resources: ResourceTable,
 }
 
 impl<S> HostContext<S> {
-    fn new(component_name: String, state: Arc<S>) -> Self {
+    fn new(plugin: PluginMetadata, state: Arc<S>) -> Self {
         Self {
-            component_name,
+            plugin,
             state,
             resources: ResourceTable::new(),
         }
     }
 
-    /// Returns the application-assigned name of the component making host calls.
-    pub fn component_name(&self) -> &str {
-        &self.component_name
+    /// Returns the metadata embedded by the plugin making host calls.
+    pub fn plugin(&self) -> &PluginMetadata {
+        &self.plugin
     }
 
     /// Returns the application-defined state associated with this component.
@@ -77,11 +61,24 @@ impl<S> HostContext<S> {
     }
 }
 
+impl<S: 'static> wasmtime::component::HasData for HostContext<S> {
+    type Data<'a> = &'a mut Self;
+}
+
+/// Projects a plugin store into the application host context for generated bindings.
+#[doc(hidden)]
+pub fn host_context_data<S: Send + Sync + 'static>(
+    store: &mut PluginStore<S>,
+) -> <HostContext<S> as wasmtime::component::HasData>::Data<'_> {
+    store.context_mut()
+}
+
 /// Per-component store data used by generated application bindings.
 #[doc(hidden)]
 pub struct PluginStore<S: Send + Sync + 'static = ()> {
     context: HostContext<S>,
     wasi: WasiCtx,
+    call_path: Vec<ComponentId>,
 }
 
 impl<S: Send + Sync + 'static> PluginStore<S> {
@@ -108,7 +105,7 @@ struct ComponentRuntime<H: Send + Sync + 'static> {
 }
 
 struct RuntimeTable<H: Send + Sync + 'static> {
-    components: HashMap<ComponentId, Arc<Mutex<ComponentRuntime<H>>>>,
+    components: HashMap<ComponentId, Arc<AsyncMutex<ComponentRuntime<H>>>>,
 }
 
 /// A fully instantiated set of isolated component stores.
@@ -189,17 +186,17 @@ pub enum RuntimeError {
 }
 
 impl<H: Send + Sync + 'static> Runtime<H> {
-    pub(crate) fn from_application(
+    pub(crate) async fn from_application(
         catalog: Catalog,
         grants: Grants,
         state: Arc<H>,
         host_bindings: HostBindings<H>,
     ) -> Result<Self, RuntimeBuildError> {
         let plan = Plan::new(catalog, grants)?;
-        Self::build(plan, state, host_bindings)
+        Self::build(plan, state, host_bindings).await
     }
 
-    fn build(
+    async fn build(
         plan: Plan,
         state: Arc<H>,
         host_bindings: HostBindings<H>,
@@ -219,7 +216,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         for (component, instance) in prepared {
-            runtime.instantiate(component, &state, instance)?;
+            runtime.instantiate(component, &state, instance).await?;
         }
         Ok(runtime)
     }
@@ -248,26 +245,26 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             .expect("runtime plan order contains only application components");
         let engine = self.plan.catalog.engine();
         let mut linker = Linker::new(engine);
-        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
-            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
+        wasmtime_wasi::p3::add_to_linker(&mut linker)
+            .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
         for interface in &component_plan.host_imports {
             host_bindings
                 .install(component, interface, &mut linker)
                 .expect("host grants contain only admitted host bindings")
-                .map_err(|error| instantiate_error(&entry.name, error))?;
+                .map_err(|error| instantiate_error(entry.metadata.id(), error))?;
         }
         wire_direct_imports(
             &mut linker,
             &self.table,
             component_plan.direct_imports.iter(),
         )
-        .map_err(|error| instantiate_error(&entry.name, error))?;
+        .map_err(|error| instantiate_error(entry.metadata.id(), error))?;
         linker
             .instantiate_pre(&entry.component)
-            .map_err(|error| instantiate_error(&entry.name, error.into()))
+            .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))
     }
 
-    fn instantiate(
+    async fn instantiate(
         &self,
         component: ComponentId,
         state: &Arc<H>,
@@ -286,20 +283,23 @@ impl<H: Send + Sync + 'static> Runtime<H> {
         let engine = self.plan.catalog.engine();
         let mut wasi = WasiCtxBuilder::new();
         for directory in &component_plan.directories {
-            preopen(&mut wasi, directory).map_err(|error| instantiate_error(&entry.name, error))?;
+            preopen(&mut wasi, directory)
+                .map_err(|error| instantiate_error(entry.metadata.id(), error))?;
         }
         let state = PluginStore {
-            context: HostContext::new(entry.name.clone(), Arc::clone(state)),
+            context: HostContext::new(entry.metadata.clone(), Arc::clone(state)),
             wasi: wasi.build(),
+            call_path: Vec::new(),
         };
         let mut store = Store::new(engine, state);
         store
             .set_fuel(FUEL)
-            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
+            .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
         let instance = instance
-            .instantiate(&mut store)
-            .map_err(|error| instantiate_error(&entry.name, error.into()))?;
-        let runtime = Arc::new(Mutex::new(ComponentRuntime {
+            .instantiate_async(&mut store)
+            .await
+            .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
+        let runtime = Arc::new(AsyncMutex::new(ComponentRuntime {
             store,
             instance,
             healthy: true,
@@ -308,7 +308,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             .lock()
             .map_err(|_| {
                 instantiate_error(
-                    &entry.name,
+                    entry.metadata.id(),
                     anyhow::anyhow!("runtime synchronization state was poisoned"),
                 )
             })?
@@ -327,43 +327,67 @@ impl<'runtime, H: Send + Sync + 'static, B: Binding<H>> RuntimeComponent<'runtim
 
     /// Invokes a generated binding while preserving Lockgate's call invariants.
     #[doc(hidden)]
-    pub fn invoke<R>(
+    pub async fn invoke<R>(
         &self,
-        call: impl FnOnce(&mut Store<PluginStore<H>>, B) -> anyhow::Result<R>,
-    ) -> Result<R, RuntimeError> {
+        call: impl for<'a> FnOnce(&'a Accessor<PluginStore<H>>, B) -> RuntimeCall<'a, R>
+        + Send
+        + 'static,
+    ) -> Result<R, RuntimeError>
+    where
+        R: Send,
+    {
         let id = self.component.id();
         let entry = self.runtime.plan.catalog.entry(id)?;
-        invoke_component_runtime(&self.runtime.table, id, &entry.name, |runtime| {
-            let ComponentRuntime {
-                store, instance, ..
-            } = runtime;
-            let binding = B::bind(store, instance)?;
-            call(store, binding)
-        })
+        invoke_component_runtime(
+            &self.runtime.table,
+            id,
+            entry.metadata.id(),
+            &[],
+            |runtime| {
+                Box::pin(async move {
+                    let instance = runtime.instance;
+                    runtime
+                        .store
+                        .run_concurrent(async |accessor| {
+                            let binding = B::bind(accessor, &instance)?;
+                            call(accessor, binding).await
+                        })
+                        .await?
+                })
+            },
+        )
+        .await
     }
 }
 
 impl<H: Send + Sync + 'static> ComponentRuntime<H> {
-    fn call(&mut self, target: &Target, params: &[Val]) -> Result<Vec<Val>, anyhow::Error> {
-        let interface = self
-            .instance
-            .get_export_index(&mut self.store, None, &target.interface)
-            .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
-        let function = self
-            .instance
-            .get_export_index(&mut self.store, Some(&interface), &target.function)
-            .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
-        let function = self
-            .instance
-            .get_func(&mut self.store, function)
-            .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
-        let mut results = function
-            .ty(&self.store)
-            .results()
-            .map(|_| Val::Bool(false))
-            .collect::<Vec<_>>();
-        function.call(&mut self.store, params, &mut results)?;
-        Ok(results)
+    async fn call(&mut self, target: &Target, params: &[Val]) -> Result<Vec<Val>, anyhow::Error> {
+        let instance = self.instance;
+        self.store
+            .run_concurrent(async |accessor| {
+                let (function, mut results) = accessor.with(|mut access| {
+                    let interface = instance
+                        .get_export_index(&mut access, None, &target.interface)
+                        .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
+                    let function = instance
+                        .get_export_index(&mut access, Some(&interface), &target.function)
+                        .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
+                    let function = instance
+                        .get_func(&mut access, function)
+                        .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
+                    let results = function
+                        .ty(&access)
+                        .results()
+                        .map(|_| Val::Bool(false))
+                        .collect::<Vec<_>>();
+                    Ok::<_, anyhow::Error>((function, results))
+                })?;
+                function
+                    .call_concurrent(accessor, params, &mut results)
+                    .await?;
+                Ok(results)
+            })
+            .await?
     }
 }
 
@@ -377,67 +401,89 @@ fn wire_direct_imports<'a, H: Send + Sync + 'static>(
         for (function, target) in &import.functions {
             let target = target.clone();
             let runtimes = Arc::downgrade(runtimes);
-            instance.func_new(function, move |_store, _ty, params, results| {
-                let values = invoke_target(&runtimes, &target, params)
-                    .map_err(|error| wasmtime::Error::msg(error.to_string()))?;
-                if values.len() != results.len() {
-                    return Err(wasmtime::Error::msg("provider returned the wrong arity"));
-                }
-                for (result, value) in results.iter_mut().zip(values) {
-                    *result = value;
-                }
-                Ok(())
+            instance.func_new_concurrent(function, move |accessor, _ty, params, results| {
+                let target = target.clone();
+                let runtimes = runtimes.clone();
+                Box::pin(async move {
+                    let call_path = accessor.with(|mut access| access.data_mut().call_path.clone());
+                    let params = params.to_vec();
+                    let values = tokio::spawn(async move {
+                        invoke_target(&runtimes, &target, &params, &call_path).await
+                    })
+                    .await
+                    .map_err(|error| wasmtime::Error::msg(error.to_string()))?
+                    .map_err(wasmtime::Error::new)?;
+                    if values.len() != results.len() {
+                        return Err(wasmtime::Error::msg("provider returned the wrong arity"));
+                    }
+                    for (result, value) in results.iter_mut().zip(values) {
+                        *result = value;
+                    }
+                    Ok(())
+                })
             })?;
         }
     }
     Ok(())
 }
 
-fn invoke_target<H: Send + Sync + 'static>(
+async fn invoke_target<H: Send + Sync + 'static>(
     runtimes: &Weak<Mutex<RuntimeTable<H>>>,
     target: &Target,
     params: &[Val],
+    call_path: &[ComponentId],
 ) -> Result<Vec<Val>, RuntimeError> {
     let runtimes = runtimes
         .upgrade()
         .ok_or_else(|| RuntimeError::Unavailable {
-            component: target.component_name.clone(),
+            component: target.plugin_id.clone(),
         })?;
+    let target = target.clone();
+    let plugin_id = target.plugin_id.clone();
+    let params = params.to_vec();
     invoke_component_runtime(
         &runtimes,
         target.component,
-        &target.component_name,
-        |runtime| runtime.call(target, params),
+        &plugin_id,
+        call_path,
+        |runtime| Box::pin(async move { runtime.call(&target, &params).await }),
     )
+    .await
 }
 
-fn invoke_component_runtime<H: Send + Sync + 'static, R>(
+async fn invoke_component_runtime<H: Send + Sync + 'static, R>(
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     component: ComponentId,
-    component_name: &str,
-    call: impl FnOnce(&mut ComponentRuntime<H>) -> anyhow::Result<R>,
-) -> Result<R, RuntimeError> {
-    let _guard = enter_component(component, component_name)?;
-    let runtime = runtime_for(runtimes, component, component_name)?;
-    let mut runtime = try_runtime_lock(&runtime, component_name)?;
+    plugin_id: &str,
+    call_path: &[ComponentId],
+    call: impl for<'a> FnOnce(&'a mut ComponentRuntime<H>) -> RuntimeCall<'a, R>,
+) -> Result<R, RuntimeError>
+where
+    R: Send,
+{
+    let call_path = enter_component(call_path, component, plugin_id)?;
+    let runtime = runtime_for(runtimes, component, plugin_id)?;
+    let mut runtime = try_runtime_lock(&runtime, plugin_id)?;
     if !runtime.healthy {
         return Err(RuntimeError::Unhealthy {
-            component: component_name.into(),
+            component: plugin_id.into(),
         });
     }
     runtime
         .store
         .set_fuel(FUEL)
         .map_err(|source| RuntimeError::Trapped {
-            component: component_name.into(),
+            component: plugin_id.into(),
             source: source.into(),
         })?;
-    let result = call(&mut runtime);
+    let previous_path = std::mem::replace(&mut runtime.store.data_mut().call_path, call_path);
+    let result = call(&mut runtime).await;
+    runtime.store.data_mut().call_path = previous_path;
     if result.is_err() {
         runtime.healthy = false;
     }
     result.map_err(|source| RuntimeError::Trapped {
-        component: component_name.into(),
+        component: plugin_id.into(),
         source,
     })
 }
@@ -446,7 +492,7 @@ fn runtime_for<H: Send + Sync + 'static>(
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     component: ComponentId,
     name: &str,
-) -> Result<Arc<Mutex<ComponentRuntime<H>>>, RuntimeError> {
+) -> Result<Arc<AsyncMutex<ComponentRuntime<H>>>, RuntimeError> {
     runtimes
         .lock()
         .map_err(|_| RuntimeError::Poisoned)?
@@ -459,45 +505,45 @@ fn runtime_for<H: Send + Sync + 'static>(
 }
 
 fn try_runtime_lock<'a, H: Send + Sync + 'static>(
-    runtime: &'a Mutex<ComponentRuntime<H>>,
+    runtime: &'a AsyncMutex<ComponentRuntime<H>>,
     name: &str,
-) -> Result<MutexGuard<'a, ComponentRuntime<H>>, RuntimeError> {
+) -> Result<AsyncMutexGuard<'a, ComponentRuntime<H>>, RuntimeError> {
     match runtime.try_lock() {
         Ok(runtime) => Ok(runtime),
-        Err(TryLockError::WouldBlock) => Err(RuntimeError::Busy {
+        Err(_) => Err(RuntimeError::Busy {
             component: name.into(),
         }),
-        Err(TryLockError::Poisoned(_)) => Err(RuntimeError::Poisoned),
     }
 }
 
 #[cfg(test)]
-fn enter_call(target: &Target) -> Result<CallGuard, RuntimeError> {
-    enter_component(target.component, &target.component_name)
+fn enter_call(
+    call_path: &[ComponentId],
+    target: &Target,
+) -> Result<Vec<ComponentId>, RuntimeError> {
+    enter_component(call_path, target.component, &target.plugin_id)
 }
 
 fn enter_component(
+    call_path: &[ComponentId],
     component: ComponentId,
-    component_name: &str,
-) -> Result<CallGuard, RuntimeError> {
-    let frame = Frame { component };
-    CALL_STACK.with(|stack| {
-        let mut stack = stack.borrow_mut();
-        let runtime_depth = stack
-            .iter()
-            .filter(|item| item.component.catalog == component.catalog)
-            .count();
-        if runtime_depth >= MAX_DEPTH {
-            return Err(RuntimeError::DepthLimit);
-        }
-        if stack.contains(&frame) {
-            return Err(RuntimeError::Cycle {
-                component: component_name.into(),
-            });
-        }
-        stack.push(frame);
-        Ok(CallGuard(frame))
-    })
+    plugin_id: &str,
+) -> Result<Vec<ComponentId>, RuntimeError> {
+    let runtime_depth = call_path
+        .iter()
+        .filter(|item| item.catalog == component.catalog)
+        .count();
+    if runtime_depth >= MAX_DEPTH {
+        return Err(RuntimeError::DepthLimit);
+    }
+    if call_path.contains(&component) {
+        return Err(RuntimeError::Cycle {
+            component: plugin_id.into(),
+        });
+    }
+    let mut next = call_path.to_vec();
+    next.push(component);
+    Ok(next)
 }
 
 fn instantiate_error(component: &str, source: anyhow::Error) -> RuntimeBuildError {
@@ -511,15 +557,15 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
     if !grant.host.is_dir() {
         anyhow::bail!("host path {} is not a directory", grant.host.display());
     }
-    let (dirs, files) = match grant.access {
-        DirectoryAccess::ReadOnly => (DirPerms::READ, FilePerms::READ),
-        DirectoryAccess::ReadWrite => (DirPerms::all(), FilePerms::all()),
+    let perms = match grant.access {
+        DirectoryAccess::ReadOnly => FsPerms::ReadOnly,
+        DirectoryAccess::ReadWrite => FsPerms::ReadWrite,
     };
     let guest = grant
         .guest
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("guest path is not UTF-8"))?;
-    wasi.preopened_dir(&grant.host, guest, dirs, files)?;
+    wasi.preopened_dir(&grant.host, guest, perms)?;
     Ok(())
 }
 
@@ -530,7 +576,7 @@ mod tests {
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
-    fn provider_bytes() -> Vec<u8> {
+    fn provider_bytes(plugin_id: &str) -> Vec<u8> {
         let wit = r#"package demo:stack@0.1.0;
 interface api { run: func(); }
 world provider { export api; }"#;
@@ -539,11 +585,12 @@ world provider { export api; }"#;
         let world = resolve.packages[package].worlds["provider"];
         let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
         embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
-        ComponentEncoder::default()
+        let bytes = ComponentEncoder::default()
             .module(&module)
             .unwrap()
             .encode()
-            .unwrap()
+            .unwrap();
+        crate::catalog::with_test_plugin_metadata(bytes, plugin_id)
     }
 
     fn consumer_bytes() -> Vec<u8> {
@@ -555,11 +602,12 @@ world consumer { import api; }"#;
         let world = resolve.packages[package].worlds["consumer"];
         let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
         embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
-        ComponentEncoder::default()
+        let bytes = ComponentEncoder::default()
             .module(&module)
             .unwrap()
             .encode()
-            .unwrap()
+            .unwrap();
+        crate::catalog::with_test_plugin_metadata(bytes, "second")
     }
 
     struct FailingHostBinding;
@@ -571,7 +619,10 @@ world consumer { import api; }"#;
 
         type Client<'runtime> = ();
 
-        fn bind(_store: &mut Store<PluginStore<()>>, _instance: &Instance) -> anyhow::Result<Self> {
+        fn bind(
+            _accessor: &Accessor<PluginStore<()>>,
+            _instance: &Instance,
+        ) -> anyhow::Result<Self> {
             Ok(Self)
         }
 
@@ -619,23 +670,28 @@ world consumer { import api; }"#;
     #[test]
     fn host_contexts_share_application_state() {
         let state = Arc::new(vec![1]);
-        let mut first = HostContext::new("first".into(), Arc::clone(&state));
-        let second = HostContext::new("second".into(), state);
+        let mut first = HostContext::new(
+            PluginMetadata::new("first", "First", "0.1.0").unwrap(),
+            Arc::clone(&state),
+        );
+        let second = HostContext::new(
+            PluginMetadata::new("second", "Second", "0.1.0").unwrap(),
+            state,
+        );
 
-        assert_eq!(first.component_name(), "first");
-        assert_eq!(second.component_name(), "second");
+        assert_eq!(first.plugin().id(), "first");
+        assert_eq!(second.plugin().id(), "second");
         assert!(std::ptr::eq(first.state(), second.state()));
         assert!(first.resources_mut().is_empty());
     }
 
     #[test]
-    fn call_guards_reject_cycles_and_depth_without_leaking_frames() {
+    fn call_paths_reject_cycles_and_excessive_depth() {
         let mut catalog = Catalog::new().unwrap();
         let mut components = Vec::new();
         for index in 0..=MAX_DEPTH {
-            let component = catalog
-                .add_untyped(format!("provider-{index}"), provider_bytes())
-                .unwrap();
+            let plugin_id = format!("provider-{index}");
+            let component = catalog.add_untyped(provider_bytes(&plugin_id)).unwrap();
             components.push(component);
         }
         let plan = Plan::new(catalog, Grants::default()).unwrap();
@@ -646,43 +702,40 @@ world consumer { import api; }"#;
                 let export = &entry.exports[0];
                 Target {
                     component,
-                    component_name: entry.name.clone(),
+                    plugin_id: entry.metadata.id().into(),
                     interface: export.interface.clone(),
                     function: export.function.clone(),
                 }
             })
             .collect::<Vec<_>>();
 
-        let first = enter_call(&targets[0]).unwrap();
+        let first = enter_call(&[], &targets[0]).unwrap();
         assert!(matches!(
-            enter_call(&targets[0]),
+            enter_call(&first, &targets[0]),
             Err(RuntimeError::Cycle { .. })
         ));
-        drop(first);
-
-        let guards = targets[..MAX_DEPTH]
+        let path = targets[..MAX_DEPTH]
             .iter()
-            .map(|target| enter_call(target).unwrap())
-            .collect::<Vec<_>>();
+            .fold(Vec::new(), |path, target| {
+                enter_call(&path, target).unwrap()
+            });
         assert!(matches!(
-            enter_call(&targets[MAX_DEPTH]),
+            enter_call(&path, &targets[MAX_DEPTH]),
             Err(RuntimeError::DepthLimit)
         ));
-        drop(guards);
-        assert!(enter_call(&targets[0]).is_ok());
+        assert!(enter_call(&[], &targets[0]).is_ok());
     }
 
-    #[test]
-    fn all_linkers_are_preflighted_before_any_store_is_created() {
+    #[tokio::test]
+    async fn all_linkers_are_preflighted_before_any_store_is_created() {
         let mut app = Application::new(()).unwrap();
-        app.add_untyped("first", provider_bytes()).unwrap();
-        let second = app
-            .add::<FailingHostBinding>("second", consumer_bytes())
-            .unwrap();
+        app.add_untyped(provider_bytes("first")).unwrap();
+        let second = app.add::<FailingHostBinding>(consumer_bytes()).unwrap();
         let result = app
             .allow_host_import(second, "demo:stack/api@0.1.0")
             .unwrap()
-            .run();
+            .run()
+            .await;
 
         assert!(matches!(
             result,

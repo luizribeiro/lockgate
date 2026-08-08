@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug)]
 pub(crate) struct Target {
     pub(crate) component: ComponentId,
-    pub(crate) component_name: String,
+    pub(crate) plugin_id: String,
     pub(crate) interface: String,
     pub(crate) function: String,
 }
@@ -69,7 +69,7 @@ impl Plan {
                 .any(|existing| existing.guest == grant.guest)
             {
                 return Err(RuntimeBuildError::DuplicateGuestDirectory {
-                    component: entry.name.clone(),
+                    component: entry.metadata.id().into(),
                     guest: grant.guest.display().to_string(),
                 });
             }
@@ -109,13 +109,13 @@ impl Plan {
                     .collect::<HashSet<_>>();
                 if providers.is_empty() {
                     return Err(RuntimeBuildError::MissingProvider {
-                        caller: caller_entry.name.clone(),
+                        caller: caller_entry.metadata.id().into(),
                         interface: import.interface.clone(),
                     });
                 }
                 if providers.len() > 1 {
                     return Err(RuntimeBuildError::AmbiguousProvider {
-                        caller: caller_entry.name.clone(),
+                        caller: caller_entry.metadata.id().into(),
                         interface: import.interface.clone(),
                     });
                 }
@@ -137,8 +137,8 @@ impl Plan {
                         .iter()
                         .find(|export| export.target == target_name)
                         .ok_or_else(|| RuntimeBuildError::MissingFunction {
-                            caller: caller_entry.name.clone(),
-                            provider: provider_entry.name.clone(),
+                            caller: caller_entry.metadata.id().into(),
+                            provider: provider_entry.metadata.id().into(),
                             target: target_name.clone(),
                         })?;
                     validate_cross_store_signature(&export.runtime_signature).map_err(|error| {
@@ -156,7 +156,7 @@ impl Plan {
                     }
                     functions.push((
                         function.clone(),
-                        target_from_info(provider, provider_entry.name.clone(), export),
+                        target_from_info(provider, provider_entry.metadata.id().into(), export),
                     ));
                 }
                 components
@@ -175,10 +175,10 @@ impl Plan {
     }
 }
 
-fn target_from_info(component: ComponentId, component_name: String, export: &ExportInfo) -> Target {
+fn target_from_info(component: ComponentId, plugin_id: String, export: &ExportInfo) -> Target {
     Target {
         component,
-        component_name,
+        plugin_id,
         interface: export.interface.clone(),
         function: export.function.clone(),
     }
@@ -197,11 +197,12 @@ mod tests {
         let world = resolve.packages[package].worlds[world_name];
         let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
         embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
-        ComponentEncoder::default()
+        let bytes = ComponentEncoder::default()
             .module(&module)
             .unwrap()
             .encode()
-            .unwrap()
+            .unwrap();
+        crate::catalog::with_test_plugin_metadata(bytes, world_name)
     }
 
     #[test]
@@ -211,11 +212,9 @@ interface api { run: func(input: string) -> string; }
 world provider { export api; }
 world caller { import api; }"#;
         let mut catalog = Catalog::new().unwrap();
-        let caller = catalog
-            .add_untyped("caller", component_bytes(wit, "caller"))
-            .unwrap();
+        let caller = catalog.add_untyped(component_bytes(wit, "caller")).unwrap();
         let provider = catalog
-            .add_untyped("provider", component_bytes(wit, "provider"))
+            .add_untyped(component_bytes(wit, "provider"))
             .unwrap();
         let mut grants = Grants::default();
         grants.links.push(LinkGrant { caller, provider });

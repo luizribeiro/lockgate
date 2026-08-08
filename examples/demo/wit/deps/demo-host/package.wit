@@ -2,15 +2,15 @@
 package demo:host@0.1.0;
 
 interface services {
-  log: func(message: string);
+  log: async func(message: string);
 }
 
 interface runnable {
-  run: func() -> result<string, string>;
+  run: async func() -> result<string, string>;
 }
 
 interface file-reader {
-  read: func(path: string) -> result<string, string>;
+  read: async func(path: string) -> result<string, string>;
 }
 
 world runnable-plugin {

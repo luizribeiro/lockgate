@@ -13,8 +13,9 @@ The design keeps API knowledge and implementation selection separate:
 
 Lockgate keeps three kinds of identity separate:
 
-- The application assigns a logical name such as `greeter` when adding bytes to its catalog.
-- Package, interface, and function names come from the WIT embedded in the component.
+- Each artifact embeds a stable plugin ID, display name, and implementation version.
+- Package, world, interface, and function names come from the WIT embedded in the component.
+- Each admitted artifact receives an opaque `ComponentId`, so several instances may carry the same plugin metadata.
 
 The public lifecycle is generated bindings → `Application` → `Runtime`:
 
@@ -33,28 +34,42 @@ mod bindings {
 }
 
 impl bindings::myapp::host::services::Host for HostContext<()> {
-    fn log(&mut self, message: String) {
-        println!("{}: {message}", self.component_name());
+}
+
+impl bindings::myapp::host::services::HostWithStore<
+    lockgate::__private::PluginStore<()>,
+> for HostContext<()> {
+    async fn log(
+        accessor: &wasmtime::component::Accessor<
+            lockgate::__private::PluginStore<()>,
+            Self,
+        >,
+        message: String,
+    ) {
+        accessor.with(|mut access| {
+            println!("{}: {message}", access.get().plugin().id());
+        });
     }
 }
 
 let mut app = Application::new(())?;
-let greeter = app.add::<bindings::GreeterPlugin>("greeter", greeter_wasm)?;
-let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
+let greeter = app.add::<bindings::GreeterPlugin>(greeter_wasm)?;
+let caller = app.add::<bindings::RunnablePlugin>(caller_wasm)?;
 
 let runtime = app
     .link(caller, greeter)?
     .allow_host_import(caller, "myapp:host/services@1.0.0")?
-    .run()?;
+    .run()
+    .await?;
 
-let result = runtime.component(caller).run()?;
+let result = runtime.component(caller).run().await?;
 ```
 
 `lockgate::bindings!` parses all listed application worlds together. It generates every imported host interface once, remaps each Wasmtime world to those shared bindings, and emits export contracts plus canonical host-interface installers. The application therefore implements `myapp:host/services@1.0.0` once even when several plugin roles import it.
 
-`Application::add::<Role>` compares each requested generated export contract with metadata decoded from the artifact. A single role returns one typed component handle; a tuple of roles returns a matching tuple of handles after every role validates atomically. It also retains host-interface installers specialized for the application's state type. Even sibling-only providers use a narrow export-only role. Runtime construction installs only explicitly granted host interfaces and prepares every complete linker before creating stores.
+`Application::add::<Role>` requires and validates embedded Lockgate plugin metadata, then compares each requested generated export contract with WIT decoded from the artifact. A single role returns one typed component handle; a tuple of roles returns a matching tuple of handles after every role validates atomically. It also retains host-interface installers specialized for the application's state type. Even sibling-only providers use a narrow export-only role. Runtime construction installs only explicitly granted host interfaces and prepares every complete linker before creating stores.
 
-`Runtime::component` turns a typed handle into a lightweight generated client. Each binding role represents one exported interface, so its WIT functions become ordinary Rust methods directly on that client while Lockgate keeps Wasmtime stores, binding construction, fuel, locking, and trap health internal. A WIT `result<T, E>` remains inside the outer `Result<_, RuntimeError>`, so domain errors do not mark a component unhealthy.
+`Runtime::component` turns a typed handle into a lightweight generated client. Each binding role represents one exported interface, so its WIT functions become async Rust methods directly on that client while Lockgate keeps Wasmtime stores, binding construction, fuel, locking, and trap health internal. A WIT `result<T, E>` remains inside the outer `Result<_, RuntimeError>`, so domain errors do not mark a component unhealthy.
 
 The generated binding implementation exists only when `HostContext<S>` implements every host trait imported by that role. A missing host implementation is therefore a compile-time error at `Application::add`, while artifact admission and grant validation remain runtime checks over the supplied bytes and grants.
 
@@ -76,10 +91,10 @@ An artifact can implement several independent roles without being instantiated m
 let (observer, database) = app.add::<(
     bindings::QueryObserverPlugin,
     bindings::DatabaseConnectorPlugin,
-)>("database", bytes)?;
+)>(bytes)?;
 
-runtime.component(observer).on_query(query)?;
-runtime.component(database).execute(statement)?;
+runtime.component(observer).on_query(query).await?;
+runtime.component(database).execute(statement).await?;
 ```
 
 Both handles refer to the same component store and instance. Binding worlds export exactly one interface, while tuple addition validates all requested capabilities atomically; unrelated roles require no common plugin trait or world hierarchy.
@@ -94,11 +109,11 @@ Lockgate owns no application WIT package. The demo application owns `demo:host`,
 package demo:host@0.1.0;
 
 interface services {
-  log: func(message: string);
+  log: async func(message: string);
 }
 
 interface runnable {
-  run: func() -> result<string, string>;
+  run: async func() -> result<string, string>;
 }
 
 world runnable-plugin {
@@ -111,15 +126,45 @@ The caller and filereader consume those contracts. The separately versioned `dem
 
 Applications can define several plugin roles. A sibling-only provider can use a narrow export-only admission world, and unrelated plugin kinds do not need to share one artificial universal interface.
 
+## Plugin authoring
+
+Rust plugin authors depend on the lightweight `lockgate-plugin` crate rather than the host runtime. Its binding macro generates ordinary `wit-bindgen` guest bindings and embeds a versioned, language-neutral `lockgate:plugin` custom section:
+
+```rust,ignore
+mod bindings {
+    lockgate_plugin::bindings!({
+        path: "wit",
+        world: "greeter",
+        metadata: {
+            id: "com.example.greeter",
+            name: "Example Greeter",
+            version: "1.2.0",
+            description: "Returns localized greetings",
+        },
+    });
+}
+```
+
+`id`, `name`, and a SemVer `version` are required. `description`, `license`, `repository`, and `homepage` are optional. The format is independent of Rust so other guest toolchains can emit the same custom section. Metadata is self-declared and never grants authority; Lockgate derives capabilities from actual imports plus application grants. Artifact provenance requires an external signature, trusted registry, or content digest.
+
+Non-Rust tooling writes UTF-8 JSON directly into a custom section named `lockgate:plugin`; an admissible artifact contains exactly one such section. Format 1 has this shape:
+
+```json
+{
+  "format": 1,
+  "id": "com.example.greeter",
+  "name": "Example Greeter",
+  "version": "1.2.0",
+  "description": "Returns localized greetings"
+}
+```
+
 ## Host integration
 
-Lockgate constructs one `HostContext<S>` per component. The context always contains the application-assigned component name and resource table, while every context shares the application state `S`. A stateless application uses `S = ()`, so host state is always initialized.
+Lockgate constructs one `HostContext<S>` per component. The context always contains the plugin's embedded metadata and resource table, while every context shares the application state `S`. A stateless application uses `S = ()`, so host state is always initialized.
 
 ```rust,ignore
 impl bindings::myapp::host::services::Host for HostContext<()> {
-    fn log(&mut self, message: String) {
-        println!("{}: {message}", self.component_name());
-    }
 }
 ```
 
@@ -131,16 +176,29 @@ struct AppState {
     counters: Mutex<HashMap<String, usize>>,
 }
 
-impl bindings::myapp::host::services::Host for HostContext<AppState> {
-    fn log(&mut self, message: String) {
-        self.state().logger.log(self.component_name(), message);
+impl bindings::myapp::host::services::Host for HostContext<AppState> {}
+
+impl bindings::myapp::host::services::HostWithStore<
+    lockgate::__private::PluginStore<AppState>,
+> for HostContext<AppState> {
+    async fn log(
+        accessor: &wasmtime::component::Accessor<
+            lockgate::__private::PluginStore<AppState>,
+            Self,
+        >,
+        message: String,
+    ) {
+        accessor.with(|mut access| {
+            let context = access.get();
+            context.state().logger.log(context.plugin().id(), message);
+        });
     }
 }
 
 let mut app = Application::new(AppState::new())?;
 ```
 
-Host implementations use `HostContext::state`, `resources_mut`, and `component_name`. Component-specific data can be keyed by `component_name` inside the shared state.
+Host implementations use `HostContext::state`, `resources_mut`, and `plugin`. `Application::metadata` makes the same metadata available immediately after admission without instantiating the plugin.
 
 A component may implement more than one application role without creating another instance:
 
@@ -148,7 +206,7 @@ A component may implement more than one application role without creating anothe
 let (runnable, reader) = app.add::<(
     bindings::RunnablePlugin,
     bindings::FileReaderPlugin,
-)>("plugin", bytes)?;
+)>(bytes)?;
 ```
 
 Multi-role addition validates every requested role atomically and merges their host-interface requirements. Canonical installers are deduplicated, and every returned typed handle accesses the same component store.
@@ -167,7 +225,7 @@ Before creating stores, runtime construction:
 
 1. requires every custom import to have either a host grant or exactly one linked sibling provider;
 2. resolves every function required from that sibling provider;
-3. rejects async functions and values that cannot cross independent stores;
+3. rejects values that cannot cross independent stores;
 4. compares complete Wasmtime structural signatures;
 5. installs only admitted host interfaces explicitly granted to that component;
 6. prepares every complete linker with Wasmtime before application state or component stores are created.
@@ -188,7 +246,9 @@ src/
   plugin.rs              structural type inspection and cross-store validation
   runtime.rs             isolated stores, host context, and sibling forwarding
 lockgate-macros/          shared application-world binding generation
-lockgate-schema/          shared canonical WIT contract metadata
+lockgate-plugin/          lightweight Rust guest API
+lockgate-plugin-macros/   guest binding and plugin metadata generation
+lockgate-schema/          shared WIT contracts and plugin metadata format
 examples/demo/
   build.rs               builds and stages executable demo components
   src/main.rs            generated host bindings and the narrated lifecycle
@@ -198,7 +258,7 @@ examples/demo/
   sandbox/               demo filesystem input
 ```
 
-The guest components form a small workspace with one dependency set and lockfile, independent from the host workspace. Guest bindings are generated inline with `wit_bindgen::generate!`, and ordinary Cargo compiles the crates directly to native `wasm32-wasip2` components.
+The guest components form a small workspace with one dependency set and lockfile, independent from the host workspace. Each guest depends only on `lockgate-plugin`; Cargo compiles the generated bindings and metadata directly to native `wasm32-wasip3` components.
 
 ## Run it
 
@@ -216,13 +276,13 @@ cargo test --workspace
 scripts/public-api
 ```
 
-The API inventory command generates rustdoc JSON with `cargo rustdoc`, then reports root exports, inherent methods, enum variants, and the separate hidden ABI used by generated code. The root library has no build script. The demo builds its guests with ordinary Cargo and stages the native `wasm32-wasip2` components under Cargo's `OUT_DIR`.
+The API inventory command generates rustdoc JSON with `cargo rustdoc`, then reports root exports, inherent methods, enum variants, and the separate hidden ABI used by generated code. The root library has no build script. The demo builds its guests with Cargo's nightly `build-std` support and stages the native `wasm32-wasip3` components under Cargo's `OUT_DIR`.
 
 ## Add a demo component
 
 1. Choose or add a narrow application admission world for the component; include host-visible exports and imports only when needed.
 2. Add the component's implementation world to `examples/demo/wit/worlds.wit`, importing host services and sibling packages explicitly.
-3. Generate guest bindings inline with `wit_bindgen::generate!` and build for `wasm32-wasip2`.
+3. Generate guest bindings and embed required metadata with `lockgate_plugin::bindings!`, then build for `wasm32-wasip3`.
 4. List related admission worlds in a `lockgate::bindings!` invocation and implement each shared host interface once for `HostContext<S>`.
 5. Add every artifact with `app.add::<GeneratedBinding>`.
 6. Grant each host import, sibling link, and WASI capability separately; `Application` configures authorized host bindings automatically.
@@ -230,10 +290,9 @@ The API inventory command generates rustdoc JSON with `cargo rustdoc`, then repo
 
 ## Current limits
 
-The flake pins Rust 1.97.1 with its native `wasm32-wasip2` target. Rust dependencies pin `wit-bindgen` 0.60.0 for demo guests, Wasmtime 47.0.3, and `wit-component`/`wit-parser` 0.255.0 for the host.
+Rust's `wasm32-wasip3` target is Tier 3 and is not distributed through rustup yet. The flake therefore supplies nightly Rust with `rust-src`, builds the standard library on demand, and builds wasi-sdk 34 RC2's cooperative WASIp3 libc variant. Wasmtime is pinned to the exact prepared 48.0.0 release commit because released Wasmtime 47 predates the finalized two-slot threading encoding emitted by the current toolchain.
 
-- Sibling forwarding supports synchronous functions whose values can move between independent stores. Resource handles, `error-context`, futures, and streams cannot cross that boundary.
-- Wasmtime 47's public component type conversion does not expose fixed-length lists and contains an unimplemented conversion for them. Lockgate rejects those artifacts before runtime type introspection.
+- Sibling forwarding supports native async functions whose parameters and results can move between independent stores. Resource handles, `error-context`, futures, and streams cannot cross that boundary.
 - Sibling provider cycles are linkable because forwarding closures resolve stores only when called; runtime guards reject re-entry. A component that calls an import during its own instantiation can still fail when its provider store is not available yet.
-- The runtime is synchronous. Application-generated host bindings may use richer ordinary WIT types than sibling forwarding, but async execution is not currently configured.
 - Networking remains fail-closed because Wasmtime's current socket policy callback exposes resolved addresses rather than the requested hostname.
+- Plugin metadata lives in a WebAssembly custom section. Generic stripping tools may remove custom sections, making the resulting artifact inadmissible until metadata is restored.

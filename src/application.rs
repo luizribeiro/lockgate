@@ -9,6 +9,7 @@ use crate::{
     },
     runtime::{PluginStore, Runtime, RuntimeBuildError},
 };
+use lockgate_schema::PluginMetadata;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 type HostInstaller<S> =
     fn(&str, &mut wasmtime::component::Linker<PluginStore<S>>) -> anyhow::Result<()>;
@@ -80,21 +81,27 @@ impl<S: Send + Sync + 'static> Application<S> {
     /// Adds an artifact to the application and retains its generated host-interface installers.
     pub fn add<R: RoleSet<S>>(
         &mut self,
-        name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
     ) -> Result<R::Handles, ApplicationError> {
-        let component = self.catalog.add::<S, R>(name, bytes)?;
+        let component = self.catalog.add::<S, R>(bytes)?;
         self.register::<R>(component.id());
         Ok(R::handles(component))
+    }
+
+    /// Returns the metadata embedded by an admitted plugin.
+    pub fn metadata<B>(
+        &self,
+        component: Component<B>,
+    ) -> Result<&PluginMetadata, ApplicationError> {
+        Ok(&self.catalog.entry(component.id())?.metadata)
     }
 
     #[cfg(test)]
     pub(crate) fn add_untyped(
         &mut self,
-        name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
     ) -> Result<ComponentId, ApplicationError> {
-        self.catalog.add_untyped(name, bytes)
+        self.catalog.add_untyped(bytes)
     }
 
     /// Permits a caller's typed imports to be satisfied by a provider.
@@ -146,8 +153,8 @@ impl<S: Send + Sync + 'static> Application<S> {
     }
 
     /// Validates the retained grants and runs every added component.
-    pub fn run(self) -> Result<Runtime<S>, RuntimeBuildError> {
-        Runtime::from_application(self.catalog, self.grants, self.state, self.host_bindings)
+    pub async fn run(self) -> Result<Runtime<S>, RuntimeBuildError> {
+        Runtime::from_application(self.catalog, self.grants, self.state, self.host_bindings).await
     }
 
     fn register<R: RoleSet<S>>(&mut self, component: ComponentId) {
@@ -169,8 +176,8 @@ impl<S: Send + Sync + 'static> Application<S> {
         });
         if !matches {
             return Err(ApplicationError::NoMatchingImport {
-                caller: caller_entry.name.clone(),
-                provider: provider_entry.name.clone(),
+                caller: caller_entry.metadata.id().into(),
+                provider: provider_entry.metadata.id().into(),
             });
         }
         let grant = LinkGrant { caller, provider };
@@ -193,7 +200,7 @@ impl<S: Send + Sync + 'static> Application<S> {
             .any(|import| import.interface == interface);
         if !imported || !entry.host_imports.contains(interface.as_str()) {
             return Err(ApplicationError::HostImportUnavailable {
-                component: entry.name.clone(),
+                component: entry.metadata.id().into(),
                 interface,
             });
         }
@@ -256,28 +263,25 @@ world caller { import api; }"#;
         let world = resolve.packages[package].worlds[world_name];
         let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
         embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
-        ComponentEncoder::default()
+        let bytes = ComponentEncoder::default()
             .module(&module)
             .unwrap()
             .encode()
-            .unwrap()
+            .unwrap();
+        crate::catalog::with_test_plugin_metadata(bytes, world_name)
     }
 
     #[test]
     fn rejects_unrelated_links_and_unavailable_host_imports() {
         let mut app = Application::new(()).unwrap();
-        let provider = app
-            .add_untyped("provider", component_bytes("provider"))
-            .unwrap();
+        let provider = app.add_untyped(component_bytes("provider")).unwrap();
         assert!(matches!(
             app.link_ids(provider, provider),
             Err(ApplicationError::NoMatchingImport { .. })
         ));
 
         let mut app = Application::new(()).unwrap();
-        let caller = app
-            .add_untyped("caller", component_bytes("caller"))
-            .unwrap();
+        let caller = app.add_untyped(component_bytes("caller")).unwrap();
         assert!(matches!(
             app.allow_host_import_id(caller, "demo:application/api@0.1.0"),
             Err(ApplicationError::HostImportUnavailable { .. })
@@ -287,13 +291,9 @@ world caller { import api; }"#;
     #[test]
     fn rejects_foreign_and_invalid_directory_grants() {
         let mut first = Application::new(()).unwrap();
-        first
-            .add_untyped("caller", component_bytes("caller"))
-            .unwrap();
+        first.add_untyped(component_bytes("caller")).unwrap();
         let mut second = Application::new(()).unwrap();
-        let foreign = second
-            .add_untyped("foreign", component_bytes("caller"))
-            .unwrap();
+        let foreign = second.add_untyped(component_bytes("caller")).unwrap();
         assert!(matches!(
             first.directory(
                 foreign,
@@ -305,9 +305,7 @@ world caller { import api; }"#;
         ));
 
         let mut app = Application::new(()).unwrap();
-        let caller = app
-            .add_untyped("caller", component_bytes("caller"))
-            .unwrap();
+        let caller = app.add_untyped(component_bytes("caller")).unwrap();
         assert!(matches!(
             app.directory(
                 caller,
@@ -319,9 +317,7 @@ world caller { import api; }"#;
         ));
 
         let mut app = Application::new(()).unwrap();
-        let caller = app
-            .add_untyped("caller", component_bytes("caller"))
-            .unwrap();
+        let caller = app.add_untyped(component_bytes("caller")).unwrap();
         assert!(matches!(
             app.directory(
                 caller,

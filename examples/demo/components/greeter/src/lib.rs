@@ -1,8 +1,13 @@
 mod bindings {
-    wit_bindgen::generate!({
+    lockgate_plugin::bindings!({
         path: "../../wit",
         world: "greeter",
-        generate_all,
+        metadata: {
+            id: "demo.greeter",
+            name: "Greeter",
+            version: "0.1.0",
+            description: "Returns a greeting for a supplied name",
+        },
     });
 }
 

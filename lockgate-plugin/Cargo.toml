@@ -1,0 +1,15 @@
+[package]
+name = "lockgate-plugin"
+version = "0.1.0"
+edition = "2024"
+description = "Guest bindings and metadata for Lockgate plugins"
+
+[dependencies]
+lockgate-plugin-macros = { version = "0.1.0", path = "../lockgate-plugin-macros" }
+wit-bindgen = { version = "0.60.0", default-features = false, features = [
+  "async",
+  "bitflags",
+  "macro-string",
+  "macros",
+  "std",
+] }

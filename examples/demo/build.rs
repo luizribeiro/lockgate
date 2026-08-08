@@ -10,7 +10,21 @@ fn main() {
     let guest_target = output.join("guest-target");
     let staged = output.join("demo");
     let cargo = env::var_os("CARGO").unwrap();
+    let wasi_sysroot = PathBuf::from(
+        env::var_os("WASI_SYSROOT")
+            .expect("WASI_SYSROOT must point to a sysroot containing wasm32-wasip3 libc"),
+    );
+    let wasi_libdir = wasi_sysroot.join("lib/wasm32-wasip3");
+    let cabi_realloc = wasi_libdir.join("__cabi_realloc_wrapper.o");
+    assert!(
+        cabi_realloc.is_file(),
+        "WASI_SYSROOT must contain the cooperative cabi_realloc wrapper at {}",
+        cabi_realloc.display()
+    );
     let guest_manifest = demo.join("components/Cargo.toml");
+
+    println!("cargo:rerun-if-env-changed=WASI_SYSROOT");
+    println!("cargo:rerun-if-env-changed=CARGO_TARGET_WASM32_WASIP3_LINKER");
 
     println!(
         "cargo:rerun-if-changed={}",
@@ -29,6 +43,14 @@ fn main() {
         "cargo:rerun-if-changed={}",
         demo.join("components/Cargo.lock").display()
     );
+    for path in [
+        demo.join("../../lockgate-plugin/Cargo.toml"),
+        demo.join("../../lockgate-plugin/src/lib.rs"),
+        demo.join("../../lockgate-plugin-macros/Cargo.toml"),
+        demo.join("../../lockgate-plugin-macros/src/lib.rs"),
+    ] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
     for id in IDS {
         let dir = demo.join("components").join(id);
         let manifest = dir.join("Cargo.toml");
@@ -39,15 +61,25 @@ fn main() {
         );
     }
     let status = Command::new(&cargo)
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env(
+            "RUSTFLAGS",
+            format!(
+                "-Lnative={} -Clink-arg={} -Clink-arg=-lc -Clink-arg=--export=__wasm_init_task -Clink-arg=--export=__wasm_init_async_task",
+                wasi_libdir.display(),
+                cabi_realloc.display()
+            ),
+        )
         .args([
             "build",
             "--quiet",
             "--locked",
+            "-Zbuild-std=std,panic_abort",
             "--workspace",
             "--manifest-path",
         ])
         .arg(&guest_manifest)
-        .args(["--target", "wasm32-wasip2"])
+        .args(["--target", "wasm32-wasip3"])
         .arg("--target-dir")
         .arg(&guest_target)
         .status()
@@ -59,7 +91,7 @@ fn main() {
         fs::create_dir_all(&destination).unwrap();
         fs::copy(
             guest_target
-                .join("wasm32-wasip2/debug")
+                .join("wasm32-wasip3/debug")
                 .join(format!("{id}.wasm")),
             destination.join(format!("{id}.wasm")),
         )

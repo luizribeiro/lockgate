@@ -253,6 +253,11 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                     let path = interface_module_path(&resolve, *id);
                     quote! {
                         #lockgate::HostContext<S>:
+                            super::__lockgate_shared_imports::#(#path)::*::Host
+                            + super::__lockgate_shared_imports::#(#path)::*::HostWithStore<
+                                #lockgate::__private::PluginStore<S>
+                            >,
+                        for<'a> <#lockgate::HostContext<S> as ::wasmtime::component::HasData>::Data<'a>:
                             super::__lockgate_shared_imports::#(#path)::*::Host,
                     }
                 })
@@ -268,12 +273,17 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                     ) -> #lockgate::__private::AnyResult<()>
                     where
                         #lockgate::HostContext<S>:
+                            super::__lockgate_shared_imports::#(#path)::*::Host
+                            + super::__lockgate_shared_imports::#(#path)::*::HostWithStore<
+                                #lockgate::__private::PluginStore<S>
+                            >,
+                        for<'a> <#lockgate::HostContext<S> as ::wasmtime::component::HasData>::Data<'a>:
                             super::__lockgate_shared_imports::#(#path)::*::Host,
                     {
                         super::__lockgate_shared_imports::#(#path)::*::add_to_linker::<
                             _,
-                            __LockgateHostContextData<S>,
-                        >(linker, #lockgate::__private::PluginStore::context_mut)?;
+                            #lockgate::HostContext<S>,
+                        >(linker, #lockgate::__private::host_context_data::<S>)?;
                         Ok(())
                     }
                 }
@@ -285,17 +295,7 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                 }
             });
             let host_import_names = host_imports.keys();
-            let host_context_data = (!host_imports.is_empty()).then(|| {
-                quote! {
-                    struct __LockgateHostContextData<S>(::std::marker::PhantomData<fn() -> S>);
-
-                    impl<S: 'static> ::wasmtime::component::HasData
-                        for __LockgateHostContextData<S>
-                    {
-                        type Data<'a> = &'a mut #lockgate::HostContext<S>;
-                    }
-                }
-            });
+            let host_context_data = quote! {};
             let remappings = resolve.worlds[selected.id]
                 .imports
                 .iter()
@@ -323,6 +323,7 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                         path: #path,
                         world: #world,
                         with: { #(#remappings),* },
+                        require_store_data_send: true,
                     });
 
                     const _: () = {
@@ -344,12 +345,12 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                                 S: 'runtime;
 
                             fn bind(
-                                store: &mut ::wasmtime::Store<
-                                    #lockgate::__private::PluginStore<S>,
+                                accessor: &::wasmtime::component::Accessor<
+                                    #lockgate::__private::PluginStore<S>
                                 >,
                                 instance: &::wasmtime::component::Instance,
                             ) -> #lockgate::__private::AnyResult<Self> {
-                                Ok(Self::new(&mut *store, instance)?)
+                                accessor.with(|mut access| Ok(Self::new(&mut access, instance)?))
                             }
 
                             fn install_host_import(
@@ -517,6 +518,11 @@ fn generate_runtime_client(
         .map(|path| {
             quote! {
                 #lockgate::HostContext<S>:
+                    super::__lockgate_shared_imports::#(#path)::*::Host
+                    + super::__lockgate_shared_imports::#(#path)::*::HostWithStore<
+                        #lockgate::__private::PluginStore<S>
+                    >,
+                for<'a> <#lockgate::HostContext<S> as ::wasmtime::component::HasData>::Data<'a>:
                     super::__lockgate_shared_imports::#(#path)::*::Host,
             }
         })
@@ -691,12 +697,7 @@ fn generate_client_method(
     resource_accessor: Option<&Ident>,
     lockgate: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
-    if function.sig.asyncness.is_some() {
-        return Err(syn::Error::new_spanned(
-            &function.sig,
-            "asynchronous guest exports are unsupported by the synchronous Lockgate runtime",
-        ));
-    }
+    let async_call = function.sig.asyncness.is_some();
     let original = &function.sig.ident;
     let Some(name) = original
         .to_string()
@@ -739,19 +740,53 @@ fn generate_client_method(
             )),
         })
         .collect::<syn::Result<Vec<_>>>()?;
+    let owned_args = params.iter().zip(&args).filter_map(|(param, arg)| {
+        let FnArg::Typed(param) = param else {
+            return None;
+        };
+        matches!(param.ty.as_ref(), Type::Reference(_)).then(|| {
+            quote! {
+                let #arg = #arg.to_owned();
+            }
+        })
+    });
+    let call_args = params.iter().zip(&args).map(|(param, arg)| {
+        let FnArg::Typed(param) = param else {
+            unreachable!("generated parameters were validated as typed arguments");
+        };
+        if matches!(param.ty.as_ref(), Type::Reference(_)) {
+            quote!(&#arg)
+        } else {
+            quote!(#arg)
+        }
+    });
     let result = generated_result_type(&function.sig.output)?;
     let guest = if let Some(resource) = resource_accessor {
         quote!(binding.#root_accessor().#resource())
     } else {
         quote!(binding.#root_accessor())
     };
+    let call = if async_call {
+        quote! {
+            #guest.#original(accessor, #(#call_args),*).await
+        }
+    } else {
+        quote! {
+            accessor.with(|mut access| {
+                #guest.#original(&mut access, #(#call_args),*)
+            })
+        }
+    };
     Ok(quote! {
-        pub fn #name(#receiver, #(#params),*)
+        pub async fn #name(#receiver, #(#params),*)
             -> ::std::result::Result<#result, #lockgate::RuntimeError>
         {
-            self.inner.invoke(|store, binding| {
-                Ok(#guest.#original(&mut *store, #(#args),*)?)
-            })
+            #(#owned_args)*
+            self.inner.invoke(move |accessor, binding| {
+                ::std::boxed::Box::pin(async move {
+                    Ok(#call?)
+                })
+            }).await
         }
     })
 }

@@ -1,8 +1,13 @@
 mod bindings {
-    wit_bindgen::generate!({
+    lockgate_plugin::bindings!({
         path: "../../wit",
         world: "caller",
-        generate_all,
+        metadata: {
+            id: "demo.caller",
+            name: "Caller",
+            version: "0.1.0",
+            description: "Invokes a linked greeter plugin",
+        },
     });
 }
 

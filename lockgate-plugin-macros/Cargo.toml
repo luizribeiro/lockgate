@@ -1,0 +1,15 @@
+[package]
+name = "lockgate-plugin-macros"
+version = "0.1.0"
+edition = "2024"
+description = "Guest binding generation for Lockgate plugins"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+lockgate-schema = { version = "0.1.0", path = "../lockgate-schema", default-features = false }
+proc-macro-crate = "3.4.0"
+proc-macro2 = "1.0.103"
+quote = "1.0.42"
+syn = "2.0.110"

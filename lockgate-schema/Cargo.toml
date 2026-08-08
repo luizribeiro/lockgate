@@ -2,8 +2,15 @@
 name = "lockgate-schema"
 version = "0.1.0"
 edition = "2024"
-description = "Shared WIT contract extraction for lockgate"
+description = "Shared contract and plugin metadata formats for lockgate"
+
+[features]
+default = ["wit"]
+wit = ["dep:wit-parser"]
 
 [dependencies]
 anyhow = "1.0.100"
-wit-parser = "0.255.0"
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+wit-parser = { version = "0.255.0", optional = true }

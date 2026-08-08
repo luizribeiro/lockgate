@@ -7,11 +7,7 @@ use crate::{
     catalog::Catalog,
     runtime::{PluginStore, RuntimeComponent},
 };
-use std::error::Error as _;
-use wasmtime::{
-    Store,
-    component::{Func, Instance},
-};
+use wasmtime::component::{Accessor, Func, Instance};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -36,7 +32,7 @@ mod client_bindings {
 }
 
 #[allow(dead_code)]
-fn generated_clients_preserve_wit_signatures(
+async fn generated_clients_preserve_wit_signatures(
     runtime: &Runtime,
     observer: crate::Component<client_bindings::QueryObserverPlugin>,
     database: crate::Component<client_bindings::DatabaseConnectorPlugin>,
@@ -46,16 +42,17 @@ fn generated_clients_preserve_wit_signatures(
 ) {
     let _ = runtime
         .component(observer)
-        .observe(&query, Some(phase), interest);
-    let _ = runtime.component(database).execute("select 1", &[]);
+        .observe(&query, Some(phase), interest)
+        .await;
+    let _ = runtime.component(database).execute("select 1", &[]).await;
 }
 
 impl typed_bindings::demo::admission::services::Host for HostContext<()> {
     fn log(&mut self, _message: String) {}
 }
 
-#[test]
-fn application_bindings_share_imported_host_interfaces() {
+#[tokio::test]
+async fn application_bindings_share_imported_host_interfaces() {
     assert_eq!(
         <typed_bindings::RunnablePlugin as Binding<()>>::HOST_IMPORTS,
         &["demo:admission/services@0.1.0"]
@@ -75,27 +72,34 @@ world matching { import services; export runnable; }"#;
         .add::<(
             typed_bindings::RunnablePlugin,
             typed_bindings::SecondaryPlugin,
-        )>("plugin", component_bytes(wit, "matching"))
+        )>(component_bytes_for(wit, "matching", "plugin"))
         .unwrap();
     assert_eq!(runnable.id(), secondary.id());
+    assert_eq!(app.metadata(runnable).unwrap().id(), "plugin");
     assert_eq!(app.host_installer_count(), 1);
     app.allow_host_import(secondary, "demo:admission/services@0.1.0")
         .unwrap()
         .run()
+        .await
         .unwrap();
 }
 
 fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {
+    component_bytes_for(wit, world_name, world_name)
+}
+
+fn component_bytes_for(wit: &str, world_name: &str, plugin_id: &str) -> Vec<u8> {
     let mut resolve = Resolve::new();
     let package = resolve.push_str("fixture.wit", wit).unwrap();
     let world = resolve.packages[package].worlds[world_name];
     let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
     embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
-    ComponentEncoder::default()
+    let bytes = ComponentEncoder::default()
         .module(&module)
         .unwrap()
         .encode()
-        .unwrap()
+        .unwrap();
+    crate::catalog::with_test_plugin_metadata(bytes, plugin_id)
 }
 
 #[test]
@@ -112,48 +116,37 @@ world mismatched { export runnable; }"#;
 
     let mut catalog = Catalog::new().unwrap();
     let runnable = catalog
-        .add::<(), typed_bindings::RunnablePlugin>(
-            "runnable",
-            component_bytes(matching, "matching"),
-        )
+        .add::<(), typed_bindings::RunnablePlugin>(component_bytes_for(
+            matching, "matching", "runnable",
+        ))
         .unwrap();
-    assert_eq!(catalog.entry(runnable.id()).unwrap().name, "runnable");
+    assert_eq!(
+        catalog.entry(runnable.id()).unwrap().metadata.id(),
+        "runnable"
+    );
 
     let error = catalog
-        .add::<(), typed_bindings::RunnablePlugin>(
+        .add::<(), typed_bindings::RunnablePlugin>(component_bytes_for(
+            mismatched,
             "mismatched",
-            component_bytes(mismatched, "mismatched"),
-        )
+            "mismatched",
+        ))
         .unwrap_err();
     assert!(matches!(error, ApplicationError::WorldMismatch { .. }));
 }
 
 #[test]
-fn catalog_rejects_fixed_lists_before_runtime_type_introspection() {
+fn catalog_accepts_fixed_lists() {
     let wit = r#"package demo:fixed-list@0.1.0;
 
 interface api { run: func(input: list<u32, 4>); }
 world caller { import api; }"#;
     let mut catalog = Catalog::new().unwrap();
-    let error = catalog
-        .add_untyped("caller", component_bytes(wit, "caller"))
-        .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("not a valid supported component")
-    );
-    assert!(
-        error
-            .source()
-            .unwrap()
-            .to_string()
-            .contains("fixed-length lists")
-    );
+    catalog.add_untyped(component_bytes(wit, "caller")).unwrap();
 }
 
-#[test]
-fn plan_rejects_resource_handles_only_when_linked_across_stores() {
+#[tokio::test]
+async fn plan_rejects_resource_handles_only_when_linked_across_stores() {
     let wit = r#"package demo:resources@0.1.0;
 
 interface api {
@@ -163,52 +156,44 @@ interface api {
 world caller { import api; }
 world provider { export api; }"#;
     let mut app = Application::new(()).unwrap();
-    let caller = app
-        .add_untyped("caller", component_bytes(wit, "caller"))
-        .unwrap();
-    let provider = app
-        .add_untyped("provider", component_bytes(wit, "provider"))
-        .unwrap();
+    let caller = app.add_untyped(component_bytes(wit, "caller")).unwrap();
+    let provider = app.add_untyped(component_bytes(wit, "provider")).unwrap();
     assert!(matches!(
-        app.link_ids(caller, provider).unwrap().run(),
+        app.link_ids(caller, provider).unwrap().run().await,
         Err(RuntimeBuildError::UnsupportedSiblingType { reason, .. })
             if reason.contains("resource")
     ));
 }
 
-#[test]
-fn plan_requires_an_explicit_link_even_when_the_provider_is_present() {
+#[tokio::test]
+async fn plan_requires_an_explicit_link_even_when_the_provider_is_present() {
     let wit = r#"package demo:missing@0.1.0;
 interface api { run: func(); }
 world caller { import api; }
 world provider { export api; }"#;
     let mut app = Application::new(()).unwrap();
-    app.add_untyped("caller", component_bytes(wit, "caller"))
-        .unwrap();
-    app.add_untyped("provider", component_bytes(wit, "provider"))
-        .unwrap();
+    app.add_untyped(component_bytes(wit, "caller")).unwrap();
+    app.add_untyped(component_bytes(wit, "provider")).unwrap();
     assert!(matches!(
-        app.run(),
+        app.run().await,
         Err(RuntimeBuildError::MissingProvider { caller, interface })
             if caller == "caller" && interface == "demo:missing/api@0.1.0"
     ));
 }
 
-#[test]
-fn plan_rejects_ambiguous_providers() {
+#[tokio::test]
+async fn plan_rejects_ambiguous_providers() {
     let wit = r#"package demo:ambiguous@0.1.0;
 interface api { run: func(); }
 world caller { import api; }
 world provider { export api; }"#;
     let mut app = Application::new(()).unwrap();
-    let caller = app
-        .add_untyped("caller", component_bytes(wit, "caller"))
-        .unwrap();
+    let caller = app.add_untyped(component_bytes(wit, "caller")).unwrap();
     let first = app
-        .add_untyped("first", component_bytes(wit, "provider"))
+        .add_untyped(component_bytes_for(wit, "provider", "first"))
         .unwrap();
     let second = app
-        .add_untyped("second", component_bytes(wit, "provider"))
+        .add_untyped(component_bytes_for(wit, "provider", "second"))
         .unwrap();
     let app = app
         .link_ids(caller, first)
@@ -216,23 +201,23 @@ world provider { export api; }"#;
         .link_ids(caller, second)
         .unwrap();
     assert!(matches!(
-        app.run(),
+        app.run().await,
         Err(RuntimeBuildError::AmbiguousProvider { .. })
     ));
 }
 
-#[test]
-fn plan_compares_complete_structural_types() {
+#[tokio::test]
+async fn plan_compares_complete_structural_types() {
     let caller_wit = structural_wit("s32", "safe", "polite", "choice", "caller", "import");
     let provider_wit = structural_wit("u32", "careful", "quiet", "selection", "provider", "export");
     let mut app = Application::new(()).unwrap();
     let caller = app
-        .add_untyped("caller", component_bytes(&caller_wit, "caller"))
+        .add_untyped(component_bytes(&caller_wit, "caller"))
         .unwrap();
     let provider = app
-        .add_untyped("provider", component_bytes(&provider_wit, "provider"))
+        .add_untyped(component_bytes(&provider_wit, "provider"))
         .unwrap();
-    let error = match app.link_ids(caller, provider).unwrap().run() {
+    let error = match app.link_ids(caller, provider).unwrap().run().await {
         Ok(_) => panic!("mismatched structural types unexpectedly planned"),
         Err(error) => error.to_string(),
     };
@@ -254,17 +239,19 @@ impl Binding<()> for LoopBinding {
 
     type Client<'runtime> = ();
 
-    fn bind(store: &mut Store<PluginStore<()>>, instance: &Instance) -> anyhow::Result<Self> {
-        let interface = instance
-            .get_export_index(&mut *store, None, "demo:fuel/api@0.1.0")
-            .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
-        let function = instance
-            .get_export_index(&mut *store, Some(&interface), "run")
-            .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
-        let function = instance
-            .get_func(&mut *store, function)
-            .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
-        Ok(Self { function })
+    fn bind(accessor: &Accessor<PluginStore<()>>, instance: &Instance) -> anyhow::Result<Self> {
+        accessor.with(|mut access| {
+            let interface = instance
+                .get_export_index(&mut access, None, "demo:fuel/api@0.1.0")
+                .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
+            let function = instance
+                .get_export_index(&mut access, Some(&interface), "run")
+                .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
+            let function = instance
+                .get_func(&mut access, function)
+                .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
+            Ok(Self { function })
+        })
     }
 
     fn install_host_import(
@@ -306,8 +293,8 @@ impl crate::binding::RoleSet<()> for LoopBinding {
     }
 }
 
-#[test]
-fn fuel_trap_marks_only_the_looping_component_unhealthy() {
+#[tokio::test]
+async fn fuel_trap_marks_only_the_looping_component_unhealthy() {
     let bytes = wat::parse_str(
         r#"(component
             (core module $m (func (export "loop") (loop $again (br $again))))
@@ -317,17 +304,32 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
             (export "demo:fuel/api@0.1.0" (instance $api)))"#,
     )
     .unwrap();
+    let bytes = crate::catalog::with_test_plugin_metadata(bytes, "looping");
     let mut app = Application::new(()).unwrap();
-    let looping = app.add::<LoopBinding>("looping", bytes).unwrap();
-    let runtime = app.run().unwrap();
-    let call_loop = || {
-        RuntimeComponent::new(&runtime, looping).invoke(|store, binding| {
-            binding.function.call(store, &[], &mut [])?;
-            Ok(())
-        })
-    };
-    assert!(matches!(call_loop(), Err(RuntimeError::Trapped { .. })));
-    assert!(matches!(call_loop(), Err(RuntimeError::Unhealthy { .. })));
+    let looping = app.add::<LoopBinding>(bytes).unwrap();
+    let runtime = app.run().await.unwrap();
+    async fn call_loop(
+        runtime: &Runtime,
+        looping: crate::Component<LoopBinding>,
+    ) -> Result<(), RuntimeError> {
+        let component = RuntimeComponent::new(runtime, looping);
+        component
+            .invoke(|accessor, binding| {
+                Box::pin(async move {
+                    accessor.with(|mut access| binding.function.call(&mut access, &[], &mut []))?;
+                    Ok(())
+                })
+            })
+            .await
+    }
+    assert!(matches!(
+        call_loop(&runtime, looping).await,
+        Err(RuntimeError::Trapped { .. })
+    ));
+    assert!(matches!(
+        call_loop(&runtime, looping).await,
+        Err(RuntimeError::Unhealthy { .. })
+    ));
 }
 
 fn structural_wit(

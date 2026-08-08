@@ -8,4 +8,5 @@ build = "build.rs"
 [dependencies]
 anyhow = "1.0.100"
 lockgate = { path = "../.." }
-wasmtime = { version = "47.0.3", features = ["component-model"] }
+wasmtime.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

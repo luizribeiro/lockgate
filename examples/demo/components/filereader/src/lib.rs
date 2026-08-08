@@ -1,8 +1,13 @@
 mod bindings {
-    wit_bindgen::generate!({
+    lockgate_plugin::bindings!({
         path: "../../wit",
         world: "filereader",
-        generate_all,
+        metadata: {
+            id: "demo.filereader",
+            name: "File Reader",
+            version: "0.1.0",
+            description: "Reads files granted by the embedding application",
+        },
     });
 }
 

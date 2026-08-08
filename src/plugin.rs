@@ -90,9 +90,7 @@ fn validate_wit_type_for_introspection(resolve: &Resolve, ty: WitType) -> Result
             validate_wit_type_for_introspection(resolve, *key)?;
             validate_wit_type_for_introspection(resolve, *value)
         }
-        TypeDefKind::FixedLengthList(_, _) => {
-            bail!("fixed-length lists are unsupported by Wasmtime 47's component type API")
-        }
+        TypeDefKind::FixedLengthList(ty, _) => validate_wit_type_for_introspection(resolve, *ty),
         TypeDefKind::Future(ty) | TypeDefKind::Stream(ty) => ty
             .map(|ty| validate_wit_type_for_introspection(resolve, ty))
             .unwrap_or(Ok(())),
@@ -145,9 +143,6 @@ impl Signature {
 }
 
 pub(crate) fn validate_cross_store_signature(signature: &Signature) -> Result<()> {
-    if signature.async_ {
-        bail!("async functions are unsupported");
-    }
     signature
         .params
         .iter()
@@ -158,6 +153,7 @@ pub(crate) fn validate_cross_store_signature(signature: &Signature) -> Result<()
 fn validate_cross_store_type(ty: &Type) -> Result<()> {
     match ty {
         Type::List(list) => validate_cross_store_type(&list.ty()),
+        Type::FixedLengthList(list) => validate_cross_store_type(&list.ty()),
         Type::Map(map) => {
             validate_cross_store_type(&map.key())?;
             validate_cross_store_type(&map.value())
@@ -201,6 +197,13 @@ pub(crate) fn type_name(ty: &Type) -> String {
         Type::Char => "char".into(),
         Type::String => "string".into(),
         Type::List(list) => format!("list<{}>", type_name(&list.ty())),
+        Type::FixedLengthList(list) => {
+            format!(
+                "fixed-length-list<{}, {}>",
+                type_name(&list.ty()),
+                list.len()
+            )
+        }
         Type::Map(map) => format!(
             "map<{}, {}>",
             type_name(&map.key()),

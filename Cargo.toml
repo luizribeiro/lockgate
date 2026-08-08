@@ -8,19 +8,34 @@ include = ["src/**", "Cargo.toml", "README.md"]
 
 [workspace]
 resolver = "3"
-members = ["examples/demo", "lockgate-macros", "lockgate-schema"]
+members = [
+    "examples/demo",
+    "lockgate-macros",
+    "lockgate-plugin",
+    "lockgate-plugin-macros",
+    "lockgate-schema",
+]
 default-members = ["."]
+
+[workspace.dependencies]
+tokio = "1.51.1"
+wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", features = ["component-model", "component-model-async"] }
+wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", default-features = false, features = ["p3"] }
+wasmtime-wit-bindgen = { package = "wasmtime-internal-wit-bindgen", git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", features = ["async", "component-model-async"] }
 
 [dependencies]
 anyhow = "1.0.100"
 lockgate-macros = { version = "0.1.0", path = "lockgate-macros" }
 lockgate-schema = { version = "0.1.0", path = "lockgate-schema" }
 thiserror = "2.0.19"
-wasmtime = { version = "47.0.3", features = ["component-model"] }
-wasmtime-wasi = "47.0.3"
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
 wit-component = "0.255.0"
 wit-parser = "0.255.0"
+wasmparser = "0.255.0"
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wat = "1.255.0"
 wit-component = { version = "0.255.0", features = ["dummy-module"] }
