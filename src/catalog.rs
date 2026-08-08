@@ -3,11 +3,8 @@
 
 use crate::{
     binding::{BindingExport, ComponentBinding},
-    plugin::{
-        DirectImport, Signature, interface_functions, type_name, validate_introspectable_interface,
-    },
+    plugin::{DirectImport, Signature, interface_functions, validate_introspectable_interface},
 };
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fmt,
@@ -41,35 +38,15 @@ pub(crate) trait ComponentRef: Copy {
     fn id(self) -> ComponentId;
 }
 
-/// The SHA-256 digest of the exact component bytes supplied to an application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ArtifactDigest([u8; 32]);
-
-/// A discovered function signature rendered from Wasmtime's structural component types.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FunctionSignature {
-    params: Vec<String>,
-    results: Vec<String>,
-}
-
-/// Metadata for one exported component function.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExportInfo {
+pub(crate) struct ExportInfo {
     interface: String,
     function: String,
     target: String,
-    signature: FunctionSignature,
     pub(crate) runtime_signature: Signature,
-}
-
-/// Read-only metadata for an admitted component.
-pub struct ComponentInfo<'a> {
-    entry: &'a ComponentEntry,
 }
 
 pub(crate) struct ComponentEntry {
     pub(crate) name: String,
-    digest: ArtifactDigest,
     binding_exports: Vec<lockgate_schema::Export>,
     pub(crate) imports: Vec<String>,
     pub(crate) direct_imports: Vec<DirectImport>,
@@ -78,7 +55,6 @@ pub(crate) struct ComponentEntry {
 }
 
 struct InspectedComponent {
-    digest: ArtifactDigest,
     binding_exports: Vec<lockgate_schema::Export>,
     imports: Vec<String>,
     direct_imports: Vec<DirectImport>,
@@ -208,7 +184,6 @@ impl Catalog {
         };
         self.components.push(ComponentEntry {
             name: name.clone(),
-            digest: inspected.digest,
             binding_exports: inspected.binding_exports,
             imports: inspected.imports,
             direct_imports: inspected.direct_imports,
@@ -217,21 +192,6 @@ impl Catalog {
         });
         self.names.insert(name, id);
         id
-    }
-
-    /// Returns metadata for a component handle from this catalog.
-    pub(crate) fn component(
-        &self,
-        component: impl ComponentRef,
-    ) -> Result<ComponentInfo<'_>, CatalogError> {
-        let id = component.id();
-        let entry = self.entry(id)?;
-        Ok(ComponentInfo { entry })
-    }
-
-    /// Iterates over discovered component metadata in insertion order.
-    pub(crate) fn components(&self) -> impl ExactSizeIterator<Item = ComponentInfo<'_>> {
-        self.components.iter().map(|entry| ComponentInfo { entry })
     }
 
     pub(crate) fn identity(&self) -> u64 {
@@ -298,75 +258,17 @@ impl<B> Component<B> {
     }
 }
 
-impl ComponentInfo<'_> {
-    pub fn name(&self) -> &str {
-        &self.entry.name
-    }
-
-    pub fn digest(&self) -> ArtifactDigest {
-        self.entry.digest
-    }
-
-    pub fn imports(&self) -> &[String] {
-        &self.entry.imports
-    }
-
-    pub fn exports(&self) -> &[ExportInfo] {
-        &self.entry.exports
-    }
-}
-
 impl ExportInfo {
-    pub fn interface(&self) -> &str {
+    pub(crate) fn interface(&self) -> &str {
         &self.interface
     }
 
-    pub fn function(&self) -> &str {
+    pub(crate) fn function(&self) -> &str {
         &self.function
     }
 
-    pub fn target(&self) -> &str {
+    pub(crate) fn target(&self) -> &str {
         &self.target
-    }
-
-    pub fn signature(&self) -> &FunctionSignature {
-        &self.signature
-    }
-}
-
-impl FunctionSignature {
-    pub fn params(&self) -> &[String] {
-        &self.params
-    }
-
-    pub fn results(&self) -> &[String] {
-        &self.results
-    }
-}
-
-impl fmt::Display for ExportInfo {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}{}", self.target, self.signature)
-    }
-}
-
-impl fmt::Display for FunctionSignature {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "({}) -> ", self.params.join(", "))?;
-        match self.results.as_slice() {
-            [] => write!(formatter, "()"),
-            [result] => write!(formatter, "{result}"),
-            results => write!(formatter, "({})", results.join(", ")),
-        }
-    }
-}
-
-impl fmt::Display for ArtifactDigest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
     }
 }
 
@@ -456,16 +358,11 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
                 interface: interface.clone(),
                 function,
                 target,
-                signature: FunctionSignature {
-                    params: signature.params.iter().map(type_name).collect(),
-                    results: signature.results.iter().map(type_name).collect(),
-                },
                 runtime_signature: signature,
             }
         }));
     }
     Ok(InspectedComponent {
-        digest: ArtifactDigest(Sha256::digest(bytes).into()),
         binding_exports,
         imports,
         direct_imports,
@@ -657,27 +554,10 @@ world caller { import api; }"#;
         let _caller = catalog
             .add_untyped("caller", component_bytes("caller"))
             .unwrap();
-        let info = catalog.component(provider).unwrap();
-        assert_eq!(info.name(), "greeter");
-        assert_eq!(info.digest().to_string().len(), 64);
-        assert_eq!(info.exports()[0].target(), "demo:catalog/api@0.1.0#greet");
-        assert_eq!(info.exports()[0].signature().params(), ["string"]);
-        assert_eq!(info.exports()[0].signature().results(), ["string"]);
-        assert_eq!(
-            info.exports()[0].signature().to_string(),
-            "(string) -> string"
-        );
-        assert_eq!(
-            info.exports()[0].to_string(),
-            "demo:catalog/api@0.1.0#greet(string) -> string"
-        );
-        assert_eq!(
-            catalog
-                .components()
-                .map(|component| component.name().to_owned())
-                .collect::<Vec<_>>(),
-            ["greeter", "caller"]
-        );
+        let entry = catalog.entry(provider).unwrap();
+        assert_eq!(entry.name, "greeter");
+        assert_eq!(entry.exports[0].target(), "demo:catalog/api@0.1.0#greet");
+        assert_eq!(catalog.components.len(), 2);
         assert!(
             catalog
                 .add_untyped("greeter", component_bytes("provider"))
@@ -693,7 +573,7 @@ world caller { import api; }"#;
             .unwrap();
         let second = Catalog::new().unwrap();
         assert!(matches!(
-            second.component(provider),
+            second.entry(provider),
             Err(CatalogError::ForeignComponent)
         ));
     }
@@ -708,8 +588,8 @@ world caller { import api; }"#;
         let health = catalog.admit::<HealthBinding>(greeter).unwrap();
 
         assert_eq!(greeter.id(), health.id());
-        assert_eq!(catalog.components().count(), 1);
-        assert_eq!(catalog.component(health).unwrap().name(), "combined");
+        assert_eq!(catalog.components.len(), 1);
+        assert_eq!(catalog.entry(health.id()).unwrap().name, "combined");
     }
 
     #[test]
@@ -718,27 +598,10 @@ world caller { import api; }"#;
         let greeter = catalog
             .add::<GreeterBinding>("greeter", component_bytes("provider"))
             .unwrap();
-        let digest = catalog.component(greeter).unwrap().digest();
-
         let error = catalog.admit::<MissingBinding>(greeter).unwrap_err();
 
         assert!(matches!(error, CatalogError::WorldMismatch { .. }));
-        assert_eq!(catalog.components().count(), 1);
-        assert_eq!(catalog.component(greeter).unwrap().digest(), digest);
-    }
-
-    #[test]
-    fn displays_empty_and_multiple_function_results() {
-        let empty = FunctionSignature {
-            params: Vec::new(),
-            results: Vec::new(),
-        };
-        assert_eq!(empty.to_string(), "() -> ()");
-
-        let multiple = FunctionSignature {
-            params: vec!["string".into(), "u32".into()],
-            results: vec!["bool".into(), "string".into()],
-        };
-        assert_eq!(multiple.to_string(), "(string, u32) -> (bool, string)");
+        assert_eq!(catalog.components.len(), 1);
+        assert_eq!(catalog.entry(greeter.id()).unwrap().name, "greeter");
     }
 }

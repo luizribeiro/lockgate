@@ -47,8 +47,6 @@ fn main() -> Result<()> {
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
-    print_catalog(&app);
-
     let policy = app
         .policy()
         .link(caller, greeter)?
@@ -76,17 +74,5 @@ fn print_event(event: Event) {
             provider,
             target,
         } => println!("  [sibling] {caller} -> {provider} ({target})"),
-    }
-}
-
-fn print_catalog(app: &Application) {
-    for info in app.components() {
-        let exports = info
-            .exports()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        println!("[load] {:<12} ok   provides {exports}", info.name());
     }
 }

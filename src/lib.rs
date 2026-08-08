@@ -12,9 +12,7 @@ mod policy;
 mod runtime;
 
 pub use application::Application;
-pub use catalog::{
-    ArtifactDigest, CatalogError, Component, ComponentInfo, ExportInfo, FunctionSignature,
-};
+pub use catalog::{CatalogError, Component};
 pub use lockgate_macros::bindings;
 pub use policy::{Policy, PolicyBuilder, PolicyError};
 pub use runtime::{Event, HostContext, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError};

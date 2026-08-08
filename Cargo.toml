@@ -15,7 +15,6 @@ default-members = ["."]
 anyhow = "1.0.100"
 lockgate-macros = { version = "0.1.0", path = "lockgate-macros" }
 lockgate-schema = { version = "0.1.0", path = "lockgate-schema" }
-sha2 = "0.10.9"
 thiserror = "2.0.19"
 wasmtime = { version = "47.0.3", features = ["component-model"] }
 wasmtime-wasi = "47.0.3"

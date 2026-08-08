@@ -926,7 +926,6 @@ dependencies = [
  "anyhow",
  "lockgate-macros",
  "lockgate-schema",
- "sha2",
  "thiserror 2.0.19",
  "wasmtime",
  "wasmtime-wasi",

@@ -132,7 +132,7 @@ world mismatched { export runnable; }"#;
     let runnable = catalog
         .add::<typed_bindings::RunnablePlugin>("runnable", component_bytes(matching, "matching"))
         .unwrap();
-    assert_eq!(catalog.component(runnable).unwrap().name(), "runnable");
+    assert_eq!(catalog.entry(runnable.id()).unwrap().name, "runnable");
 
     let error = catalog
         .add::<typed_bindings::RunnablePlugin>(
@@ -141,7 +141,6 @@ world mismatched { export runnable; }"#;
         )
         .unwrap_err();
     assert!(matches!(error, CatalogError::WorldMismatch { .. }));
-    assert_eq!(catalog.components().count(), 1);
 }
 
 #[test]

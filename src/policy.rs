@@ -107,7 +107,7 @@ impl PolicyBuilder<'_> {
     }
 
     pub(crate) fn include_id(mut self, component: ComponentId) -> Result<Self, PolicyError> {
-        self.catalog.component(component)?;
+        self.catalog.entry(component)?;
         self.include_component(component);
         Ok(self)
     }
@@ -126,18 +126,18 @@ impl PolicyBuilder<'_> {
         caller: ComponentId,
         provider: ComponentId,
     ) -> Result<Self, PolicyError> {
-        let caller_info = self.catalog.component(caller)?;
-        let provider_info = self.catalog.component(provider)?;
-        let matches = caller_info.imports().iter().any(|import| {
-            provider_info
-                .exports()
+        let caller_entry = self.catalog.entry(caller)?;
+        let provider_entry = self.catalog.entry(provider)?;
+        let matches = caller_entry.imports.iter().any(|import| {
+            provider_entry
+                .exports
                 .iter()
                 .any(|export| export.interface() == import)
         });
         if !matches {
             return Err(PolicyError::NoMatchingImport {
-                caller: caller_info.name().into(),
-                provider: provider_info.name().into(),
+                caller: caller_entry.name.clone(),
+                provider: provider_entry.name.clone(),
             });
         }
         let grant = LinkGrant { caller, provider };
@@ -164,10 +164,10 @@ impl PolicyBuilder<'_> {
         interface: impl Into<String>,
     ) -> Result<Self, PolicyError> {
         let interface = interface.into();
-        let info = self.catalog.component(component)?;
-        if !info.imports().iter().any(|import| import == &interface) {
+        let entry = self.catalog.entry(component)?;
+        if !entry.imports.iter().any(|import| import == &interface) {
             return Err(PolicyError::NoSuchHostImport {
-                component: info.name().into(),
+                component: entry.name.clone(),
                 interface,
             });
         }
@@ -227,7 +227,7 @@ impl PolicyBuilder<'_> {
         guest: PathBuf,
         access: DirectoryAccess,
     ) -> Result<Self, PolicyError> {
-        self.catalog.component(component)?;
+        self.catalog.entry(component)?;
         self.include_component(component);
         if !valid_guest_path(&guest) {
             return Err(PolicyError::RelativeGuestPath(guest));

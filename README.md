@@ -14,7 +14,6 @@ The design keeps API knowledge and implementation selection separate:
 Lockgate keeps three kinds of identity separate:
 
 - The application assigns a logical name such as `greeter` when adding bytes to its catalog.
-- Lockgate computes a SHA-256 digest over the exact artifact bytes.
 - Package, interface, and function names come from the WIT embedded in the component.
 
 The public lifecycle is generated bindings → `Application` → `Policy` → `Runtime`:
@@ -153,7 +152,7 @@ Secondary admission revalidates the existing artifact and merges its host-interf
 
 ## Enforcement lifecycle
 
-The private catalog owned by `Application` hashes and compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to expose their real imports, exports, and function signatures through `Application::components`. Artifact insertion is always admitted against a generated binding role.
+The private catalog owned by `Application` compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to validate their real imports, exports, and function signatures. Artifact insertion is always admitted against a generated binding role.
 
 `Policy` contains catalog-owned handles. Grants automatically include their components; `.include(component)` adds a standalone component. Host imports and sibling links are distinct grants:
 
