@@ -1,10 +1,10 @@
 //! Typed application assembly with generated host-interface wiring.
 
 use crate::{
-    Component, ComponentId, ComponentRef,
+    Component, ComponentId, ComponentInfo, ComponentRef,
     binding::{ApplicationBinding, HostImportBinding},
     catalog::{Catalog, CatalogError},
-    policy::Policy,
+    policy::{Policy, PolicyBuilder},
     runtime::{PluginStore, RuntimeBuilder},
 };
 use std::{
@@ -93,9 +93,14 @@ impl<S: Send + 'static> Application<S> {
         })
     }
 
-    /// Returns the catalog used to construct capability policy.
-    pub fn catalog(&self) -> &Catalog {
-        &self.catalog
+    /// Begins capability policy construction for this application.
+    pub fn policy(&self) -> PolicyBuilder<'_> {
+        PolicyBuilder::new(&self.catalog)
+    }
+
+    /// Iterates over discovered component metadata in insertion order.
+    pub fn components(&self) -> impl ExactSizeIterator<Item = ComponentInfo<'_>> {
+        self.catalog.components()
     }
 
     #[cfg(test)]

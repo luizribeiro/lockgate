@@ -2,7 +2,7 @@
 
 use super::{HOST_SERVICES, artifacts, bindings};
 use anyhow::Result;
-use lockgate::{Application, Policy};
+use lockgate::Application;
 
 #[test]
 fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
@@ -12,7 +12,8 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
-    let policy = Policy::builder(app.catalog())
+    let policy = app
+        .policy()
         .allow_host_import(filereader, HOST_SERVICES)?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
         .build();
@@ -37,7 +38,8 @@ fn one_instance_can_be_called_through_multiple_admitted_roles() -> Result<()> {
         artifacts::component_bytes("filereader")?,
     )?;
     let runnable = app.admit::<bindings::RunnablePlugin>(reader)?;
-    let policy = Policy::builder(app.catalog())
+    let policy = app
+        .policy()
         .allow_host_import(reader, HOST_SERVICES)?
         .read_only_dir(reader, root.join("sandbox/shared"), "/shared")?
         .build();

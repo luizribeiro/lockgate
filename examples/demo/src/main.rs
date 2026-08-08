@@ -1,7 +1,7 @@
 //! Builds and narrates typed host calls, sibling forwarding, and filesystem isolation.
 
 use anyhow::Result;
-use lockgate::{Application, Catalog, Event, HostContext, Policy};
+use lockgate::{Application, Event, HostContext};
 
 mod bindings {
     lockgate::bindings! {
@@ -35,9 +35,10 @@ fn main() -> Result<()> {
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
-    print_catalog(app.catalog());
+    print_catalog(&app);
 
-    let policy = Policy::builder(app.catalog())
+    let policy = app
+        .policy()
         .link(caller, greeter)?
         .allow_host_import(caller, HOST_SERVICES)?
         .allow_host_import(filereader, HOST_SERVICES)?
@@ -66,8 +67,8 @@ fn print_event(event: Event) {
     }
 }
 
-fn print_catalog(catalog: &Catalog) {
-    for info in catalog.components() {
+fn print_catalog(app: &Application) {
+    for info in app.components() {
         let exports = info
             .exports()
             .iter()

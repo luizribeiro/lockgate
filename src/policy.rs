@@ -67,7 +67,34 @@ pub enum PolicyError {
 }
 
 impl Policy {
-    pub fn builder(catalog: &Catalog) -> PolicyBuilder<'_> {
+    #[cfg(test)]
+    pub(crate) fn builder(catalog: &Catalog) -> PolicyBuilder<'_> {
+        PolicyBuilder::new(catalog)
+    }
+
+    pub(crate) fn links(&self) -> &[LinkGrant] {
+        &self.links
+    }
+
+    pub(crate) fn host_imports(&self) -> &[HostImportGrant] {
+        &self.host_imports
+    }
+
+    pub(crate) fn directories(&self) -> &[DirectoryGrant] {
+        &self.directories
+    }
+
+    pub(crate) fn components(&self) -> &[ComponentId] {
+        &self.components
+    }
+
+    pub(crate) fn catalog_identity(&self) -> u64 {
+        self.catalog
+    }
+}
+
+impl<'a> PolicyBuilder<'a> {
+    pub(crate) fn new(catalog: &'a Catalog) -> Self {
         PolicyBuilder {
             catalog,
             components: Vec::new(),
@@ -75,26 +102,6 @@ impl Policy {
             host_imports: Vec::new(),
             directories: Vec::new(),
         }
-    }
-
-    pub fn links(&self) -> &[LinkGrant] {
-        &self.links
-    }
-
-    pub fn host_imports(&self) -> &[HostImportGrant] {
-        &self.host_imports
-    }
-
-    pub fn directories(&self) -> &[DirectoryGrant] {
-        &self.directories
-    }
-
-    pub fn components(&self) -> &[ComponentId] {
-        &self.components
-    }
-
-    pub(crate) fn catalog_identity(&self) -> u64 {
-        self.catalog
     }
 }
 

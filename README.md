@@ -20,7 +20,7 @@ Lockgate keeps three kinds of identity separate:
 The public lifecycle is generated bindings → `Application` → `Policy` → `Runtime`:
 
 ```rust,ignore
-use lockgate::{Application, HostContext, Policy};
+use lockgate::{Application, HostContext};
 
 mod bindings {
     lockgate::bindings! {
@@ -42,7 +42,7 @@ let mut app = Application::new()?;
 let greeter = app.add_untyped("greeter", greeter_wasm)?;
 let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
 
-let policy = Policy::builder(app.catalog())
+let policy = app.policy()
     .link(caller, greeter)?
     .allow_host_import(caller, "myapp:host/services@1.0.0")?
     .build();

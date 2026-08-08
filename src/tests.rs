@@ -90,7 +90,8 @@ world matching { import services; export runnable; }"#;
         .admit::<typed_bindings::SecondaryPlugin>(runnable)
         .unwrap();
     assert_eq!(app.host_installer_count(), 1);
-    let policy = Policy::builder(app.catalog())
+    let policy = app
+        .policy()
         .allow_host_import(secondary, "demo:admission/services@0.1.0")
         .unwrap()
         .build();

@@ -764,10 +764,7 @@ world consumer { import api; }"#;
         let shared = Arc::new(AtomicUsize::new(0));
         let mut app = Application::with_state(Arc::clone(&shared)).unwrap();
         let component = app.add_untyped("provider", provider_bytes()).unwrap();
-        let policy = Policy::builder(app.catalog())
-            .include(component)
-            .unwrap()
-            .build();
+        let policy = app.policy().include(component).unwrap().build();
         let runtime = app.runtime(policy).build().unwrap();
 
         runtime
@@ -844,7 +841,8 @@ world consumer { import api; }"#;
         .unwrap();
         let first = app.add_untyped("first", provider_bytes()).unwrap();
         let second = app.add_untyped("second", consumer_bytes()).unwrap();
-        let policy = Policy::builder(app.catalog())
+        let policy = app
+            .policy()
             .include(first)
             .unwrap()
             .allow_host_import(second, "demo:stack/api@0.1.0")
