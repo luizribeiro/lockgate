@@ -1,7 +1,7 @@
 //! Cross-layer tests for discovery, planning, authority, and fuel isolation.
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
-use crate::{Application, CatalogError, HostContext, Runtime, RuntimeBuildError, RuntimeError};
+use crate::{Application, ApplicationError, HostContext, Runtime, RuntimeBuildError, RuntimeError};
 use crate::{
     binding::Binding,
     catalog::Catalog,
@@ -126,7 +126,7 @@ world mismatched { export runnable; }"#;
             component_bytes(mismatched, "mismatched"),
         )
         .unwrap_err();
-    assert!(matches!(error, CatalogError::WorldMismatch { .. }));
+    assert!(matches!(error, ApplicationError::WorldMismatch { .. }));
 }
 
 #[test]

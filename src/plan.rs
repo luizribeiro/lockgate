@@ -19,7 +19,6 @@ pub(crate) struct Target {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedImport {
-    pub(crate) interface: String,
     pub(crate) functions: Vec<(String, Target)>,
 }
 
@@ -40,52 +39,52 @@ pub(crate) struct Plan {
 impl Plan {
     /// Resolves all authority granted by a policy against the catalog's decoded WIT.
     pub(crate) fn new(catalog: Catalog, policy: Policy) -> Result<Self, RuntimeBuildError> {
-        if policy.catalog_identity() != catalog.identity() {
+        if policy.catalog != catalog.identity() {
             return Err(RuntimeBuildError::ForeignPolicy);
         }
 
         let mut components = policy
-            .components()
+            .components
             .iter()
             .copied()
             .map(|id| (id, ComponentPlan::default()))
             .collect::<HashMap<_, _>>();
 
-        for grant in policy.host_imports() {
+        for grant in &policy.host_imports {
             catalog
-                .entry(grant.component())
+                .entry(grant.component)
                 .expect("policy host grants contain only validated component handles");
             components
-                .get_mut(&grant.component())
+                .get_mut(&grant.component)
                 .expect("policy components include every host grant component")
                 .host_imports
-                .insert(grant.interface().into());
+                .insert(grant.interface.clone());
         }
-        for grant in policy.directories() {
+        for grant in &policy.directories {
             let entry = catalog
-                .entry(grant.component())
+                .entry(grant.component)
                 .expect("policy directory grants contain only validated component handles");
             let plan = components
-                .get_mut(&grant.component())
+                .get_mut(&grant.component)
                 .expect("policy components include every directory grant component");
             if plan
                 .directories
                 .iter()
-                .any(|existing| existing.guest() == grant.guest())
+                .any(|existing| existing.guest == grant.guest)
             {
                 return Err(RuntimeBuildError::DuplicateGuestDirectory {
                     component: entry.name.clone(),
-                    guest: grant.guest().display().to_string(),
+                    guest: grant.guest.display().to_string(),
                 });
             }
             plan.directories.push(grant.clone());
         }
         let links = policy
-            .links()
+            .links
             .iter()
-            .map(|grant| (grant.caller(), grant.provider()))
+            .map(|grant| (grant.caller, grant.provider))
             .collect::<Vec<_>>();
-        for caller in policy.components() {
+        for caller in &policy.components {
             let caller = *caller;
             let caller_entry = catalog
                 .entry(caller)
@@ -109,7 +108,7 @@ impl Plan {
                             .expect("policy links contain only validated provider handles")
                             .exports
                             .iter()
-                            .any(|export| export.interface() == import.interface)
+                            .any(|export| export.interface == import.interface)
                     })
                     .collect::<HashSet<_>>();
                 if providers.is_empty() {
@@ -140,7 +139,7 @@ impl Plan {
                     let export = provider_entry
                         .exports
                         .iter()
-                        .find(|export| export.target() == target_name)
+                        .find(|export| export.target == target_name)
                         .ok_or_else(|| RuntimeBuildError::MissingFunction {
                             caller: caller_entry.name.clone(),
                             provider: provider_entry.name.clone(),
@@ -164,25 +163,19 @@ impl Plan {
                         target_from_info(provider, provider_entry.name.clone(), export),
                     ));
                 }
-                components.get_mut(&caller).unwrap().direct_imports.insert(
-                    import.interface.clone(),
-                    ResolvedImport {
-                        interface: import.interface.clone(),
-                        functions,
-                    },
-                );
+                components
+                    .get_mut(&caller)
+                    .unwrap()
+                    .direct_imports
+                    .insert(import.interface.clone(), ResolvedImport { functions });
             }
         }
 
         Ok(Self {
             catalog,
             components,
-            order: policy.components().to_vec(),
+            order: policy.components,
         })
-    }
-
-    pub(crate) fn component(&self, id: ComponentId) -> Option<&ComponentPlan> {
-        self.components.get(&id)
     }
 }
 
@@ -190,8 +183,8 @@ fn target_from_info(component: ComponentId, component_name: String, export: &Exp
     Target {
         component,
         component_name,
-        interface: export.interface().into(),
-        function: export.function().into(),
+        interface: export.interface.clone(),
+        function: export.function.clone(),
     }
 }
 
@@ -234,7 +227,8 @@ world caller { import api; }"#;
             .build();
         let plan = Plan::new(catalog, policy).unwrap();
         assert!(
-            plan.component(caller)
+            plan.components
+                .get(&caller)
                 .unwrap()
                 .direct_imports
                 .contains_key("demo:plan/api@0.1.0")

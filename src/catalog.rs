@@ -1,5 +1,5 @@
 //! Component discovery and application-assigned identity.
-//! A catalog hashes exact artifacts and exposes the imports and exports decoded from their WIT.
+//! The catalog compiles artifacts and retains the component structure needed for enforcement.
 
 use crate::{
     binding::{Binding, BindingExport},
@@ -21,8 +21,8 @@ static NEXT_CATALOG: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ComponentId {
-    catalog: u64,
-    index: usize,
+    pub(crate) catalog: u64,
+    pub(crate) index: usize,
 }
 
 /// A component handle whose artifact was admitted against generated application bindings.
@@ -34,33 +34,20 @@ pub struct Component<B> {
     binding: PhantomData<fn() -> B>,
 }
 
-pub(crate) trait ComponentRef: Copy {
-    fn id(self) -> ComponentId;
-}
-
 pub(crate) struct ExportInfo {
-    interface: String,
-    function: String,
-    target: String,
+    pub(crate) interface: String,
+    pub(crate) function: String,
+    pub(crate) target: String,
     pub(crate) runtime_signature: Signature,
 }
 
 pub(crate) struct ComponentEntry {
     pub(crate) name: String,
     binding_exports: Vec<lockgate_schema::Export>,
-    pub(crate) imports: Vec<String>,
     pub(crate) direct_imports: Vec<DirectImport>,
     pub(crate) exports: Vec<ExportInfo>,
     pub(crate) host_imports: HashSet<&'static str>,
     pub(crate) component: WasmtimeComponent,
-}
-
-struct InspectedComponent {
-    binding_exports: Vec<lockgate_schema::Export>,
-    imports: Vec<String>,
-    direct_imports: Vec<DirectImport>,
-    exports: Vec<ExportInfo>,
-    component: WasmtimeComponent,
 }
 
 pub(crate) struct Catalog {
@@ -70,9 +57,9 @@ pub(crate) struct Catalog {
     names: HashMap<String, ComponentId>,
 }
 
-/// An error produced while cataloging or resolving a component.
+/// An error produced while constructing an application or admitting a component.
 #[derive(Debug, Error)]
-pub enum CatalogError {
+pub enum ApplicationError {
     #[error("component name must not be empty")]
     EmptyName,
     #[error("component name `{0}` is already registered")]
@@ -85,7 +72,7 @@ pub enum CatalogError {
         #[source]
         source: anyhow::Error,
     },
-    #[error("component handle does not belong to this catalog")]
+    #[error("component handle does not belong to this application")]
     ForeignComponent,
     #[error("component `{name}` does not implement world `{world}`")]
     WorldMismatch {
@@ -97,10 +84,11 @@ pub enum CatalogError {
 }
 
 impl Catalog {
-    pub(crate) fn new() -> Result<Self, CatalogError> {
+    pub(crate) fn new() -> Result<Self, ApplicationError> {
         let mut config = Config::new();
         config.wasm_component_model(true).consume_fuel(true);
-        let engine = Engine::new(&config).map_err(|error| CatalogError::Engine(error.into()))?;
+        let engine =
+            Engine::new(&config).map_err(|error| ApplicationError::Engine(error.into()))?;
         Ok(Self {
             identity: NEXT_CATALOG.fetch_add(1, Ordering::Relaxed),
             engine,
@@ -117,20 +105,18 @@ impl Catalog {
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
-    ) -> Result<Component<B>, CatalogError> {
+    ) -> Result<Component<B>, ApplicationError> {
         let name = name.into();
-        let inspected = self.inspect_new(&name, bytes.as_ref())?;
-        validate_binding(B::EXPORTS, &inspected.binding_exports).map_err(|source| {
-            CatalogError::WorldMismatch {
+        let mut entry = self.inspect_new(&name, bytes.as_ref())?;
+        validate_binding(B::EXPORTS, &entry.binding_exports).map_err(|source| {
+            ApplicationError::WorldMismatch {
                 name: name.clone(),
                 world: B::WORLD.into(),
                 source,
             }
         })?;
-        let id = self.insert(name, inspected);
-        self.components[id.index]
-            .host_imports
-            .extend(B::HOST_IMPORTS);
+        entry.host_imports.extend(B::HOST_IMPORTS);
+        let id = self.insert(entry);
         Ok(Component {
             id,
             binding: PhantomData,
@@ -144,13 +130,13 @@ impl Catalog {
     /// leaves the catalog unchanged.
     pub(crate) fn admit<S: Send + 'static, B: Binding<S>>(
         &mut self,
-        component: impl ComponentRef,
-    ) -> Result<Component<B>, CatalogError> {
-        let id = component.id();
+        component: Component<impl Sized>,
+    ) -> Result<Component<B>, ApplicationError> {
+        let id = component.id;
         {
             let entry = self.entry(id)?;
             validate_binding(B::EXPORTS, &entry.binding_exports).map_err(|source| {
-                CatalogError::WorldMismatch {
+                ApplicationError::WorldMismatch {
                     name: entry.name.clone(),
                     world: B::WORLD.into(),
                     source,
@@ -171,10 +157,10 @@ impl Catalog {
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
-    ) -> Result<ComponentId, CatalogError> {
+    ) -> Result<ComponentId, ApplicationError> {
         let name = name.into();
-        let inspected = self.inspect_new(&name, bytes.as_ref())?;
-        Ok(self.insert(name, inspected))
+        let entry = self.inspect_new(&name, bytes.as_ref())?;
+        Ok(self.insert(entry))
     }
 
     #[cfg(test)]
@@ -190,31 +176,23 @@ impl Catalog {
         entry.host_imports.extend(interfaces);
     }
 
-    fn inspect_new(&self, name: &str, bytes: &[u8]) -> Result<InspectedComponent, CatalogError> {
+    fn inspect_new(&self, name: &str, bytes: &[u8]) -> Result<ComponentEntry, ApplicationError> {
         if name.trim().is_empty() {
-            return Err(CatalogError::EmptyName);
+            return Err(ApplicationError::EmptyName);
         }
         if self.names.contains_key(name) {
-            return Err(CatalogError::DuplicateName(name.into()));
+            return Err(ApplicationError::DuplicateName(name.into()));
         }
         inspect(&self.engine, name, bytes)
     }
 
-    fn insert(&mut self, name: String, inspected: InspectedComponent) -> ComponentId {
+    fn insert(&mut self, entry: ComponentEntry) -> ComponentId {
         let id = ComponentId {
             catalog: self.identity,
             index: self.components.len(),
         };
-        self.components.push(ComponentEntry {
-            name: name.clone(),
-            binding_exports: inspected.binding_exports,
-            imports: inspected.imports,
-            direct_imports: inspected.direct_imports,
-            exports: inspected.exports,
-            component: inspected.component,
-            host_imports: HashSet::new(),
-        });
-        self.names.insert(name, id);
+        self.names.insert(entry.name.clone(), id);
+        self.components.push(entry);
         id
     }
 
@@ -226,13 +204,13 @@ impl Catalog {
         &self.engine
     }
 
-    pub(crate) fn entry(&self, id: ComponentId) -> Result<&ComponentEntry, CatalogError> {
+    pub(crate) fn entry(&self, id: ComponentId) -> Result<&ComponentEntry, ApplicationError> {
         if id.catalog != self.identity {
-            return Err(CatalogError::ForeignComponent);
+            return Err(ApplicationError::ForeignComponent);
         }
         self.components
             .get(id.index)
-            .ok_or(CatalogError::ForeignComponent)
+            .ok_or(ApplicationError::ForeignComponent)
     }
 }
 
@@ -264,63 +242,37 @@ impl<B> Hash for Component<B> {
     }
 }
 
-impl ComponentRef for ComponentId {
-    fn id(self) -> ComponentId {
-        self
-    }
-}
-
-impl<B> ComponentRef for Component<B> {
-    fn id(self) -> ComponentId {
-        self.id
-    }
-}
-
 impl<B> Component<B> {
     pub(crate) fn id(self) -> ComponentId {
         self.id
     }
 }
 
-impl ExportInfo {
-    pub(crate) fn interface(&self) -> &str {
-        &self.interface
-    }
-
-    pub(crate) fn function(&self) -> &str {
-        &self.function
-    }
-
-    pub(crate) fn target(&self) -> &str {
-        &self.target
-    }
-}
-
-fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedComponent, CatalogError> {
+fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<ComponentEntry, ApplicationError> {
     let decoded =
-        wit_component::decode(bytes).map_err(|source| CatalogError::InvalidComponent {
+        wit_component::decode(bytes).map_err(|source| ApplicationError::InvalidComponent {
             name: name.into(),
             source,
         })?;
     let DecodedWasm::Component(resolve, world) = decoded else {
-        return Err(CatalogError::InvalidComponent {
+        return Err(ApplicationError::InvalidComponent {
             name: name.into(),
             source: anyhow::anyhow!("artifact is a core module, not a component"),
         });
     };
     validate_world_interfaces(&resolve, world, name)?;
     let binding_exports = lockgate_schema::world_exports(&resolve, world).map_err(|source| {
-        CatalogError::InvalidComponent {
+        ApplicationError::InvalidComponent {
             name: name.into(),
             source,
         }
     })?;
-    let component =
-        WasmtimeComponent::new(engine, bytes).map_err(|source| CatalogError::InvalidComponent {
+    let component = WasmtimeComponent::new(engine, bytes).map_err(|source| {
+        ApplicationError::InvalidComponent {
             name: name.into(),
             source: source.into(),
-        })?;
-    let imports = interface_names(&resolve, world, true, name)?;
+        }
+    })?;
     let mut direct_imports = Vec::new();
     for item in resolve.worlds[world].imports.values() {
         let WorldItem::Interface { id, .. } = item else {
@@ -331,14 +283,14 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
             continue;
         }
         validate_introspectable_interface(&resolve, *id).map_err(|source| {
-            CatalogError::InvalidComponent {
+            ApplicationError::InvalidComponent {
                 name: name.into(),
                 source,
             }
         })?;
         let functions =
             interface_functions(engine, &component, &interface, true).map_err(|source| {
-                CatalogError::InvalidComponent {
+                ApplicationError::InvalidComponent {
                     name: name.into(),
                     source,
                 }
@@ -348,7 +300,7 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
             functions,
         });
     }
-    let exported = interface_names(&resolve, world, false, name)?;
+    let exported = exported_interface_names(&resolve, world, name)?;
     let mut exports = Vec::new();
     for interface in exported {
         let interface_id = resolve.worlds[world]
@@ -364,14 +316,14 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
             })
             .expect("exported interface was collected from this world");
         validate_introspectable_interface(&resolve, interface_id).map_err(|source| {
-            CatalogError::InvalidComponent {
+            ApplicationError::InvalidComponent {
                 name: name.into(),
                 source,
             }
         })?;
         let functions =
             interface_functions(engine, &component, &interface, false).map_err(|source| {
-                CatalogError::InvalidComponent {
+                ApplicationError::InvalidComponent {
                     name: name.into(),
                     source,
                 }
@@ -386,12 +338,13 @@ fn inspect(engine: &Engine, name: &str, bytes: &[u8]) -> Result<InspectedCompone
             }
         }));
     }
-    Ok(InspectedComponent {
+    Ok(ComponentEntry {
+        name: name.into(),
         binding_exports,
-        imports,
         direct_imports,
         exports,
         component,
+        host_imports: HashSet::new(),
     })
 }
 
@@ -427,7 +380,7 @@ fn validate_world_interfaces(
     resolve: &Resolve,
     world: wit_parser::WorldId,
     component_name: &str,
-) -> Result<(), CatalogError> {
+) -> Result<(), ApplicationError> {
     for (imported, items) in [
         (true, &resolve.worlds[world].imports),
         (false, &resolve.worlds[world].exports),
@@ -438,7 +391,7 @@ fn validate_world_interfaces(
             };
             let name = resolve
                 .id_of(*id)
-                .ok_or_else(|| CatalogError::InvalidComponent {
+                .ok_or_else(|| ApplicationError::InvalidComponent {
                     name: component_name.into(),
                     source: anyhow::anyhow!("component contains an unnamed interface"),
                 })?;
@@ -446,7 +399,7 @@ fn validate_world_interfaces(
                 continue;
             }
             validate_introspectable_interface(resolve, *id).map_err(|source| {
-                CatalogError::InvalidComponent {
+                ApplicationError::InvalidComponent {
                     name: component_name.into(),
                     source,
                 }
@@ -456,29 +409,24 @@ fn validate_world_interfaces(
     Ok(())
 }
 
-fn interface_names(
+fn exported_interface_names(
     resolve: &Resolve,
     world: wit_parser::WorldId,
-    imports: bool,
     component_name: &str,
-) -> Result<Vec<String>, CatalogError> {
-    let items = if imports {
-        &resolve.worlds[world].imports
-    } else {
-        &resolve.worlds[world].exports
-    };
-    items
+) -> Result<Vec<String>, ApplicationError> {
+    resolve.worlds[world]
+        .exports
         .values()
         .map(|item| match item {
             WorldItem::Interface { id, .. } => {
                 resolve
                     .id_of(*id)
-                    .ok_or_else(|| CatalogError::InvalidComponent {
+                    .ok_or_else(|| ApplicationError::InvalidComponent {
                         name: component_name.into(),
                         source: anyhow::anyhow!("component contains an unnamed interface"),
                     })
             }
-            _ => Err(CatalogError::InvalidComponent {
+            _ => Err(ApplicationError::InvalidComponent {
                 name: component_name.into(),
                 source: anyhow::anyhow!("direct world functions and types are unsupported"),
             }),
@@ -634,7 +582,7 @@ world caller { import api; }"#;
             .unwrap();
         let entry = catalog.entry(provider).unwrap();
         assert_eq!(entry.name, "greeter");
-        assert_eq!(entry.exports[0].target(), "demo:catalog/api@0.1.0#greet");
+        assert_eq!(entry.exports[0].target, "demo:catalog/api@0.1.0#greet");
         assert_eq!(catalog.components.len(), 2);
         assert!(
             catalog
@@ -652,7 +600,7 @@ world caller { import api; }"#;
         let second = Catalog::new().unwrap();
         assert!(matches!(
             second.entry(provider),
-            Err(CatalogError::ForeignComponent)
+            Err(ApplicationError::ForeignComponent)
         ));
     }
 
@@ -678,7 +626,7 @@ world caller { import api; }"#;
             .unwrap();
         let error = catalog.admit::<(), MissingBinding>(greeter).unwrap_err();
 
-        assert!(matches!(error, CatalogError::WorldMismatch { .. }));
+        assert!(matches!(error, ApplicationError::WorldMismatch { .. }));
         assert_eq!(catalog.components.len(), 1);
         assert_eq!(catalog.entry(greeter.id()).unwrap().name, "greeter");
     }

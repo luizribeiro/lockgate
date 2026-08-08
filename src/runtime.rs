@@ -5,17 +5,14 @@ use crate::{
     Component,
     application::{HostBindings, StateFactory},
     binding::Binding,
-    catalog::{Catalog, CatalogError, ComponentId},
+    catalog::{ApplicationError, Catalog, ComponentId},
     plan::{Plan, ResolvedImport, Target},
     policy::{DirectoryAccess, DirectoryGrant, Policy},
 };
 use std::{
     cell::RefCell,
     collections::HashMap,
-    sync::{
-        Arc, Mutex, MutexGuard, TryLockError,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex, MutexGuard, TryLockError, Weak},
 };
 use thiserror::Error;
 use wasmtime::{
@@ -26,13 +23,8 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, W
 
 const FUEL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
-static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
-
-/// Internal projection used by generated application binding installers.
-#[doc(hidden)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Frame {
-    runtime: u64,
     component: ComponentId,
 }
 
@@ -121,7 +113,6 @@ struct ComponentRuntime<H: Send + 'static> {
 }
 
 struct RuntimeTable<H: Send + 'static> {
-    identity: u64,
     components: HashMap<ComponentId, Arc<Mutex<ComponentRuntime<H>>>>,
 }
 
@@ -149,7 +140,7 @@ impl<H: Send + 'static, B> Clone for RuntimeComponent<'_, H, B> {
 /// A typed failure while validating or instantiating a runtime.
 #[derive(Debug, Error)]
 pub enum RuntimeBuildError {
-    #[error("policy belongs to a different catalog")]
+    #[error("policy belongs to a different application")]
     ForeignPolicy,
     #[error("component `{caller}` has multiple authorized providers for `{interface}`")]
     AmbiguousProvider { caller: String, interface: String },
@@ -183,7 +174,7 @@ pub enum RuntimeBuildError {
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error(transparent)]
-    Catalog(#[from] CatalogError),
+    Application(#[from] ApplicationError),
     #[error("component `{component}` is unavailable")]
     Unavailable { component: String },
     #[error("component `{component}` is unhealthy")]
@@ -221,23 +212,21 @@ impl<H: Send + 'static> Runtime<H> {
         host_bindings: HostBindings<H>,
     ) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
-            identity: NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed),
             components: HashMap::new(),
         }));
         let runtime = Self { plan, table };
-        let mut prepared = HashMap::new();
-        for component in runtime.plan.order.clone() {
-            let instance = runtime.prepare_instance(component, &host_bindings)?;
-            prepared.insert(component, instance);
-        }
-        for component in runtime.plan.order.clone() {
-            runtime.instantiate(
-                component,
-                &state_factory,
-                prepared
-                    .remove(&component)
-                    .expect("every included component has a prepared instance"),
-            )?;
+        let prepared = runtime
+            .plan
+            .order
+            .iter()
+            .map(|component| {
+                runtime
+                    .prepare_instance(*component, &host_bindings)
+                    .map(|instance| (*component, instance))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (component, instance) in prepared {
+            runtime.instantiate(component, &state_factory, instance)?;
         }
         Ok(runtime)
     }
@@ -261,7 +250,8 @@ impl<H: Send + 'static> Runtime<H> {
             .expect("runtime plan order contains only cataloged components");
         let component_plan = self
             .plan
-            .component(component)
+            .components
+            .get(&component)
             .expect("runtime plan order contains only included components");
         let engine = self.plan.catalog.engine();
         let mut linker = Linker::new(engine);
@@ -276,7 +266,7 @@ impl<H: Send + 'static> Runtime<H> {
         wire_direct_imports(
             &mut linker,
             &self.table,
-            component_plan.direct_imports.values(),
+            component_plan.direct_imports.iter(),
         )
         .map_err(|error| instantiate_error(&entry.name, error))?;
         linker
@@ -297,7 +287,8 @@ impl<H: Send + 'static> Runtime<H> {
             .expect("runtime plan order contains only cataloged components");
         let component_plan = self
             .plan
-            .component(component)
+            .components
+            .get(&component)
             .expect("runtime plan order contains only included components");
         let engine = self.plan.catalog.engine();
         let mut wasi = WasiCtxBuilder::new();
@@ -386,13 +377,13 @@ impl<H: Send + 'static> ComponentRuntime<H> {
 fn wire_direct_imports<'a, H: Send + 'static>(
     linker: &mut Linker<PluginStore<H>>,
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
-    imports: impl Iterator<Item = &'a ResolvedImport>,
+    imports: impl Iterator<Item = (&'a String, &'a ResolvedImport)>,
 ) -> Result<(), anyhow::Error> {
-    for import in imports {
-        let mut instance = linker.instance(&import.interface)?;
+    for (interface, import) in imports {
+        let mut instance = linker.instance(interface)?;
         for (function, target) in &import.functions {
             let target = target.clone();
-            let runtimes = Arc::clone(runtimes);
+            let runtimes = Arc::downgrade(runtimes);
             instance.func_new(function, move |_store, _ty, params, results| {
                 let values = invoke_target(&runtimes, &target, params)
                     .map_err(|error| wasmtime::Error::msg(error.to_string()))?;
@@ -410,12 +401,17 @@ fn wire_direct_imports<'a, H: Send + 'static>(
 }
 
 fn invoke_target<H: Send + 'static>(
-    runtimes: &Arc<Mutex<RuntimeTable<H>>>,
+    runtimes: &Weak<Mutex<RuntimeTable<H>>>,
     target: &Target,
     params: &[Val],
 ) -> Result<Vec<Val>, RuntimeError> {
+    let runtimes = runtimes
+        .upgrade()
+        .ok_or_else(|| RuntimeError::Unavailable {
+            component: target.component_name.clone(),
+        })?;
     invoke_component_runtime(
-        runtimes,
+        &runtimes,
         target.component,
         &target.component_name,
         |runtime| runtime.call(target, params),
@@ -428,11 +424,7 @@ fn invoke_component_runtime<H: Send + 'static, R>(
     component_name: &str,
     call: impl FnOnce(&mut ComponentRuntime<H>) -> anyhow::Result<R>,
 ) -> Result<R, RuntimeError> {
-    let runtime_identity = runtimes
-        .lock()
-        .map_err(|_| RuntimeError::Poisoned)?
-        .identity;
-    let _guard = enter_component(runtime_identity, component, component_name)?;
+    let _guard = enter_component(component, component_name)?;
     let runtime = runtime_for(runtimes, component, component_name)?;
     let mut runtime = try_runtime_lock(&runtime, component_name)?;
     if !runtime.healthy {
@@ -487,19 +479,21 @@ fn try_runtime_lock<'a, H: Send + 'static>(
 }
 
 #[cfg(test)]
-fn enter_call(runtime: u64, target: &Target) -> Result<CallGuard, RuntimeError> {
-    enter_component(runtime, target.component, &target.component_name)
+fn enter_call(target: &Target) -> Result<CallGuard, RuntimeError> {
+    enter_component(target.component, &target.component_name)
 }
 
 fn enter_component(
-    runtime: u64,
     component: ComponentId,
     component_name: &str,
 ) -> Result<CallGuard, RuntimeError> {
-    let frame = Frame { runtime, component };
+    let frame = Frame { component };
     CALL_STACK.with(|stack| {
         let mut stack = stack.borrow_mut();
-        let runtime_depth = stack.iter().filter(|item| item.runtime == runtime).count();
+        let runtime_depth = stack
+            .iter()
+            .filter(|item| item.component.catalog == component.catalog)
+            .count();
         if runtime_depth >= MAX_DEPTH {
             return Err(RuntimeError::DepthLimit);
         }
@@ -521,18 +515,18 @@ fn instantiate_error(component: &str, source: anyhow::Error) -> RuntimeBuildErro
 }
 
 fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyhow::Error> {
-    if !grant.host().is_dir() {
-        anyhow::bail!("host path {} is not a directory", grant.host().display());
+    if !grant.host.is_dir() {
+        anyhow::bail!("host path {} is not a directory", grant.host.display());
     }
-    let (dirs, files) = match grant.access() {
+    let (dirs, files) = match grant.access {
         DirectoryAccess::ReadOnly => (DirPerms::READ, FilePerms::READ),
         DirectoryAccess::ReadWrite => (DirPerms::all(), FilePerms::all()),
     };
     let guest = grant
-        .guest()
+        .guest
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("guest path is not UTF-8"))?;
-    wasi.preopened_dir(grant.host(), guest, dirs, files)?;
+    wasi.preopened_dir(&grant.host, guest, dirs, files)?;
     Ok(())
 }
 
@@ -540,7 +534,7 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 mod tests {
     use super::*;
     use crate::{Application, binding::Binding, catalog::Catalog, policy::PolicyBuilder};
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -656,29 +650,29 @@ world consumer { import api; }"#;
                 Target {
                     component,
                     component_name: entry.name.clone(),
-                    interface: export.interface().into(),
-                    function: export.function().into(),
+                    interface: export.interface.clone(),
+                    function: export.function.clone(),
                 }
             })
             .collect::<Vec<_>>();
 
-        let first = enter_call(7, &targets[0]).unwrap();
+        let first = enter_call(&targets[0]).unwrap();
         assert!(matches!(
-            enter_call(7, &targets[0]),
+            enter_call(&targets[0]),
             Err(RuntimeError::Cycle { .. })
         ));
         drop(first);
 
         let guards = targets[..MAX_DEPTH]
             .iter()
-            .map(|target| enter_call(7, target).unwrap())
+            .map(|target| enter_call(target).unwrap())
             .collect::<Vec<_>>();
         assert!(matches!(
-            enter_call(7, &targets[MAX_DEPTH]),
+            enter_call(&targets[MAX_DEPTH]),
             Err(RuntimeError::DepthLimit)
         ));
         drop(guards);
-        assert!(enter_call(7, &targets[0]).is_ok());
+        assert!(enter_call(&targets[0]).is_ok());
     }
 
     #[test]

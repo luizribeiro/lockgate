@@ -3,7 +3,7 @@
 use crate::{
     Component,
     binding::Binding,
-    catalog::{Catalog, CatalogError, ComponentId},
+    catalog::{ApplicationError, Catalog, ComponentId},
     policy::{Policy, PolicyBuilder},
     runtime::{PluginStore, Runtime, RuntimeBuildError},
 };
@@ -59,7 +59,9 @@ pub struct Application<S: Send + 'static = ()> {
 
 impl<S: Send + 'static> Application<S> {
     /// Creates an application with state constructed separately for each included component.
-    pub fn new(factory: impl Fn(&str) -> S + Send + Sync + 'static) -> Result<Self, CatalogError> {
+    pub fn new(
+        factory: impl Fn(&str) -> S + Send + Sync + 'static,
+    ) -> Result<Self, ApplicationError> {
         Ok(Self {
             catalog: Catalog::new()?,
             state_factory: Arc::new(factory),
@@ -82,7 +84,7 @@ impl<S: Send + 'static> Application<S> {
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
-    ) -> Result<Component<B>, CatalogError> {
+    ) -> Result<Component<B>, ApplicationError> {
         let component = self.catalog.add::<S, B>(name, bytes)?;
         self.register::<B>(component.id());
         Ok(component)
@@ -92,7 +94,7 @@ impl<S: Send + 'static> Application<S> {
     pub fn admit<B: Binding<S>>(
         &mut self,
         component: Component<impl Sized>,
-    ) -> Result<Component<B>, CatalogError> {
+    ) -> Result<Component<B>, ApplicationError> {
         let component = self.catalog.admit::<S, B>(component)?;
         self.register::<B>(component.id());
         Ok(component)
@@ -103,7 +105,7 @@ impl<S: Send + 'static> Application<S> {
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
-    ) -> Result<ComponentId, CatalogError> {
+    ) -> Result<ComponentId, ApplicationError> {
         self.catalog.add_untyped(name, bytes)
     }
 

@@ -1,20 +1,20 @@
 //! Immutable, programmatic capability policy construction.
-//! Policy grants refer to opaque catalog handles instead of names copied from configuration files.
+//! Policy grants refer to typed application handles instead of names copied from configuration files.
 
-use crate::catalog::{Catalog, CatalogError, Component, ComponentId};
+use crate::catalog::{ApplicationError, Catalog, Component, ComponentId};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// An immutable set of component grants ready for runtime validation.
 pub struct Policy {
-    catalog: u64,
-    components: Vec<ComponentId>,
-    links: Vec<LinkGrant>,
-    host_imports: Vec<HostImportGrant>,
-    directories: Vec<DirectoryGrant>,
+    pub(crate) catalog: u64,
+    pub(crate) components: Vec<ComponentId>,
+    pub(crate) links: Vec<LinkGrant>,
+    pub(crate) host_imports: Vec<HostImportGrant>,
+    pub(crate) directories: Vec<DirectoryGrant>,
 }
 
-/// A policy builder tied to one catalog.
+/// A policy builder tied to one application.
 pub struct PolicyBuilder<'a> {
     catalog: &'a Catalog,
     components: Vec<ComponentId>,
@@ -25,22 +25,22 @@ pub struct PolicyBuilder<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LinkGrant {
-    caller: ComponentId,
-    provider: ComponentId,
+    pub(crate) caller: ComponentId,
+    pub(crate) provider: ComponentId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HostImportGrant {
-    component: ComponentId,
-    interface: String,
+    pub(crate) component: ComponentId,
+    pub(crate) interface: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DirectoryGrant {
-    component: ComponentId,
-    host: PathBuf,
-    guest: PathBuf,
-    access: DirectoryAccess,
+    pub(crate) component: ComponentId,
+    pub(crate) host: PathBuf,
+    pub(crate) guest: PathBuf,
+    pub(crate) access: DirectoryAccess,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +52,7 @@ pub(crate) enum DirectoryAccess {
 #[derive(Debug, Error)]
 pub enum PolicyError {
     #[error(transparent)]
-    Catalog(#[from] CatalogError),
+    Application(#[from] ApplicationError),
     #[error("component `{caller}` imports no interface exported by `{provider}`")]
     NoMatchingImport { caller: String, provider: String },
     #[error("component `{component}` was not admitted with host interface `{interface}`")]
@@ -64,28 +64,6 @@ pub enum PolicyError {
     RelativeGuestPath(PathBuf),
     #[error("host directory does not exist or is not a directory: `{0}`")]
     InvalidHostDirectory(PathBuf),
-}
-
-impl Policy {
-    pub(crate) fn links(&self) -> &[LinkGrant] {
-        &self.links
-    }
-
-    pub(crate) fn host_imports(&self) -> &[HostImportGrant] {
-        &self.host_imports
-    }
-
-    pub(crate) fn directories(&self) -> &[DirectoryGrant] {
-        &self.directories
-    }
-
-    pub(crate) fn components(&self) -> &[ComponentId] {
-        &self.components
-    }
-
-    pub(crate) fn catalog_identity(&self) -> u64 {
-        self.catalog
-    }
 }
 
 impl<'a> PolicyBuilder<'a> {
@@ -128,11 +106,11 @@ impl PolicyBuilder<'_> {
     ) -> Result<Self, PolicyError> {
         let caller_entry = self.catalog.entry(caller)?;
         let provider_entry = self.catalog.entry(provider)?;
-        let matches = caller_entry.imports.iter().any(|import| {
+        let matches = caller_entry.direct_imports.iter().any(|import| {
             provider_entry
                 .exports
                 .iter()
-                .any(|export| export.interface() == import)
+                .any(|export| export.interface == import.interface)
         });
         if !matches {
             return Err(PolicyError::NoMatchingImport {
@@ -276,44 +254,6 @@ fn valid_guest_path(path: &Path) -> bool {
             .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
-impl LinkGrant {
-    pub(crate) fn caller(&self) -> ComponentId {
-        self.caller
-    }
-
-    pub(crate) fn provider(&self) -> ComponentId {
-        self.provider
-    }
-}
-
-impl HostImportGrant {
-    pub(crate) fn component(&self) -> ComponentId {
-        self.component
-    }
-
-    pub(crate) fn interface(&self) -> &str {
-        &self.interface
-    }
-}
-
-impl DirectoryGrant {
-    pub(crate) fn component(&self) -> ComponentId {
-        self.component
-    }
-
-    pub(crate) fn host(&self) -> &Path {
-        &self.host
-    }
-
-    pub(crate) fn guest(&self) -> &Path {
-        &self.guest
-    }
-
-    pub(crate) fn access(&self) -> DirectoryAccess {
-        self.access
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,8 +301,8 @@ world caller { import api; }"#;
             )
             .unwrap()
             .build();
-        assert_eq!(policy.links().len(), 1);
-        assert_eq!(policy.directories()[0].access(), DirectoryAccess::ReadOnly);
+        assert_eq!(policy.links.len(), 1);
+        assert_eq!(policy.directories[0].access, DirectoryAccess::ReadOnly);
     }
 
     #[test]
@@ -380,7 +320,7 @@ world caller { import api; }"#;
             .allow_host_import_id(caller, "demo:policy/api@0.1.0")
             .unwrap()
             .build();
-        assert_eq!(policy.host_imports().len(), 1);
+        assert_eq!(policy.host_imports.len(), 1);
         assert!(matches!(
             PolicyBuilder::new(&catalog).allow_host_import_id(caller, "demo:policy/missing@0.1.0"),
             Err(PolicyError::HostImportUnavailable { .. })
@@ -409,7 +349,7 @@ world caller { import api; }"#;
                 PathBuf::from("/tmp"),
                 DirectoryAccess::ReadOnly,
             ),
-            Err(PolicyError::Catalog(CatalogError::ForeignComponent))
+            Err(PolicyError::Application(ApplicationError::ForeignComponent))
         ));
     }
 
