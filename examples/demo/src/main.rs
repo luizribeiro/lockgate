@@ -47,6 +47,7 @@ fn main() -> Result<()> {
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
+    let filereader_runnable = app.admit::<bindings::RunnablePlugin>(filereader)?;
     let policy = app
         .policy()
         .link(caller, greeter)?
@@ -56,11 +57,11 @@ fn main() -> Result<()> {
         .build();
     let runtime = app.runtime(policy)?;
     println!("\n[call] caller.run()");
-    let value = runtime.component(caller).runnable().run()?;
+    let value = runtime.component(caller).run()?;
     println!("  => {value:?}");
 
     println!("\n[call] filereader.run()");
-    let value = runtime.component(filereader).runnable().run()?;
+    let value = runtime.component(filereader_runnable).run()?;
     println!("  => {value:?}");
 
     println!("\n[host] still running");

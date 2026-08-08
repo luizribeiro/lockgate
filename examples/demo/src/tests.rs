@@ -19,10 +19,7 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
         .build();
     let runtime = app.runtime(policy)?;
 
-    let value = runtime
-        .component(filereader)
-        .file_reader()
-        .read("/etc/passwd")?;
+    let value = runtime.component(filereader).read("/etc/passwd")?;
 
     assert!(matches!(value, Err(message) if !message.is_empty()));
     Ok(())
@@ -44,11 +41,8 @@ fn one_instance_can_be_called_through_multiple_admitted_roles() -> Result<()> {
         .build();
     let runtime = app.runtime(policy)?;
 
-    let run = runtime.component(runnable).runnable().run()?;
-    let read = runtime
-        .component(reader)
-        .file_reader()
-        .read("/shared/allowed.txt")?;
+    let run = runtime.component(runnable).run()?;
+    let read = runtime.component(reader).read("/shared/allowed.txt")?;
 
     assert!(matches!(run, Ok(message) if !message.is_empty()));
     assert!(matches!(read, Ok(message) if !message.is_empty()));

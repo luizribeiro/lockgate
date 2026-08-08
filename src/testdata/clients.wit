@@ -45,8 +45,3 @@ world query-observer-plugin {
 world database-connector-plugin {
   export database-connector;
 }
-
-world observable-database-plugin {
-  export query-observer;
-  export database-connector;
-}

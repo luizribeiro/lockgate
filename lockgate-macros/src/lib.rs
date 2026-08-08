@@ -109,9 +109,7 @@ struct SelectedWorld {
 
 struct ExportedInterface {
     accessor: Ident,
-    public_accessor: Ident,
     module_path: Vec<Ident>,
-    client_name: Ident,
 }
 
 fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
@@ -258,8 +256,6 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                 .collect::<HashMap<_, _>>();
             let client =
                 generate_runtime_client(&source, &resolve, selected, wasmtime_with, &lockgate)?;
-            let client_name = format_ident!("{}Client", selected.alias);
-            let generated_client_name = format_ident!("{}Client", selected.rust_name);
             let host_bounds = host_imports.values().map(|id| {
                 let path = interface_module_path(&resolve, *id);
                 quote! {
@@ -363,7 +359,6 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                 }
 
                 pub use #module::#rust_name as #alias;
-                pub use #module::#generated_client_name as #client_name;
             })
         })
         .collect::<syn::Result<Vec<_>>>()?;
@@ -411,8 +406,13 @@ fn generate_runtime_client(
         )
     })?;
 
+    if resolve.worlds[selected.id].exports.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            &selected.world,
+            "Lockgate binding roles must export exactly one interface; admit multi-interface components under additional narrow roles",
+        ));
+    }
     let mut exported = Vec::new();
-    let mut short_names = BTreeMap::<String, usize>::new();
     for (key, item) in &resolve.worlds[selected.id].exports {
         let WorldItem::Interface { id, .. } = item else {
             return Err(syn::Error::new_spanned(
@@ -420,13 +420,12 @@ fn generate_runtime_client(
                 "runtime clients require interface exports",
             ));
         };
-        let (accessor, module_path, short_name) = match key {
+        let (accessor, module_path) = match key {
             wit_parser::WorldKey::Name(name) => {
                 let name = rust_ident(name);
                 (
                     format_ident!("{name}"),
                     vec![format_ident!("exports"), format_ident!("{name}")],
-                    name,
                 )
             }
             wit_parser::WorldKey::Interface(_) => {
@@ -436,80 +435,44 @@ fn generate_runtime_client(
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join("_");
-                let short = rust_ident(
-                    resolve.interfaces[*id]
-                        .name
-                        .as_deref()
-                        .expect("named exported interface"),
-                );
                 let mut module_path = vec![format_ident!("exports")];
                 module_path.extend(path);
-                (format_ident!("{accessor}"), module_path, short)
+                (format_ident!("{accessor}"), module_path)
             }
         };
-        *short_names.entry(short_name.clone()).or_default() += 1;
-        exported.push((accessor, module_path, short_name));
+        exported.push(ExportedInterface {
+            accessor,
+            module_path,
+        });
     }
-
-    let interfaces = exported
-        .into_iter()
-        .enumerate()
-        .map(|(index, (accessor, module_path, short_name))| {
-            let public_accessor = if short_names[&short_name] == 1 {
-                format_ident!("{short_name}")
-            } else {
-                accessor.clone()
-            };
-            ExportedInterface {
-                accessor,
-                public_accessor,
-                module_path,
-                client_name: format_ident!("__lockgate_client_{index}"),
-            }
-        })
-        .collect::<Vec<_>>();
 
     let rust_name = &selected.rust_name;
     let world_client = format_ident!("{rust_name}Client");
-    let mut interface_modules = Vec::new();
-    let mut interface_accessors = Vec::new();
-    for interface in interfaces {
-        let module_items = nested_module_items(&generated.items, &interface.module_path)
-            .ok_or_else(|| {
-                syn::Error::new_spanned(
-                    &selected.world,
-                    format!(
-                        "could not locate generated export module `{}`",
-                        interface
-                            .module_path
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join("::")
-                    ),
-                )
-            })?;
-        let (module, accessor) = generate_interface_client(
-            module_items,
-            &interface,
-            rust_name,
-            &world_client,
-            lockgate,
-        )?;
-        interface_modules.push(module);
-        interface_accessors.push(accessor);
-    }
+    let interface = exported.pop().expect("one exported interface was required");
+    let module_items =
+        nested_module_items(&generated.items, &interface.module_path).ok_or_else(|| {
+            syn::Error::new_spanned(
+                &selected.world,
+                format!(
+                    "could not locate generated export module `{}`",
+                    interface
+                        .module_path
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("::")
+                ),
+            )
+        })?;
+    let client =
+        generate_interface_client(module_items, &interface, rust_name, &world_client, lockgate)?;
 
     Ok(quote! {
         pub struct #world_client<'runtime, S: Send + 'static> {
             inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
         }
 
-        impl<'runtime, S: Send + 'static> #world_client<'runtime, S> {
-            #(#interface_accessors)*
-        }
-
-        #(#interface_modules)*
+        #client
 
         impl<S: Send + 'static> #lockgate::__private::RuntimeBinding<S> for #rust_name {
             type Client<'runtime> = #world_client<'runtime, S>
@@ -544,9 +507,9 @@ fn generate_interface_client(
     items: &[Item],
     interface: &ExportedInterface,
     rust_name: &Ident,
-    _world_client: &Ident,
+    world_client: &Ident,
     lockgate: &TokenStream2,
-) -> syn::Result<(TokenStream2, TokenStream2)> {
+) -> syn::Result<TokenStream2> {
     let mut calls = BTreeMap::<String, Vec<syn::ImplItemFn>>::new();
     let mut resources = BTreeMap::<String, Ident>::new();
     for item in items {
@@ -579,11 +542,9 @@ fn generate_interface_client(
         }
     }
 
-    let module = &interface.client_name;
     let module_path = &interface.module_path;
     let export_path = quote!(#(#module_path)::*);
     let root_accessor = &interface.accessor;
-    let public_accessor = &interface.public_accessor;
     let direct_calls = calls.remove("Guest").unwrap_or_default();
     let direct_methods = direct_calls
         .iter()
@@ -595,7 +556,7 @@ fn generate_interface_client(
     for (guest, functions) in calls {
         let Some(accessor) = resources.get(&guest) else {
             return Err(syn::Error::new_spanned(
-                &interface.public_accessor,
+                &interface.accessor,
                 format!("could not locate generated resource accessor for `{guest}`"),
             ));
         };
@@ -614,7 +575,7 @@ fn generate_interface_client(
         });
         resource_structs.push(quote! {
             pub struct #resource_client<'runtime, S: Send + 'static> {
-                inner: #lockgate::__private::RuntimeComponent<'runtime, S, super::#rust_name>,
+                inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
             }
 
             impl<'runtime, S: Send + 'static> #resource_client<'runtime, S> {
@@ -623,40 +584,17 @@ fn generate_interface_client(
         });
     }
 
-    let interface_module = quote! {
-        #[doc(hidden)]
-        pub mod #module {
-            #[allow(unused_imports)]
-            use super::#export_path::*;
+    Ok(quote! {
+        #[allow(unused_imports)]
+        use self::#export_path::*;
 
-            pub struct Client<'runtime, S: Send + 'static> {
-                inner: #lockgate::__private::RuntimeComponent<'runtime, S, super::#rust_name>,
-            }
-
-            impl<'runtime, S: Send + 'static> Client<'runtime, S> {
-                pub(super) fn __lockgate_new(
-                    inner: #lockgate::__private::RuntimeComponent<
-                        'runtime,
-                        S,
-                        super::#rust_name,
-                    >,
-                ) -> Self {
-                    Self { inner }
-                }
-
-                #(#direct_methods)*
-                #(#resource_accessors)*
-            }
-
-            #(#resource_structs)*
+        impl<'runtime, S: Send + 'static> #world_client<'runtime, S> {
+            #(#direct_methods)*
+            #(#resource_accessors)*
         }
-    };
-    let world_accessor = quote! {
-        pub fn #public_accessor(&self) -> #module::Client<'runtime, S> {
-            #module::Client::__lockgate_new(self.inner)
-        }
-    };
-    Ok((interface_module, world_accessor))
+
+        #(#resource_structs)*
+    })
 }
 
 fn impl_target(item: &ItemImpl) -> Option<String> {

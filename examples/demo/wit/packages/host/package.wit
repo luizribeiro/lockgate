@@ -20,6 +20,5 @@ world runnable-plugin {
 
 world file-reader-plugin {
   import services;
-  export runnable;
   export file-reader;
 }
