@@ -258,7 +258,7 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                 let installer = format_ident!("__lockgate_install_host_import_{index}");
                 let path = interface_module_path(&resolve, *id);
                 quote! {
-                    fn #installer<S: Send + 'static>(
+                    fn #installer<S: Send + Sync + 'static>(
                         linker: &mut ::wasmtime::component::Linker<
                             #lockgate::__private::PluginStore<S>,
                         >,
@@ -326,7 +326,7 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                         #host_context_data
                         #(#installers)*
 
-                        impl<S: Send + 'static> #lockgate::__private::Binding<S> for #rust_name
+                        impl<S: Send + Sync + 'static> #lockgate::__private::Binding<S> for #rust_name
                         where
                             #(#host_bounds)*
                         {
@@ -511,7 +511,7 @@ fn generate_runtime_client(
     )?;
 
     Ok(quote! {
-        pub struct #world_client<'runtime, S: Send + 'static> {
+        pub struct #world_client<'runtime, S: Send + Sync + 'static> {
             inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
         }
 
@@ -604,11 +604,11 @@ fn generate_interface_client(
             }
         });
         resource_structs.push(quote! {
-            pub struct #resource_client<'runtime, S: Send + 'static> {
+            pub struct #resource_client<'runtime, S: Send + Sync + 'static> {
                 inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
             }
 
-            impl<'runtime, S: Send + 'static> #resource_client<'runtime, S>
+            impl<'runtime, S: Send + Sync + 'static> #resource_client<'runtime, S>
             where
                 #(#host_bounds)*
             {
@@ -621,7 +621,7 @@ fn generate_interface_client(
         #[allow(unused_imports)]
         use self::#export_path::*;
 
-        impl<'runtime, S: Send + 'static> #world_client<'runtime, S>
+        impl<'runtime, S: Send + Sync + 'static> #world_client<'runtime, S>
         where
             #(#host_bounds)*
         {

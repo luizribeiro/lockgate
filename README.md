@@ -38,7 +38,7 @@ impl bindings::myapp::host::services::Host for HostContext<()> {
     }
 }
 
-let mut app = Application::new(|_| ())?;
+let mut app = Application::new(())?;
 let greeter = app.add::<bindings::GreeterPlugin>("greeter", greeter_wasm)?;
 let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
 
@@ -113,7 +113,7 @@ Applications can define several plugin roles. A sibling-only provider can use a 
 
 ## Host integration
 
-Lockgate constructs one `HostContext<S>` per component. The context always contains the application-assigned component name and resource table; `S` is optional application state. A stateless application uses `S = ()`, so component metadata never depends on user initialization.
+Lockgate constructs one `HostContext<S>` per component. The context always contains the application-assigned component name and resource table, while every context shares the application state `S`. A stateless application uses `S = ()`, so host state is always initialized.
 
 ```rust,ignore
 impl bindings::myapp::host::services::Host for HostContext<()> {
@@ -123,22 +123,24 @@ impl bindings::myapp::host::services::Host for HostContext<()> {
 }
 ```
 
-Shared state is normally held behind `Arc` and cloned into each component context:
+State is shared across component contexts. Mutable state uses an explicit synchronization primitive:
 
 ```rust,ignore
-type State = Arc<AppState>;
+struct AppState {
+    logger: Logger,
+    counters: Mutex<HashMap<String, usize>>,
+}
 
-impl bindings::myapp::host::services::Host for HostContext<State> {
+impl bindings::myapp::host::services::Host for HostContext<AppState> {
     fn log(&mut self, message: String) {
         self.state().logger.log(self.component_name(), message);
     }
 }
 
-let state = Arc::new(AppState::new());
-let mut app = Application::new(move |_| Arc::clone(&state))?;
+let mut app = Application::new(AppState::new())?;
 ```
 
-The constructor can also build distinct state from each component's application-assigned name. Host implementations use `HostContext::state`, `state_mut`, `resources_mut`, and `component_name`.
+Host implementations use `HostContext::state`, `resources_mut`, and `component_name`. Component-specific data can be keyed by `component_name` inside the shared state.
 
 A component may implement more than one application role without creating another instance:
 

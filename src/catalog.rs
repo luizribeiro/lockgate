@@ -101,7 +101,7 @@ impl Catalog {
     ///
     /// Admission requires every export described by `B` to exist in the component with the same
     /// WIT type. Additional component exports are allowed.
-    pub(crate) fn add<S: Send + 'static, B: Binding<S>>(
+    pub(crate) fn add<S: Send + Sync + 'static, B: Binding<S>>(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
@@ -128,7 +128,7 @@ impl Catalog {
     /// The returned handle refers to the same catalog entry and compiled component. Admission
     /// requires every export described by `B` to exist with the same WIT type; a failed check
     /// leaves the catalog unchanged.
-    pub(crate) fn admit<S: Send + 'static, B: Binding<S>>(
+    pub(crate) fn admit<S: Send + Sync + 'static, B: Binding<S>>(
         &mut self,
         component: Component<impl Sized>,
     ) -> Result<Component<B>, ApplicationError> {
@@ -452,7 +452,7 @@ world caller { import api; }"#;
 
     struct GreeterBinding;
 
-    impl<S: Send + 'static> Binding<S> for GreeterBinding {
+    impl<S: Send + Sync + 'static> Binding<S> for GreeterBinding {
         const WORLD: &'static str = "greeter";
         const EXPORTS: &'static [BindingExport] = &[BindingExport {
             interface: "demo:catalog/api@0.1.0",
@@ -488,7 +488,7 @@ world caller { import api; }"#;
 
     struct HealthBinding;
 
-    impl<S: Send + 'static> Binding<S> for HealthBinding {
+    impl<S: Send + Sync + 'static> Binding<S> for HealthBinding {
         const WORLD: &'static str = "health-check";
         const EXPORTS: &'static [BindingExport] = &[BindingExport {
             interface: "demo:catalog/health@0.1.0",
@@ -524,7 +524,7 @@ world caller { import api; }"#;
 
     struct MissingBinding;
 
-    impl<S: Send + 'static> Binding<S> for MissingBinding {
+    impl<S: Send + Sync + 'static> Binding<S> for MissingBinding {
         const WORLD: &'static str = "missing";
         const EXPORTS: &'static [BindingExport] = &[BindingExport {
             interface: "demo:catalog/missing@0.1.0",

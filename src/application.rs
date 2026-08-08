@@ -8,17 +8,15 @@ use crate::{
     runtime::{PluginStore, Runtime, RuntimeBuildError},
 };
 use std::{collections::HashMap, sync::Arc};
-
-pub(crate) type StateFactory<S> = Arc<dyn Fn(&str) -> S + Send + Sync>;
 type HostInstaller<S> =
     fn(&str, &mut wasmtime::component::Linker<PluginStore<S>>) -> anyhow::Result<()>;
 
 /// Generated host bindings retained for runtime preflight.
-pub(crate) struct HostBindings<S: Send + 'static> {
+pub(crate) struct HostBindings<S: Send + Sync + 'static> {
     components: HashMap<ComponentId, HashMap<&'static str, HostInstaller<S>>>,
 }
 
-impl<S: Send + 'static> HostBindings<S> {
+impl<S: Send + Sync + 'static> HostBindings<S> {
     pub(crate) fn new() -> Self {
         Self {
             components: HashMap::new(),
@@ -51,20 +49,18 @@ impl<S: Send + 'static> HostBindings<S> {
 }
 
 /// A catalog assembled together with its application state and generated host bindings.
-pub struct Application<S: Send + 'static = ()> {
+pub struct Application<S: Send + Sync + 'static = ()> {
     catalog: Catalog,
-    state_factory: StateFactory<S>,
+    state: Arc<S>,
     host_bindings: HostBindings<S>,
 }
 
-impl<S: Send + 'static> Application<S> {
-    /// Creates an application with state constructed separately for each included component.
-    pub fn new(
-        factory: impl Fn(&str) -> S + Send + Sync + 'static,
-    ) -> Result<Self, ApplicationError> {
+impl<S: Send + Sync + 'static> Application<S> {
+    /// Creates an application whose state is shared by every component context.
+    pub fn new(state: S) -> Result<Self, ApplicationError> {
         Ok(Self {
             catalog: Catalog::new()?,
-            state_factory: Arc::new(factory),
+            state: Arc::new(state),
             host_bindings: HostBindings::new(),
         })
     }
@@ -111,7 +107,7 @@ impl<S: Send + 'static> Application<S> {
 
     /// Validates the policy and instantiates every included component.
     pub fn runtime(self, policy: Policy) -> Result<Runtime<S>, RuntimeBuildError> {
-        Runtime::from_application(self.catalog, policy, self.state_factory, self.host_bindings)
+        Runtime::from_application(self.catalog, policy, self.state, self.host_bindings)
     }
 
     fn register<B: Binding<S>>(&mut self, component: ComponentId) {

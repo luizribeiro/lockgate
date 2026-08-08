@@ -3,7 +3,7 @@
 
 use crate::{
     Component,
-    application::{HostBindings, StateFactory},
+    application::HostBindings,
     binding::Binding,
     catalog::{ApplicationError, Catalog, ComponentId},
     plan::{Plan, ResolvedImport, Target},
@@ -48,12 +48,12 @@ impl Drop for CallGuard {
 /// Runtime-owned component context and application-defined state exposed to host bindings.
 pub struct HostContext<S = ()> {
     component_name: String,
-    state: S,
+    state: Arc<S>,
     resources: ResourceTable,
 }
 
 impl<S> HostContext<S> {
-    fn new(component_name: String, state: S) -> Self {
+    fn new(component_name: String, state: Arc<S>) -> Self {
         Self {
             component_name,
             state,
@@ -68,12 +68,7 @@ impl<S> HostContext<S> {
 
     /// Returns the application-defined state associated with this component.
     pub fn state(&self) -> &S {
-        &self.state
-    }
-
-    /// Returns mutable application-defined state associated with this component.
-    pub fn state_mut(&mut self) -> &mut S {
-        &mut self.state
+        self.state.as_ref()
     }
 
     /// Returns the resource table shared by application host bindings and WASI.
@@ -84,12 +79,12 @@ impl<S> HostContext<S> {
 
 /// Per-component store data used by generated application bindings.
 #[doc(hidden)]
-pub struct PluginStore<S: Send + 'static = ()> {
+pub struct PluginStore<S: Send + Sync + 'static = ()> {
     context: HostContext<S>,
     wasi: WasiCtx,
 }
 
-impl<S: Send + 'static> PluginStore<S> {
+impl<S: Send + Sync + 'static> PluginStore<S> {
     /// Returns the mutable component context projected into generated host bindings.
     #[doc(hidden)]
     pub fn context_mut(&mut self) -> &mut HostContext<S> {
@@ -97,7 +92,7 @@ impl<S: Send + 'static> PluginStore<S> {
     }
 }
 
-impl<S: Send + 'static> WasiView for PluginStore<S> {
+impl<S: Send + Sync + 'static> WasiView for PluginStore<S> {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi,
@@ -106,32 +101,32 @@ impl<S: Send + 'static> WasiView for PluginStore<S> {
     }
 }
 
-struct ComponentRuntime<H: Send + 'static> {
+struct ComponentRuntime<H: Send + Sync + 'static> {
     store: Store<PluginStore<H>>,
     instance: Instance,
     healthy: bool,
 }
 
-struct RuntimeTable<H: Send + 'static> {
+struct RuntimeTable<H: Send + Sync + 'static> {
     components: HashMap<ComponentId, Arc<Mutex<ComponentRuntime<H>>>>,
 }
 
 /// A fully instantiated set of isolated component stores.
-pub struct Runtime<H: Send + 'static = ()> {
+pub struct Runtime<H: Send + Sync + 'static = ()> {
     plan: Plan,
     table: Arc<Mutex<RuntimeTable<H>>>,
 }
 
 /// Runtime access retained by generated component clients.
 #[doc(hidden)]
-pub struct RuntimeComponent<'runtime, H: Send + 'static, B> {
+pub struct RuntimeComponent<'runtime, H: Send + Sync + 'static, B> {
     runtime: &'runtime Runtime<H>,
     component: Component<B>,
 }
 
-impl<H: Send + 'static, B> Copy for RuntimeComponent<'_, H, B> {}
+impl<H: Send + Sync + 'static, B> Copy for RuntimeComponent<'_, H, B> {}
 
-impl<H: Send + 'static, B> Clone for RuntimeComponent<'_, H, B> {
+impl<H: Send + Sync + 'static, B> Clone for RuntimeComponent<'_, H, B> {
     fn clone(&self) -> Self {
         *self
     }
@@ -195,20 +190,20 @@ pub enum RuntimeError {
     Poisoned,
 }
 
-impl<H: Send + 'static> Runtime<H> {
+impl<H: Send + Sync + 'static> Runtime<H> {
     pub(crate) fn from_application(
         catalog: Catalog,
         policy: Policy,
-        state_factory: StateFactory<H>,
+        state: Arc<H>,
         host_bindings: HostBindings<H>,
     ) -> Result<Self, RuntimeBuildError> {
         let plan = Plan::new(catalog, policy)?;
-        Self::build(plan, state_factory, host_bindings)
+        Self::build(plan, state, host_bindings)
     }
 
     fn build(
         plan: Plan,
-        state_factory: StateFactory<H>,
+        state: Arc<H>,
         host_bindings: HostBindings<H>,
     ) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
@@ -226,7 +221,7 @@ impl<H: Send + 'static> Runtime<H> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         for (component, instance) in prepared {
-            runtime.instantiate(component, &state_factory, instance)?;
+            runtime.instantiate(component, &state, instance)?;
         }
         Ok(runtime)
     }
@@ -277,7 +272,7 @@ impl<H: Send + 'static> Runtime<H> {
     fn instantiate(
         &self,
         component: ComponentId,
-        state_factory: &StateFactory<H>,
+        state: &Arc<H>,
         instance: InstancePre<PluginStore<H>>,
     ) -> Result<(), RuntimeBuildError> {
         let entry = self
@@ -296,7 +291,7 @@ impl<H: Send + 'static> Runtime<H> {
             preopen(&mut wasi, directory).map_err(|error| instantiate_error(&entry.name, error))?;
         }
         let state = PluginStore {
-            context: HostContext::new(entry.name.clone(), state_factory(&entry.name)),
+            context: HostContext::new(entry.name.clone(), Arc::clone(state)),
             wasi: wasi.build(),
         };
         let mut store = Store::new(engine, state);
@@ -325,7 +320,7 @@ impl<H: Send + 'static> Runtime<H> {
     }
 }
 
-impl<'runtime, H: Send + 'static, B: Binding<H>> RuntimeComponent<'runtime, H, B> {
+impl<'runtime, H: Send + Sync + 'static, B: Binding<H>> RuntimeComponent<'runtime, H, B> {
     /// Creates the internal runtime view used by generated clients.
     #[doc(hidden)]
     pub(crate) fn new(runtime: &'runtime Runtime<H>, component: Component<B>) -> Self {
@@ -350,7 +345,7 @@ impl<'runtime, H: Send + 'static, B: Binding<H>> RuntimeComponent<'runtime, H, B
     }
 }
 
-impl<H: Send + 'static> ComponentRuntime<H> {
+impl<H: Send + Sync + 'static> ComponentRuntime<H> {
     fn call(&mut self, target: &Target, params: &[Val]) -> Result<Vec<Val>, anyhow::Error> {
         let interface = self
             .instance
@@ -374,7 +369,7 @@ impl<H: Send + 'static> ComponentRuntime<H> {
     }
 }
 
-fn wire_direct_imports<'a, H: Send + 'static>(
+fn wire_direct_imports<'a, H: Send + Sync + 'static>(
     linker: &mut Linker<PluginStore<H>>,
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     imports: impl Iterator<Item = (&'a String, &'a ResolvedImport)>,
@@ -400,7 +395,7 @@ fn wire_direct_imports<'a, H: Send + 'static>(
     Ok(())
 }
 
-fn invoke_target<H: Send + 'static>(
+fn invoke_target<H: Send + Sync + 'static>(
     runtimes: &Weak<Mutex<RuntimeTable<H>>>,
     target: &Target,
     params: &[Val],
@@ -418,7 +413,7 @@ fn invoke_target<H: Send + 'static>(
     )
 }
 
-fn invoke_component_runtime<H: Send + 'static, R>(
+fn invoke_component_runtime<H: Send + Sync + 'static, R>(
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     component: ComponentId,
     component_name: &str,
@@ -449,7 +444,7 @@ fn invoke_component_runtime<H: Send + 'static, R>(
     })
 }
 
-fn runtime_for<H: Send + 'static>(
+fn runtime_for<H: Send + Sync + 'static>(
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     component: ComponentId,
     name: &str,
@@ -465,7 +460,7 @@ fn runtime_for<H: Send + 'static>(
         })
 }
 
-fn try_runtime_lock<'a, H: Send + 'static>(
+fn try_runtime_lock<'a, H: Send + Sync + 'static>(
     runtime: &'a Mutex<ComponentRuntime<H>>,
     name: &str,
 ) -> Result<MutexGuard<'a, ComponentRuntime<H>>, RuntimeError> {
@@ -534,7 +529,6 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 mod tests {
     use super::*;
     use crate::{Application, binding::Binding, catalog::Catalog, policy::PolicyBuilder};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -600,30 +594,15 @@ world consumer { import api; }"#;
     }
 
     #[test]
-    fn host_context_keeps_component_name_separate_from_user_state() {
-        let mut context = HostContext::new("provider".into(), vec![1]);
+    fn host_contexts_share_application_state() {
+        let state = Arc::new(vec![1]);
+        let mut first = HostContext::new("first".into(), Arc::clone(&state));
+        let second = HostContext::new("second".into(), state);
 
-        context.state_mut().push(2);
-
-        assert_eq!(context.component_name(), "provider");
-        assert_eq!(context.state(), &[1, 2]);
-        assert!(context.resources_mut().is_empty());
-    }
-
-    #[test]
-    fn state_factory_receives_the_component_name() {
-        let names = Arc::new(Mutex::new(Vec::new()));
-        let factory_names = Arc::clone(&names);
-        let mut app = Application::new(move |name| {
-            factory_names.lock().unwrap().push(name.to_owned());
-        })
-        .unwrap();
-        let component = app.add_untyped("provider", provider_bytes()).unwrap();
-        let policy = app.policy().include_id(component).unwrap().build();
-
-        app.runtime(policy).unwrap();
-
-        assert_eq!(*names.lock().unwrap(), ["provider"]);
+        assert_eq!(first.component_name(), "first");
+        assert_eq!(second.component_name(), "second");
+        assert!(std::ptr::eq(first.state(), second.state()));
+        assert!(first.resources_mut().is_empty());
     }
 
     #[test]
@@ -677,12 +656,7 @@ world consumer { import api; }"#;
 
     #[test]
     fn all_linkers_are_preflighted_before_any_store_is_created() {
-        let creations = Arc::new(AtomicUsize::new(0));
-        let factory_creations = Arc::clone(&creations);
-        let mut app = Application::new(move |_| {
-            factory_creations.fetch_add(1, Ordering::Relaxed);
-        })
-        .unwrap();
+        let mut app = Application::new(()).unwrap();
         let first = app.add_untyped("first", provider_bytes()).unwrap();
         let second = app
             .add::<FailingHostBinding>("second", consumer_bytes())
@@ -700,6 +674,5 @@ world consumer { import api; }"#;
             result,
             Err(RuntimeBuildError::Instantiation { component, .. }) if component == "second"
         ));
-        assert_eq!(creations.load(Ordering::Relaxed), 0);
     }
 }
