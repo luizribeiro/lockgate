@@ -21,6 +21,7 @@ interface query-observer {
     recorded(string),
   }
 
+  new: func() -> string;
   observe: func(query: query, phase: option<phase>, interest: interest) -> result<observation, string>;
 }
 

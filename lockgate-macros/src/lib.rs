@@ -716,7 +716,7 @@ fn generate_interface_client(
             }
 
             impl<'runtime, S: Send + 'static> Client<'runtime, S> {
-                pub(super) fn new(
+                pub(super) fn __lockgate_new(
                     inner: #lockgate::__private::RuntimeComponent<
                         'runtime,
                         S,
@@ -735,7 +735,7 @@ fn generate_interface_client(
     };
     let world_accessor = quote! {
         pub fn #public_accessor(&self) -> #module::Client<'runtime, S> {
-            #module::Client::new(self.inner)
+            #module::Client::__lockgate_new(self.inner)
         }
     };
     Ok((interface_module, world_accessor))
