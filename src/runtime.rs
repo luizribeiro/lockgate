@@ -624,7 +624,7 @@ world consumer { import api; }"#;
     fn state_factory_receives_the_component_name() {
         let names = Arc::new(Mutex::new(Vec::new()));
         let factory_names = Arc::clone(&names);
-        let mut app = Application::with_state_factory(move |name| {
+        let mut app = Application::new(move |name| {
             factory_names.lock().unwrap().push(name.to_owned());
         })
         .unwrap();
@@ -689,7 +689,7 @@ world consumer { import api; }"#;
     fn all_linkers_are_preflighted_before_any_store_is_created() {
         let creations = Arc::new(AtomicUsize::new(0));
         let factory_creations = Arc::clone(&creations);
-        let mut app = Application::with_state_factory(move |_| {
+        let mut app = Application::new(move |_| {
             factory_creations.fetch_add(1, Ordering::Relaxed);
         })
         .unwrap();

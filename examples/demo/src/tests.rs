@@ -7,7 +7,7 @@ use lockgate::Application;
 #[test]
 fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
     let root = artifacts::root()?;
-    let mut app = Application::new()?;
+    let mut app = Application::new(|_| ())?;
     let filereader = app.add::<bindings::FileReaderPlugin>(
         "filereader",
         artifacts::component_bytes("filereader")?,
@@ -31,7 +31,7 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
 #[test]
 fn one_instance_can_be_called_through_multiple_admitted_roles() -> Result<()> {
     let root = artifacts::root()?;
-    let mut app = Application::new()?;
+    let mut app = Application::new(|_| ())?;
     let reader = app.add::<bindings::FileReaderPlugin>(
         "filereader",
         artifacts::component_bytes("filereader")?,

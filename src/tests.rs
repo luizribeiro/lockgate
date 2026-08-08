@@ -87,7 +87,7 @@ fn application_bindings_share_imported_host_interfaces() {
 interface services { log: func(message: string); }
 interface runnable { run: func() -> string; }
 world matching { import services; export runnable; }"#;
-    let mut app = Application::new().unwrap();
+    let mut app = Application::new(|_| ()).unwrap();
     let runnable = app
         .add::<typed_bindings::RunnablePlugin>("plugin", component_bytes(wit, "matching"))
         .unwrap();
@@ -177,7 +177,7 @@ interface api {
 }
 world caller { import api; }
 world provider { export api; }"#;
-    let mut app = Application::new().unwrap();
+    let mut app = Application::new(|_| ()).unwrap();
     let caller = app
         .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
@@ -198,7 +198,7 @@ fn plan_requires_an_explicit_link_even_when_the_provider_is_present() {
 interface api { run: func(); }
 world caller { import api; }
 world provider { export api; }"#;
-    let mut app = Application::new().unwrap();
+    let mut app = Application::new(|_| ()).unwrap();
     let caller = app
         .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
@@ -225,7 +225,7 @@ fn plan_rejects_ambiguous_providers() {
 interface api { run: func(); }
 world caller { import api; }
 world provider { export api; }"#;
-    let mut app = Application::new().unwrap();
+    let mut app = Application::new(|_| ()).unwrap();
     let caller = app
         .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
@@ -252,7 +252,7 @@ world provider { export api; }"#;
 fn plan_compares_complete_structural_types() {
     let caller_wit = structural_wit("s32", "safe", "polite", "choice", "caller", "import");
     let provider_wit = structural_wit("u32", "careful", "quiet", "selection", "provider", "export");
-    let mut app = Application::new().unwrap();
+    let mut app = Application::new(|_| ()).unwrap();
     let caller = app
         .add_untyped("caller", component_bytes(&caller_wit, "caller"))
         .unwrap();
@@ -313,7 +313,7 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
             (export "demo:fuel/api@0.1.0" (instance $api)))"#,
     )
     .unwrap();
-    let mut app = Application::new().unwrap();
+    let mut app = Application::new(|_| ()).unwrap();
     let looping = app.add::<LoopBinding>("looping", bytes).unwrap();
     let policy = app.policy().include(looping).unwrap().build();
     let runtime = app.runtime(policy).unwrap();

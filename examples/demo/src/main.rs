@@ -36,7 +36,7 @@ impl bindings::demo::host::services::Host for HostContext<()> {
 
 fn main() -> Result<()> {
     let root = artifacts::root()?;
-    let mut app = Application::new()?;
+    let mut app = Application::new(|_| ())?;
     let greeter = app.add::<greeter_bindings::GreeterPlugin>(
         "greeter",
         artifacts::component_bytes("greeter")?,

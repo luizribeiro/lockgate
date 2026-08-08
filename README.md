@@ -38,7 +38,7 @@ impl bindings::myapp::host::services::Host for HostContext<()> {
     }
 }
 
-let mut app = Application::new()?;
+let mut app = Application::new(|_| ())?;
 let greeter = app.add::<bindings::GreeterPlugin>("greeter", greeter_wasm)?;
 let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
 
@@ -136,10 +136,10 @@ impl bindings::myapp::host::services::Host for HostContext<State> {
 }
 
 let state = Arc::new(AppState::new());
-let mut app = Application::with_state(state)?;
+let mut app = Application::new(move |_| Arc::clone(&state))?;
 ```
 
-`Application::with_state_factory` can instead construct distinct state from each component's application-assigned name. Host implementations use `HostContext::state`, `state_mut`, `resources_mut`, and `component_name`.
+The constructor can also build distinct state from each component's application-assigned name. Host implementations use `HostContext::state`, `state_mut`, `resources_mut`, and `component_name`.
 
 A component may implement more than one application role without creating another instance:
 

@@ -64,28 +64,9 @@ pub struct Application<S: Send + 'static = ()> {
     host_bindings: HostBindings<S>,
 }
 
-impl Application<()> {
-    /// Creates a stateless application.
-    pub fn new() -> Result<Self, CatalogError> {
-        Self::with_state_factory(|_| ())
-    }
-}
-
-impl<S: Clone + Send + Sync + 'static> Application<S> {
-    /// Creates an application whose component stores clone the supplied state value.
-    ///
-    /// Use shared ownership such as [`Arc`] when every component should observe the same logical
-    /// state.
-    pub fn with_state(state: S) -> Result<Self, CatalogError> {
-        Self::with_state_factory(move |_| state.clone())
-    }
-}
-
 impl<S: Send + 'static> Application<S> {
     /// Creates an application with state constructed separately for each included component.
-    pub fn with_state_factory(
-        factory: impl Fn(&str) -> S + Send + Sync + 'static,
-    ) -> Result<Self, CatalogError> {
+    pub fn new(factory: impl Fn(&str) -> S + Send + Sync + 'static) -> Result<Self, CatalogError> {
         Ok(Self {
             catalog: Catalog::new()?,
             state_factory: Arc::new(factory),
