@@ -17,6 +17,10 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-changed={}",
+        demo.join("wit/packages/greeter/package.wit").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
         demo.join("packages/demo-greeter-0.1.0.wasm").display()
     );
     for id in IDS {

@@ -13,6 +13,15 @@ mod bindings {
     }
 }
 
+mod greeter_bindings {
+    lockgate::bindings! {
+        path: "wit/packages/greeter",
+        worlds: {
+            GreeterPlugin: "greeter-plugin",
+        },
+    }
+}
+
 mod artifacts;
 #[cfg(test)]
 mod tests;
@@ -28,7 +37,10 @@ impl bindings::demo::host::services::Host for HostContext<()> {
 fn main() -> Result<()> {
     let root = artifacts::root()?;
     let mut app = Application::new()?;
-    let greeter = app.add_untyped("greeter", artifacts::component_bytes("greeter")?)?;
+    let greeter = app.add::<greeter_bindings::GreeterPlugin>(
+        "greeter",
+        artifacts::component_bytes("greeter")?,
+    )?;
     let caller =
         app.add::<bindings::RunnablePlugin>("caller", artifacts::component_bytes("caller")?)?;
     let filereader = app.add::<bindings::FileReaderPlugin>(
