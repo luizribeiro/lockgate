@@ -75,6 +75,10 @@ The generated binding implementation exists only when `HostContext<S>` implement
 
 The runnable example contains the complete integration in `examples/demo/src/main.rs`.
 
+`examples/coding-agent` builds a small Ratatui coding agent with replaceable WebAssembly provider
+and tool plugins. Its typed provider protocol, Inkling adapter, and read-only workspace tools are
+documented in `examples/coding-agent/README.md`.
+
 ## Call boundaries
 
 The demo makes all three supported boundaries visible:
@@ -260,6 +264,7 @@ examples/demo/
   wit/worlds.wit         guest implementation worlds
   wit/deps/              shared host and sibling WIT contracts
   sandbox/               demo filesystem input
+examples/coding-agent/   TUI agent with provider and tool component roles
 ```
 
 The guest components form a small workspace with one dependency set and lockfile, independent from the host workspace. Each guest depends only on `lockgate-plugin`; Cargo compiles the generated bindings and metadata directly to native `wasm32-wasip3` components.

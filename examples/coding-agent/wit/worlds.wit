@@ -1,0 +1,13 @@
+// Implementation worlds compiled by the example's independent plugin crates.
+package coding:plugins@0.1.0;
+
+world provider {
+  import coding:agent/http-client@0.1.0;
+  import coding:agent/provider-settings@0.1.0;
+  export coding:agent/provider@0.1.0;
+}
+
+world tool {
+  import coding:agent/workspace@0.1.0;
+  export coding:agent/tool@0.1.0;
+}

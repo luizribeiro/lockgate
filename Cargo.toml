@@ -9,6 +9,7 @@ include = ["src/**", "Cargo.toml", "README.md"]
 [workspace]
 resolver = "3"
 members = [
+    "examples/coding-agent",
     "examples/demo",
     "lockgate-macros",
     "lockgate-plugin",

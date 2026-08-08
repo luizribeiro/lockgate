@@ -1,0 +1,12 @@
+[package]
+name = "inkling-provider"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lockgate-plugin.workspace = true
+serde.workspace = true
+serde_json.workspace = true

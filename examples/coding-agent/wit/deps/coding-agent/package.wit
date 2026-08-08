@@ -1,0 +1,75 @@
+// Stable, application-owned contracts for model providers, tools, and host capabilities.
+package coding:agent@0.1.0;
+
+interface provider {
+  record tool-call {
+    id: string,
+    name: string,
+    arguments-json: string,
+  }
+
+  record tool-spec {
+    name: string,
+    description: string,
+    input-schema-json: string,
+  }
+
+  record tool-result {
+    call-id: string,
+    name: string,
+    content: string,
+  }
+
+  record completion {
+    content: option<string>,
+    tool-calls: list<tool-call>,
+  }
+
+  resource conversation {
+    send: async func(prompt: string) -> result<completion, string>;
+    resume: async func(results: list<tool-result>) -> result<completion, string>;
+  }
+
+  open: async func(system-prompt: string, tools: list<tool-spec>) -> result<own<conversation>, string>;
+}
+
+interface tool {
+  name: async func() -> string;
+  description: async func() -> string;
+  input-schema: async func() -> string;
+  run: async func(arguments-json: string) -> result<string, string>;
+}
+
+interface workspace {
+  list-files: async func() -> result<list<string>, string>;
+  read-file: async func(path: string) -> result<string, string>;
+}
+
+interface http-client {
+  record header {
+    name: string,
+    value: string,
+  }
+
+  record response {
+    status: u16,
+    body: string,
+  }
+
+  post: async func(url: string, headers: list<header>, body: string) -> result<response, string>;
+}
+
+interface provider-settings {
+  get: async func(key: string) -> option<string>;
+}
+
+world provider-plugin {
+  import http-client;
+  import provider-settings;
+  export provider;
+}
+
+world tool-plugin {
+  import workspace;
+  export tool;
+}
