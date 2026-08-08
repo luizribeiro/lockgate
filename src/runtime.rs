@@ -528,7 +528,7 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Application, binding::Binding, catalog::Catalog, policy::PolicyBuilder};
+    use crate::{Application, binding::Binding, catalog::Catalog, policy::Policy};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -615,11 +615,10 @@ world consumer { import api; }"#;
                 .unwrap();
             components.push(component);
         }
-        let mut policy = PolicyBuilder::new(&catalog);
+        let mut policy = Policy::new(catalog.identity());
         for component in &components {
-            policy = policy.include_id(*component).unwrap();
+            policy.include(*component);
         }
-        let policy = policy.build();
         let plan = Plan::new(catalog, policy).unwrap();
         let targets = components
             .into_iter()
@@ -661,14 +660,12 @@ world consumer { import api; }"#;
         let second = app
             .add::<FailingHostBinding>("second", consumer_bytes())
             .unwrap();
-        let policy = app
-            .policy()
+        let result = app
             .include_id(first)
             .unwrap()
             .allow_host_import(second, "demo:stack/api@0.1.0")
             .unwrap()
-            .build();
-        let result = app.runtime(policy);
+            .runtime();
 
         assert!(matches!(
             result,

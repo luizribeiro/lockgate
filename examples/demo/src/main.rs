@@ -48,14 +48,12 @@ fn main() -> Result<()> {
         artifacts::component_bytes("filereader")?,
     )?;
     let filereader_runnable = app.admit::<bindings::RunnablePlugin>(filereader)?;
-    let policy = app
-        .policy()
+    let runtime = app
         .link(caller, greeter)?
         .allow_host_import(caller, HOST_SERVICES)?
         .allow_host_import(filereader, HOST_SERVICES)?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
-        .build();
-    let runtime = app.runtime(policy)?;
+        .runtime()?;
     println!("\n[call] caller.run()");
     let value = runtime.component(caller).run()?;
     println!("  => {value:?}");

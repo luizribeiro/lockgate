@@ -12,12 +12,10 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
-    let policy = app
-        .policy()
+    let runtime = app
         .allow_host_import(filereader, HOST_SERVICES)?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
-        .build();
-    let runtime = app.runtime(policy)?;
+        .runtime()?;
 
     let value = runtime.component(filereader).read("/etc/passwd")?;
 
@@ -34,12 +32,10 @@ fn one_instance_can_be_called_through_multiple_admitted_roles() -> Result<()> {
         artifacts::component_bytes("filereader")?,
     )?;
     let runnable = app.admit::<bindings::RunnablePlugin>(reader)?;
-    let policy = app
-        .policy()
+    let runtime = app
         .allow_host_import(reader, HOST_SERVICES)?
         .read_only_dir(reader, root.join("sandbox/shared"), "/shared")?
-        .build();
-    let runtime = app.runtime(policy)?;
+        .runtime()?;
 
     let run = runtime.component(runnable).run()?;
     let read = runtime.component(reader).read("/shared/allowed.txt")?;

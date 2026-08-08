@@ -10,6 +10,7 @@ use std::{
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
+    path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
@@ -81,6 +82,17 @@ pub enum ApplicationError {
         #[source]
         source: anyhow::Error,
     },
+    #[error("component `{caller}` imports no interface exported by `{provider}")]
+    NoMatchingImport { caller: String, provider: String },
+    #[error("component `{component}` was not admitted with host interface `{interface}`")]
+    HostImportUnavailable {
+        component: String,
+        interface: String,
+    },
+    #[error("guest directory path must be normalized absolute POSIX: `{0}")]
+    RelativeGuestPath(PathBuf),
+    #[error("host directory does not exist or is not a directory: `{0}")]
+    InvalidHostDirectory(PathBuf),
 }
 
 impl Catalog {
@@ -161,19 +173,6 @@ impl Catalog {
         let name = name.into();
         let entry = self.inspect_new(&name, bytes.as_ref())?;
         Ok(self.insert(entry))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn register_host_imports(
-        &mut self,
-        component: ComponentId,
-        interfaces: &'static [&'static str],
-    ) {
-        let entry = self
-            .components
-            .get_mut(component.index)
-            .expect("test component belongs to this catalog");
-        entry.host_imports.extend(interfaces);
     }
 
     fn inspect_new(&self, name: &str, bytes: &[u8]) -> Result<ComponentEntry, ApplicationError> {

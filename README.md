@@ -6,7 +6,7 @@ The design keeps API knowledge and implementation selection separate:
 
 - Host-to-guest exports and guest-to-host imports use application-owned WIT and generated bindings.
 - Sibling callers and providers compile against their shared WIT, but Lockgate learns that contract from their artifacts.
-- Policy chooses which concrete component satisfies each sibling import and which host interfaces each component may import.
+- Application grants choose which concrete component satisfies each sibling import and which host interfaces each component may import.
 - Lockgate uses runtime component values only inside the sibling forwarding implementation. There is no guest-visible dynamic registry or public raw host-call API.
 
 ## The model
@@ -16,7 +16,7 @@ Lockgate keeps three kinds of identity separate:
 - The application assigns a logical name such as `greeter` when adding bytes to its catalog.
 - Package, interface, and function names come from the WIT embedded in the component.
 
-The public lifecycle is generated bindings → `Application` → `Policy` → `Runtime`:
+The public lifecycle is generated bindings → `Application` → `Runtime`:
 
 ```rust,ignore
 use lockgate::{Application, HostContext};
@@ -42,12 +42,10 @@ let mut app = Application::new(())?;
 let greeter = app.add::<bindings::GreeterPlugin>("greeter", greeter_wasm)?;
 let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
 
-let policy = app.policy()
+let runtime = app
     .link(caller, greeter)?
     .allow_host_import(caller, "myapp:host/services@1.0.0")?
-    .build();
-
-let runtime = app.runtime(policy)?;
+    .runtime()?;
 
 let result = runtime.component(caller).run()?;
 ```
@@ -155,7 +153,7 @@ Secondary admission revalidates the existing artifact and merges its host-interf
 
 The private catalog owned by `Application` compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to validate their real imports, exports, and function signatures. Artifact insertion is always admitted against a generated binding role.
 
-`Policy` contains catalog-owned handles. Grants automatically include their components; `.include(component)` adds a standalone component. Host imports and sibling links are distinct grants:
+Capability grants use application-owned handles and automatically include their components; `.include(component)` adds a standalone component. Host imports and sibling links remain distinct grants:
 
 - `.allow_host_import(component, interface)` permits the embedding application to implement that exact interface when it is both imported by the artifact and declared by an admitted binding role.
 - `.link(caller, provider)` permits the provider to satisfy matching sibling imports on the caller.

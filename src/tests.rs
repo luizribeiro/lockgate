@@ -78,12 +78,10 @@ world matching { import services; export runnable; }"#;
         .admit::<typed_bindings::SecondaryPlugin>(runnable)
         .unwrap();
     assert_eq!(app.host_installer_count(), 1);
-    let policy = app
-        .policy()
-        .allow_host_import(secondary, "demo:admission/services@0.1.0")
+    app.allow_host_import(secondary, "demo:admission/services@0.1.0")
         .unwrap()
-        .build();
-    app.runtime(policy).unwrap();
+        .runtime()
+        .unwrap();
 }
 
 fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {
@@ -170,9 +168,8 @@ world provider { export api; }"#;
     let provider = app
         .add_untyped("provider", component_bytes(wit, "provider"))
         .unwrap();
-    let policy = app.policy().link_ids(caller, provider).unwrap().build();
     assert!(matches!(
-        app.runtime(policy),
+        app.link_ids(caller, provider).unwrap().runtime(),
         Err(RuntimeBuildError::UnsupportedSiblingType { reason, .. })
             if reason.contains("resource")
     ));
@@ -191,15 +188,13 @@ world provider { export api; }"#;
     let provider = app
         .add_untyped("provider", component_bytes(wit, "provider"))
         .unwrap();
-    let policy = app
-        .policy()
+    let app = app
         .include_id(caller)
         .unwrap()
         .include_id(provider)
-        .unwrap()
-        .build();
+        .unwrap();
     assert!(matches!(
-        app.runtime(policy),
+        app.runtime(),
         Err(RuntimeBuildError::MissingProvider { caller, interface })
             if caller == "caller" && interface == "demo:missing/api@0.1.0"
     ));
@@ -221,15 +216,13 @@ world provider { export api; }"#;
     let second = app
         .add_untyped("second", component_bytes(wit, "provider"))
         .unwrap();
-    let policy = app
-        .policy()
+    let app = app
         .link_ids(caller, first)
         .unwrap()
         .link_ids(caller, second)
-        .unwrap()
-        .build();
+        .unwrap();
     assert!(matches!(
-        app.runtime(policy),
+        app.runtime(),
         Err(RuntimeBuildError::AmbiguousProvider { .. })
     ));
 }
@@ -245,8 +238,7 @@ fn plan_compares_complete_structural_types() {
     let provider = app
         .add_untyped("provider", component_bytes(&provider_wit, "provider"))
         .unwrap();
-    let policy = app.policy().link_ids(caller, provider).unwrap().build();
-    let error = match app.runtime(policy) {
+    let error = match app.link_ids(caller, provider).unwrap().runtime() {
         Ok(_) => panic!("mismatched structural types unexpectedly planned"),
         Err(error) => error.to_string(),
     };
@@ -308,8 +300,7 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
     .unwrap();
     let mut app = Application::new(()).unwrap();
     let looping = app.add::<LoopBinding>("looping", bytes).unwrap();
-    let policy = app.policy().include(looping).unwrap().build();
-    let runtime = app.runtime(policy).unwrap();
+    let runtime = app.include(looping).unwrap().runtime().unwrap();
     let call_loop = || {
         RuntimeComponent::new(&runtime, looping).invoke(|store, binding| {
             binding.function.call(store, &[], &mut [])?;
