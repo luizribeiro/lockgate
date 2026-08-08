@@ -59,6 +59,7 @@ pub struct Application<S: Send + Sync + 'static = ()> {
     grants: Grants,
     state: Arc<S>,
     host_bindings: HostBindings<S>,
+    fuel_per_call: u64,
 }
 
 impl<S: Send + Sync + 'static> Application<S> {
@@ -70,7 +71,18 @@ impl<S: Send + Sync + 'static> Application<S> {
             grants: Grants::default(),
             state: Arc::new(state),
             host_bindings: HostBindings::new(),
+            fuel_per_call: crate::runtime::DEFAULT_FUEL_PER_CALL,
         })
+    }
+
+    /// Sets the WebAssembly instruction budget restored before each component call.
+    ///
+    /// The same budget applies while instantiating each component. Applications should choose the
+    /// smallest value that accommodates their plugins; the default is 100,000 units of Wasmtime
+    /// fuel.
+    pub fn fuel_per_call(mut self, fuel: u64) -> Self {
+        self.fuel_per_call = fuel;
+        self
     }
 
     #[cfg(test)]
@@ -154,7 +166,14 @@ impl<S: Send + Sync + 'static> Application<S> {
 
     /// Validates the retained grants and runs every added component.
     pub async fn run(self) -> Result<Runtime<S>, RuntimeBuildError> {
-        Runtime::from_application(self.catalog, self.grants, self.state, self.host_bindings).await
+        Runtime::from_application(
+            self.catalog,
+            self.grants,
+            self.state,
+            self.host_bindings,
+            self.fuel_per_call,
+        )
+        .await
     }
 
     fn register<R: RoleSet<S>>(&mut self, component: ComponentId) {

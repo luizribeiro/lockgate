@@ -24,7 +24,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-const FUEL: u64 = 100_000;
+pub(crate) const DEFAULT_FUEL_PER_CALL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
 
 type RuntimeCall<'a, R> = Pin<Box<dyn Future<Output = anyhow::Result<R>> + Send + 'a>>;
@@ -102,6 +102,7 @@ struct ComponentRuntime<H: Send + Sync + 'static> {
     store: Store<PluginStore<H>>,
     instance: Instance,
     healthy: bool,
+    fuel_per_call: u64,
 }
 
 struct RuntimeTable<H: Send + Sync + 'static> {
@@ -112,6 +113,7 @@ struct RuntimeTable<H: Send + Sync + 'static> {
 pub struct Runtime<H: Send + Sync + 'static = ()> {
     plan: Plan,
     table: Arc<Mutex<RuntimeTable<H>>>,
+    fuel_per_call: u64,
 }
 
 /// Runtime access retained by generated component clients.
@@ -191,20 +193,26 @@ impl<H: Send + Sync + 'static> Runtime<H> {
         grants: Grants,
         state: Arc<H>,
         host_bindings: HostBindings<H>,
+        fuel_per_call: u64,
     ) -> Result<Self, RuntimeBuildError> {
         let plan = Plan::new(catalog, grants)?;
-        Self::build(plan, state, host_bindings).await
+        Self::build(plan, state, host_bindings, fuel_per_call).await
     }
 
     async fn build(
         plan: Plan,
         state: Arc<H>,
         host_bindings: HostBindings<H>,
+        fuel_per_call: u64,
     ) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
             components: HashMap::new(),
         }));
-        let runtime = Self { plan, table };
+        let runtime = Self {
+            plan,
+            table,
+            fuel_per_call,
+        };
         let prepared = runtime
             .plan
             .order
@@ -293,7 +301,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
         };
         let mut store = Store::new(engine, state);
         store
-            .set_fuel(FUEL)
+            .set_fuel(self.fuel_per_call)
             .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
         let instance = instance
             .instantiate_async(&mut store)
@@ -303,6 +311,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             store,
             instance,
             healthy: true,
+            fuel_per_call: self.fuel_per_call,
         }));
         self.table
             .lock()
@@ -469,9 +478,10 @@ where
             component: plugin_id.into(),
         });
     }
+    let fuel_per_call = runtime.fuel_per_call;
     runtime
         .store
-        .set_fuel(FUEL)
+        .set_fuel(fuel_per_call)
         .map_err(|source| RuntimeError::Trapped {
             component: plugin_id.into(),
             source: source.into(),
