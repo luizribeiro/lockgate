@@ -104,7 +104,6 @@ struct SelectedWorld {
     rust_name: Ident,
     module: Ident,
     exports: Vec<lockgate_schema::Export>,
-    imports: Vec<lockgate_schema::Import>,
 }
 
 struct ExportedInterface {
@@ -146,8 +145,6 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
         );
         let exports = lockgate_schema::world_exports(&resolve, id)
             .map_err(|error| syn::Error::new_spanned(&spec.world, error.to_string()))?;
-        let imports = lockgate_schema::world_imports(&resolve, id)
-            .map_err(|error| syn::Error::new_spanned(&spec.world, error.to_string()))?;
         for item in resolve.worlds[id].imports.values() {
             let WorldItem::Interface { id, .. } = item else {
                 continue;
@@ -167,7 +164,6 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
             rust_name,
             module: format_ident!("__lockgate_world_{index}"),
             exports,
-            imports,
         });
     }
 
@@ -224,12 +220,6 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                     }
                 }
             });
-            let import_metadata = selected.imports.iter().map(|import| {
-                let interface = &import.interface;
-                quote! {
-                    #lockgate::__private::BindingImport { interface: #interface }
-                }
-            });
             let host_imports = resolve.worlds[selected.id]
                 .imports
                 .values()
@@ -256,6 +246,7 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                 .collect::<HashMap<_, _>>();
             let client =
                 generate_runtime_client(&source, &resolve, selected, wasmtime_with, &lockgate)?;
+            let generated_client_name = format_ident!("{}Client", selected.rust_name);
             let host_bounds = host_imports.values().map(|id| {
                 let path = interface_module_path(&resolve, *id);
                 quote! {
@@ -278,18 +269,27 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                     {
                         super::__lockgate_shared_imports::#(#path)::*::add_to_linker::<
                             _,
-                            #lockgate::__private::HostContextData<S>,
+                            __LockgateHostContextData<S>,
                         >(linker, #lockgate::__private::PluginStore::context_mut)?;
                         Ok(())
                     }
                 }
             });
-            let installer_entries = host_imports.keys().enumerate().map(|(index, interface)| {
+            let installer_arms = host_imports.keys().enumerate().map(|(index, interface)| {
                 let installer = format_ident!("__lockgate_install_host_import_{index}");
                 quote! {
-                    #lockgate::__private::HostImportBinding {
-                        interface: #interface,
-                        install: #installer::<S>,
+                    #interface => #installer::<S>(linker),
+                }
+            });
+            let host_import_names = host_imports.keys();
+            let host_context_data = (!host_imports.is_empty()).then(|| {
+                quote! {
+                    struct __LockgateHostContextData<S>(::std::marker::PhantomData<fn() -> S>);
+
+                    impl<S: 'static> ::wasmtime::component::HasData
+                        for __LockgateHostContextData<S>
+                    {
+                        type Data<'a> = &'a mut #lockgate::HostContext<S>;
                     }
                 }
             });
@@ -323,34 +323,57 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                     });
 
                     const _: () = {
+                        #host_context_data
                         #(#installers)*
 
-                        impl #lockgate::__private::ComponentBinding for #rust_name {
+                        impl<S: Send + 'static> #lockgate::__private::Binding<S> for #rust_name
+                        where
+                            #(#host_bounds)*
+                        {
                             const WORLD: &'static str = #world;
                             const EXPORTS: &'static [#lockgate::__private::BindingExport] =
                                 &[#(#export_metadata),*];
-                            const IMPORTS: &'static [#lockgate::__private::BindingImport] =
-                                &[#(#import_metadata),*];
+                            const HOST_IMPORTS: &'static [&'static str] =
+                                &[#(#host_import_names),*];
 
-                            fn bind<H: Send + 'static>(
+                            type Client<'runtime> = #generated_client_name<'runtime, S>
+                            where
+                                S: 'runtime;
+
+                            fn bind(
                                 store: &mut ::wasmtime::Store<
-                                    #lockgate::__private::PluginStore<H>,
+                                    #lockgate::__private::PluginStore<S>,
                                 >,
                                 instance: &::wasmtime::component::Instance,
                             ) -> #lockgate::__private::AnyResult<Self> {
                                 Ok(Self::new(&mut *store, instance)?)
                             }
-                        }
 
-                        impl<S: Send + 'static> #lockgate::__private::ApplicationBinding<S>
-                            for #rust_name
-                        where
-                            #(#host_bounds)*
-                        {
-                            fn host_imports() -> ::std::vec::Vec<
-                                #lockgate::__private::HostImportBinding<S>,
-                            > {
-                                ::std::vec![#(#installer_entries),*]
+                            fn install_host_import(
+                                interface: &str,
+                                linker: &mut ::wasmtime::component::Linker<
+                                    #lockgate::__private::PluginStore<S>,
+                                >,
+                            ) -> #lockgate::__private::AnyResult<()> {
+                                match interface {
+                                    #(#installer_arms)*
+                                    _ => Err(::wasmtime::Error::msg(
+                                        "host interface is not part of this binding role",
+                                    ).into()),
+                                }
+                            }
+
+                            fn client<'runtime>(
+                                component: #lockgate::__private::RuntimeComponent<
+                                    'runtime,
+                                    S,
+                                    Self,
+                                >,
+                            ) -> Self::Client<'runtime>
+                            where
+                                S: 'runtime,
+                            {
+                                #generated_client_name { inner: component }
                             }
                         }
                     };
@@ -448,6 +471,20 @@ fn generate_runtime_client(
 
     let rust_name = &selected.rust_name;
     let world_client = format_ident!("{rust_name}Client");
+    let host_bounds = resolve.worlds[selected.id]
+        .imports
+        .values()
+        .filter_map(|item| match item {
+            WorldItem::Interface { id, .. } => Some(interface_module_path(resolve, *id)),
+            _ => None,
+        })
+        .map(|path| {
+            quote! {
+                #lockgate::HostContext<S>:
+                    super::__lockgate_shared_imports::#(#path)::*::Host,
+            }
+        })
+        .collect::<Vec<_>>();
     let interface = exported.pop().expect("one exported interface was required");
     let module_items =
         nested_module_items(&generated.items, &interface.module_path).ok_or_else(|| {
@@ -464,8 +501,14 @@ fn generate_runtime_client(
                 ),
             )
         })?;
-    let client =
-        generate_interface_client(module_items, &interface, rust_name, &world_client, lockgate)?;
+    let client = generate_interface_client(
+        module_items,
+        &interface,
+        rust_name,
+        &world_client,
+        &host_bounds,
+        lockgate,
+    )?;
 
     Ok(quote! {
         pub struct #world_client<'runtime, S: Send + 'static> {
@@ -474,20 +517,6 @@ fn generate_runtime_client(
 
         #client
 
-        impl<S: Send + 'static> #lockgate::__private::RuntimeBinding<S> for #rust_name {
-            type Client<'runtime> = #world_client<'runtime, S>
-            where
-                S: 'runtime;
-
-            fn client<'runtime>(
-                component: #lockgate::__private::RuntimeComponent<'runtime, S, Self>,
-            ) -> Self::Client<'runtime>
-            where
-                S: 'runtime,
-            {
-                #world_client { inner: component }
-            }
-        }
     })
 }
 
@@ -508,6 +537,7 @@ fn generate_interface_client(
     interface: &ExportedInterface,
     rust_name: &Ident,
     world_client: &Ident,
+    host_bounds: &[TokenStream2],
     lockgate: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     let mut calls = BTreeMap::<String, Vec<syn::ImplItemFn>>::new();
@@ -578,7 +608,10 @@ fn generate_interface_client(
                 inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
             }
 
-            impl<'runtime, S: Send + 'static> #resource_client<'runtime, S> {
+            impl<'runtime, S: Send + 'static> #resource_client<'runtime, S>
+            where
+                #(#host_bounds)*
+            {
                 #(#methods)*
             }
         });
@@ -588,7 +621,10 @@ fn generate_interface_client(
         #[allow(unused_imports)]
         use self::#export_path::*;
 
-        impl<'runtime, S: Send + 'static> #world_client<'runtime, S> {
+        impl<'runtime, S: Send + 'static> #world_client<'runtime, S>
+        where
+            #(#host_bounds)*
+        {
             #(#direct_methods)*
             #(#resource_accessors)*
         }

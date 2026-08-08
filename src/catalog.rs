@@ -2,7 +2,7 @@
 //! A catalog hashes exact artifacts and exposes the imports and exports decoded from their WIT.
 
 use crate::{
-    binding::{BindingExport, ComponentBinding},
+    binding::{Binding, BindingExport},
     plugin::{DirectImport, Signature, interface_functions, validate_introspectable_interface},
 };
 use std::{
@@ -112,7 +112,7 @@ impl Catalog {
     ///
     /// Admission requires every export described by `B` to exist in the component with the same
     /// WIT type. Additional component exports are allowed.
-    pub(crate) fn add<B: ComponentBinding>(
+    pub(crate) fn add<S: Send + 'static, B: Binding<S>>(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
@@ -137,7 +137,7 @@ impl Catalog {
     /// The returned handle refers to the same catalog entry and compiled component. Admission
     /// requires every export described by `B` to exist with the same WIT type; a failed check
     /// leaves the catalog unchanged.
-    pub(crate) fn admit<B: ComponentBinding>(
+    pub(crate) fn admit<S: Send + 'static, B: Binding<S>>(
         &self,
         component: impl ComponentRef,
     ) -> Result<Component<B>, CatalogError> {
@@ -480,55 +480,109 @@ world caller { import api; }"#;
 
     struct GreeterBinding;
 
-    impl ComponentBinding for GreeterBinding {
+    impl<S: Send + 'static> Binding<S> for GreeterBinding {
         const WORLD: &'static str = "greeter";
         const EXPORTS: &'static [BindingExport] = &[BindingExport {
             interface: "demo:catalog/api@0.1.0",
             item: "greet",
             signature: "freestanding(string)->string",
         }];
+        const HOST_IMPORTS: &'static [&'static str] = &[];
 
-        fn bind<H: Send + 'static>(
-            _store: &mut Store<crate::__private::PluginStore<H>>,
+        type Client<'runtime> = ();
+
+        fn bind(
+            _store: &mut Store<crate::__private::PluginStore<S>>,
             _instance: &Instance,
         ) -> anyhow::Result<Self> {
             Ok(Self)
+        }
+
+        fn install_host_import(
+            _interface: &str,
+            _linker: &mut wasmtime::component::Linker<crate::__private::PluginStore<S>>,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("greeter binding has no host imports")
+        }
+
+        fn client<'runtime>(
+            _component: crate::__private::RuntimeComponent<'runtime, S, Self>,
+        ) -> Self::Client<'runtime>
+        where
+            S: 'runtime,
+        {
         }
     }
 
     struct HealthBinding;
 
-    impl ComponentBinding for HealthBinding {
+    impl<S: Send + 'static> Binding<S> for HealthBinding {
         const WORLD: &'static str = "health-check";
         const EXPORTS: &'static [BindingExport] = &[BindingExport {
             interface: "demo:catalog/health@0.1.0",
             item: "ping",
             signature: "freestanding()->bool",
         }];
+        const HOST_IMPORTS: &'static [&'static str] = &[];
 
-        fn bind<H: Send + 'static>(
-            _store: &mut Store<crate::__private::PluginStore<H>>,
+        type Client<'runtime> = ();
+
+        fn bind(
+            _store: &mut Store<crate::__private::PluginStore<S>>,
             _instance: &Instance,
         ) -> anyhow::Result<Self> {
             Ok(Self)
+        }
+
+        fn install_host_import(
+            _interface: &str,
+            _linker: &mut wasmtime::component::Linker<crate::__private::PluginStore<S>>,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("health binding has no host imports")
+        }
+
+        fn client<'runtime>(
+            _component: crate::__private::RuntimeComponent<'runtime, S, Self>,
+        ) -> Self::Client<'runtime>
+        where
+            S: 'runtime,
+        {
         }
     }
 
     struct MissingBinding;
 
-    impl ComponentBinding for MissingBinding {
+    impl<S: Send + 'static> Binding<S> for MissingBinding {
         const WORLD: &'static str = "missing";
         const EXPORTS: &'static [BindingExport] = &[BindingExport {
             interface: "demo:catalog/missing@0.1.0",
             item: "run",
             signature: "freestanding()->unit",
         }];
+        const HOST_IMPORTS: &'static [&'static str] = &[];
 
-        fn bind<H: Send + 'static>(
-            _store: &mut Store<crate::__private::PluginStore<H>>,
+        type Client<'runtime> = ();
+
+        fn bind(
+            _store: &mut Store<crate::__private::PluginStore<S>>,
             _instance: &Instance,
         ) -> anyhow::Result<Self> {
             Ok(Self)
+        }
+
+        fn install_host_import(
+            _interface: &str,
+            _linker: &mut wasmtime::component::Linker<crate::__private::PluginStore<S>>,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("missing binding has no host imports")
+        }
+
+        fn client<'runtime>(
+            _component: crate::__private::RuntimeComponent<'runtime, S, Self>,
+        ) -> Self::Client<'runtime>
+        where
+            S: 'runtime,
+        {
         }
     }
 
@@ -582,10 +636,10 @@ world caller { import api; }"#;
     fn admits_one_artifact_under_multiple_bindings() {
         let mut catalog = Catalog::new().unwrap();
         let greeter = catalog
-            .add::<GreeterBinding>("combined", component_bytes("multi-provider"))
+            .add::<(), GreeterBinding>("combined", component_bytes("multi-provider"))
             .unwrap();
 
-        let health = catalog.admit::<HealthBinding>(greeter).unwrap();
+        let health = catalog.admit::<(), HealthBinding>(greeter).unwrap();
 
         assert_eq!(greeter.id(), health.id());
         assert_eq!(catalog.components.len(), 1);
@@ -596,9 +650,9 @@ world caller { import api; }"#;
     fn failed_additional_admission_leaves_the_catalog_unchanged() {
         let mut catalog = Catalog::new().unwrap();
         let greeter = catalog
-            .add::<GreeterBinding>("greeter", component_bytes("provider"))
+            .add::<(), GreeterBinding>("greeter", component_bytes("provider"))
             .unwrap();
-        let error = catalog.admit::<MissingBinding>(greeter).unwrap_err();
+        let error = catalog.admit::<(), MissingBinding>(greeter).unwrap_err();
 
         assert!(matches!(error, CatalogError::WorldMismatch { .. }));
         assert_eq!(catalog.components.len(), 1);

@@ -4,32 +4,11 @@ use wit_parser::{
     WorldItem,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Import {
-    pub interface: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Export {
     pub interface: String,
     pub item: String,
     pub signature: String,
-}
-
-pub fn world_imports(resolve: &Resolve, world: WorldId) -> Result<Vec<Import>> {
-    let mut imports = Vec::new();
-    for item in resolve.worlds[world].imports.values() {
-        let WorldItem::Interface { id, .. } = item else {
-            continue;
-        };
-        let interface = resolve
-            .id_of(*id)
-            .ok_or_else(|| anyhow::anyhow!("world imports an unnamed interface"))?;
-        imports.push(Import { interface });
-    }
-    imports.sort();
-    imports.dedup();
-    Ok(imports)
 }
 
 pub fn world_exports(resolve: &Resolve, world: WorldId) -> Result<Vec<Export>> {

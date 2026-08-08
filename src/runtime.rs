@@ -4,7 +4,7 @@
 use crate::{
     Component,
     application::{HostBindings, StateFactory},
-    binding::{ComponentBinding, RuntimeBinding},
+    binding::Binding,
     catalog::{Catalog, CatalogError, ComponentId},
     plan::{Plan, ResolvedImport, Target},
     policy::{DirectoryAccess, DirectoryGrant, Policy},
@@ -20,7 +20,7 @@ use std::{
 use thiserror::Error;
 use wasmtime::{
     Store,
-    component::{HasData, Instance, InstancePre, Linker, ResourceTable, Val},
+    component::{Instance, InstancePre, Linker, ResourceTable, Val},
 };
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
@@ -30,12 +30,6 @@ static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
 /// Internal projection used by generated application binding installers.
 #[doc(hidden)]
-pub struct HostContextData<S>(std::marker::PhantomData<fn() -> S>);
-
-impl<S: 'static> HasData for HostContextData<S> {
-    type Data<'a> = &'a mut HostContext<S>;
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Frame {
     runtime: u64,
@@ -263,7 +257,7 @@ impl<H: Send + 'static> Runtime<H> {
     /// Creates a lightweight generated client for an admitted component role.
     ///
     /// The client performs no work until one of its WIT methods is called.
-    pub fn component<B: RuntimeBinding<H>>(&self, component: Component<B>) -> B::Client<'_> {
+    pub fn component<B: Binding<H>>(&self, component: Component<B>) -> B::Client<'_> {
         B::client(RuntimeComponent::new(self, component))
     }
 
@@ -298,13 +292,13 @@ impl<H: Send + 'static> Runtime<H> {
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|error| instantiate_error(&entry.name, error.into()))?;
         for interface in &component_plan.host_imports {
-            let installer = host_bindings
-                .installer(component, interface)
+            host_bindings
+                .install(component, interface, &mut linker)
                 .ok_or_else(|| RuntimeBuildError::HostBindingUnavailable {
                     component: entry.name.clone(),
                     interface: interface.clone(),
-                })?;
-            installer(&mut linker).map_err(|error| instantiate_error(&entry.name, error))?;
+                })?
+                .map_err(|error| instantiate_error(&entry.name, error))?;
         }
         wire_direct_imports(
             &mut linker,
@@ -367,10 +361,10 @@ impl<H: Send + 'static> Runtime<H> {
     }
 }
 
-impl<'runtime, H: Send + 'static, B: ComponentBinding> RuntimeComponent<'runtime, H, B> {
+impl<'runtime, H: Send + 'static, B: Binding<H>> RuntimeComponent<'runtime, H, B> {
     /// Creates the internal runtime view used by generated clients.
     #[doc(hidden)]
-    pub fn new(runtime: &'runtime Runtime<H>, component: Component<B>) -> Self {
+    pub(crate) fn new(runtime: &'runtime Runtime<H>, component: Component<B>) -> Self {
         Self { runtime, component }
     }
 

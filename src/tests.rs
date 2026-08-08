@@ -3,7 +3,7 @@
 
 use crate::{Application, CatalogError, HostContext, Runtime, RuntimeBuildError, RuntimeError};
 use crate::{
-    binding::{ApplicationBinding, ComponentBinding, HostImportBinding},
+    binding::Binding,
     catalog::Catalog,
     runtime::{PluginStore, RuntimeComponent},
 };
@@ -56,17 +56,13 @@ impl typed_bindings::demo::admission::services::Host for HostContext<()> {
 
 #[test]
 fn application_bindings_share_imported_host_interfaces() {
-    use crate::binding::ComponentBinding;
-
     assert_eq!(
-        <typed_bindings::RunnablePlugin as ComponentBinding>::IMPORTS,
-        &[crate::binding::BindingImport {
-            interface: "demo:admission/services@0.1.0",
-        }]
+        <typed_bindings::RunnablePlugin as Binding<()>>::HOST_IMPORTS,
+        &["demo:admission/services@0.1.0"]
     );
     assert_eq!(
-        <typed_bindings::SecondaryPlugin as ComponentBinding>::IMPORTS,
-        <typed_bindings::RunnablePlugin as ComponentBinding>::IMPORTS,
+        <typed_bindings::SecondaryPlugin as Binding<()>>::HOST_IMPORTS,
+        <typed_bindings::RunnablePlugin as Binding<()>>::HOST_IMPORTS,
     );
 
     let wit = r#"package demo:admission@0.1.0;
@@ -117,12 +113,15 @@ world mismatched { export runnable; }"#;
 
     let mut catalog = Catalog::new().unwrap();
     let runnable = catalog
-        .add::<typed_bindings::RunnablePlugin>("runnable", component_bytes(matching, "matching"))
+        .add::<(), typed_bindings::RunnablePlugin>(
+            "runnable",
+            component_bytes(matching, "matching"),
+        )
         .unwrap();
     assert_eq!(catalog.entry(runnable.id()).unwrap().name, "runnable");
 
     let error = catalog
-        .add::<typed_bindings::RunnablePlugin>(
+        .add::<(), typed_bindings::RunnablePlugin>(
             "mismatched",
             component_bytes(mismatched, "mismatched"),
         )
@@ -262,14 +261,14 @@ struct LoopBinding {
     function: Func,
 }
 
-impl ComponentBinding for LoopBinding {
+impl Binding<()> for LoopBinding {
     const WORLD: &'static str = "loop";
     const EXPORTS: &'static [crate::binding::BindingExport] = &[];
+    const HOST_IMPORTS: &'static [&'static str] = &[];
 
-    fn bind<H: Send + 'static>(
-        store: &mut Store<PluginStore<H>>,
-        instance: &Instance,
-    ) -> anyhow::Result<Self> {
+    type Client<'runtime> = ();
+
+    fn bind(store: &mut Store<PluginStore<()>>, instance: &Instance) -> anyhow::Result<Self> {
         let interface = instance
             .get_export_index(&mut *store, None, "demo:fuel/api@0.1.0")
             .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
@@ -281,11 +280,18 @@ impl ComponentBinding for LoopBinding {
             .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
         Ok(Self { function })
     }
-}
 
-impl ApplicationBinding<()> for LoopBinding {
-    fn host_imports() -> Vec<HostImportBinding<()>> {
-        Vec::new()
+    fn install_host_import(
+        _interface: &str,
+        _linker: &mut wasmtime::component::Linker<PluginStore<()>>,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("loop binding has no host imports")
+    }
+
+    fn client<'runtime>(_component: RuntimeComponent<'runtime, (), Self>) -> Self::Client<'runtime>
+    where
+        (): 'runtime,
+    {
     }
 }
 
