@@ -171,18 +171,6 @@ pub enum RuntimeBuildError {
     UnsupportedSiblingType { target: String, reason: String },
     #[error("component `{component}` has multiple grants for guest directory `{guest}`")]
     DuplicateGuestDirectory { component: String, guest: String },
-    #[error("component `{component}` imports `{interface}` without an authorized provider")]
-    ImportDenied {
-        component: String,
-        interface: String,
-    },
-    #[error(
-        "component `{component}` was not admitted with host binding `{interface}` required by policy"
-    )]
-    HostBindingUnavailable {
-        component: String,
-        interface: String,
-    },
     #[error("component `{component}` failed to instantiate")]
     Instantiation {
         component: String,
@@ -275,18 +263,6 @@ impl<H: Send + 'static> Runtime<H> {
             .plan
             .component(component)
             .expect("runtime plan order contains only included components");
-        for import in &entry.direct_imports {
-            if !component_plan
-                .direct_imports
-                .contains_key(&import.interface)
-                && !component_plan.host_imports.contains(&import.interface)
-            {
-                return Err(RuntimeBuildError::ImportDenied {
-                    component: entry.name.clone(),
-                    interface: import.interface.clone(),
-                });
-            }
-        }
         let engine = self.plan.catalog.engine();
         let mut linker = Linker::new(engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
@@ -294,10 +270,7 @@ impl<H: Send + 'static> Runtime<H> {
         for interface in &component_plan.host_imports {
             host_bindings
                 .install(component, interface, &mut linker)
-                .ok_or_else(|| RuntimeBuildError::HostBindingUnavailable {
-                    component: entry.name.clone(),
-                    interface: interface.clone(),
-                })?
+                .expect("policy host grants contain only admitted host bindings")
                 .map_err(|error| instantiate_error(&entry.name, error))?;
         }
         wire_direct_imports(
@@ -566,7 +539,7 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Application, catalog::Catalog, policy::PolicyBuilder};
+    use crate::{Application, binding::Binding, catalog::Catalog, policy::PolicyBuilder};
     use std::sync::atomic::AtomicUsize;
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
@@ -601,6 +574,35 @@ world consumer { import api; }"#;
             .unwrap()
             .encode()
             .unwrap()
+    }
+
+    struct FailingHostBinding;
+
+    impl Binding<()> for FailingHostBinding {
+        const WORLD: &'static str = "consumer";
+        const EXPORTS: &'static [crate::binding::BindingExport] = &[];
+        const HOST_IMPORTS: &'static [&'static str] = &["demo:stack/api@0.1.0"];
+
+        type Client<'runtime> = ();
+
+        fn bind(_store: &mut Store<PluginStore<()>>, _instance: &Instance) -> anyhow::Result<Self> {
+            Ok(Self)
+        }
+
+        fn install_host_import(
+            _interface: &str,
+            _linker: &mut Linker<PluginStore<()>>,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("deliberate test installer failure")
+        }
+
+        fn client<'runtime>(
+            _component: RuntimeComponent<'runtime, (), Self>,
+        ) -> Self::Client<'runtime>
+        where
+            (): 'runtime,
+        {
+        }
     }
 
     #[test]
@@ -688,19 +690,21 @@ world consumer { import api; }"#;
         })
         .unwrap();
         let first = app.add_untyped("first", provider_bytes()).unwrap();
-        let second = app.add_untyped("second", consumer_bytes()).unwrap();
+        let second = app
+            .add::<FailingHostBinding>("second", consumer_bytes())
+            .unwrap();
         let policy = app
             .policy()
             .include_id(first)
             .unwrap()
-            .allow_host_import_id(second, "demo:stack/api@0.1.0")
+            .allow_host_import(second, "demo:stack/api@0.1.0")
             .unwrap()
             .build();
         let result = app.runtime(policy);
 
         assert!(matches!(
             result,
-            Err(RuntimeBuildError::HostBindingUnavailable { .. })
+            Err(RuntimeBuildError::Instantiation { component, .. }) if component == "second"
         ));
         assert_eq!(creations.load(Ordering::Relaxed), 0);
     }

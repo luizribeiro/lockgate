@@ -155,7 +155,7 @@ The private catalog owned by `Application` compiles the exact supplied bytes, th
 
 `Policy` contains catalog-owned handles. Grants automatically include their components; `.include(component)` adds a standalone component. Host imports and sibling links are distinct grants:
 
-- `.allow_host_import(component, interface)` permits the embedding application to implement that exact imported interface.
+- `.allow_host_import(component, interface)` permits the embedding application to implement that exact interface when it is both imported by the artifact and declared by an admitted binding role.
 - `.link(caller, provider)` permits the provider to satisfy matching sibling imports on the caller.
 - Directory grants add narrowly scoped WASI preopens.
 

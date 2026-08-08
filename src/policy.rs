@@ -55,8 +55,8 @@ pub enum PolicyError {
     Catalog(#[from] CatalogError),
     #[error("component `{caller}` imports no interface exported by `{provider}`")]
     NoMatchingImport { caller: String, provider: String },
-    #[error("component `{component}` does not import host interface `{interface}`")]
-    NoSuchHostImport {
+    #[error("component `{component}` was not admitted with host interface `{interface}`")]
+    HostImportUnavailable {
         component: String,
         interface: String,
     },
@@ -165,8 +165,12 @@ impl PolicyBuilder<'_> {
     ) -> Result<Self, PolicyError> {
         let interface = interface.into();
         let entry = self.catalog.entry(component)?;
-        if !entry.imports.iter().any(|import| import == &interface) {
-            return Err(PolicyError::NoSuchHostImport {
+        let imported = entry
+            .direct_imports
+            .iter()
+            .any(|import| import.interface == interface);
+        if !imported || !entry.host_imports.contains(interface.as_str()) {
+            return Err(PolicyError::HostImportUnavailable {
                 component: entry.name.clone(),
                 interface,
             });
@@ -362,11 +366,16 @@ world caller { import api; }"#;
     }
 
     #[test]
-    fn grants_only_real_host_imports() {
+    fn grants_only_admitted_host_imports() {
         let mut catalog = Catalog::new().unwrap();
         let caller = catalog
             .add_untyped("caller", component_bytes("caller"))
             .unwrap();
+        assert!(matches!(
+            PolicyBuilder::new(&catalog).allow_host_import_id(caller, "demo:policy/api@0.1.0"),
+            Err(PolicyError::HostImportUnavailable { .. })
+        ));
+        catalog.register_host_imports(caller, &["demo:policy/api@0.1.0"]);
         let policy = PolicyBuilder::new(&catalog)
             .allow_host_import_id(caller, "demo:policy/api@0.1.0")
             .unwrap()
@@ -374,7 +383,7 @@ world caller { import api; }"#;
         assert_eq!(policy.host_imports().len(), 1);
         assert!(matches!(
             PolicyBuilder::new(&catalog).allow_host_import_id(caller, "demo:policy/missing@0.1.0"),
-            Err(PolicyError::NoSuchHostImport { .. })
+            Err(PolicyError::HostImportUnavailable { .. })
         ));
     }
 

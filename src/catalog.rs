@@ -6,7 +6,7 @@ use crate::{
     plugin::{DirectImport, Signature, interface_functions, validate_introspectable_interface},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -51,6 +51,7 @@ pub(crate) struct ComponentEntry {
     pub(crate) imports: Vec<String>,
     pub(crate) direct_imports: Vec<DirectImport>,
     pub(crate) exports: Vec<ExportInfo>,
+    pub(crate) host_imports: HashSet<&'static str>,
     pub(crate) component: WasmtimeComponent,
 }
 
@@ -126,8 +127,12 @@ impl Catalog {
                 source,
             }
         })?;
+        let id = self.insert(name, inspected);
+        self.components[id.index]
+            .host_imports
+            .extend(B::HOST_IMPORTS);
         Ok(Component {
-            id: self.insert(name, inspected),
+            id,
             binding: PhantomData,
         })
     }
@@ -138,18 +143,23 @@ impl Catalog {
     /// requires every export described by `B` to exist with the same WIT type; a failed check
     /// leaves the catalog unchanged.
     pub(crate) fn admit<S: Send + 'static, B: Binding<S>>(
-        &self,
+        &mut self,
         component: impl ComponentRef,
     ) -> Result<Component<B>, CatalogError> {
         let id = component.id();
-        let entry = self.entry(id)?;
-        validate_binding(B::EXPORTS, &entry.binding_exports).map_err(|source| {
-            CatalogError::WorldMismatch {
-                name: entry.name.clone(),
-                world: B::WORLD.into(),
-                source,
-            }
-        })?;
+        {
+            let entry = self.entry(id)?;
+            validate_binding(B::EXPORTS, &entry.binding_exports).map_err(|source| {
+                CatalogError::WorldMismatch {
+                    name: entry.name.clone(),
+                    world: B::WORLD.into(),
+                    source,
+                }
+            })?;
+        }
+        self.components[id.index]
+            .host_imports
+            .extend(B::HOST_IMPORTS);
         Ok(Component {
             id,
             binding: PhantomData,
@@ -165,6 +175,19 @@ impl Catalog {
         let name = name.into();
         let inspected = self.inspect_new(&name, bytes.as_ref())?;
         Ok(self.insert(name, inspected))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn register_host_imports(
+        &mut self,
+        component: ComponentId,
+        interfaces: &'static [&'static str],
+    ) {
+        let entry = self
+            .components
+            .get_mut(component.index)
+            .expect("test component belongs to this catalog");
+        entry.host_imports.extend(interfaces);
     }
 
     fn inspect_new(&self, name: &str, bytes: &[u8]) -> Result<InspectedComponent, CatalogError> {
@@ -189,6 +212,7 @@ impl Catalog {
             direct_imports: inspected.direct_imports,
             exports: inspected.exports,
             component: inspected.component,
+            host_imports: HashSet::new(),
         });
         self.names.insert(name, id);
         id
