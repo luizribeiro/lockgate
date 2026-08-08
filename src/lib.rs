@@ -15,7 +15,7 @@ pub use application::Application;
 pub use catalog::{
     ArtifactDigest, Catalog, CatalogError, Component, ComponentId, ComponentInfo, ComponentRef,
 };
-pub use lockgate_macros::{bindgen, bindings};
+pub use lockgate_macros::bindings;
 pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
 pub use runtime::{
     Event, HostComponent, HostContext, PluginStore, Runtime, RuntimeBuildError, RuntimeBuilder,
@@ -28,7 +28,7 @@ pub mod __private {
         ApplicationBinding, BindingExport, BindingImport, ComponentBinding, HostImportBinding,
         RuntimeBinding,
     };
-    pub use crate::runtime::{HostContextData, RuntimeComponent};
+    pub use crate::runtime::{HostContextData, PluginStore, RuntimeComponent};
     pub use anyhow::Result as AnyResult;
     pub use wasmtime::Store as WasmtimeStore;
     pub use wasmtime::component::Instance as WasmtimeInstance;
