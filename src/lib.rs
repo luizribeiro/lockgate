@@ -1,22 +1,23 @@
 //! Capability-scoped WebAssembly component applications with runtime-discovered linking.
-//! Catalogs discover artifacts, policies grant authority, and runtime builders validate before instantiation.
+//! Applications admit artifacts, policies grant authority, and runtime builders validate before instantiation.
 
 extern crate self as lockgate;
 
 mod application;
 mod binding;
-pub mod catalog;
+mod catalog;
 mod plan;
 mod plugin;
-pub mod policy;
-pub mod runtime;
+mod policy;
+mod runtime;
 
 pub use application::Application;
 pub use catalog::{
-    ArtifactDigest, Catalog, CatalogError, Component, ComponentId, ComponentInfo, ComponentRef,
+    ArtifactDigest, CatalogError, Component, ComponentId, ComponentInfo, ExportInfo,
+    FunctionSignature,
 };
 pub use lockgate_macros::bindings;
-pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
+pub use policy::{Policy, PolicyBuilder, PolicyError};
 pub use runtime::{
     Event, HostComponent, HostContext, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError,
 };

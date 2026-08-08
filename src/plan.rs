@@ -197,7 +197,7 @@ fn target_from_info(component: ComponentId, component_name: String, export: &Exp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Policy;
+    use crate::policy::PolicyBuilder;
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -227,8 +227,8 @@ world caller { import api; }"#;
         let provider = catalog
             .add_untyped("provider", component_bytes(wit, "provider"))
             .unwrap();
-        let policy = Policy::builder(&catalog)
-            .link(caller, provider)
+        let policy = PolicyBuilder::new(&catalog)
+            .link_ids(caller, provider)
             .unwrap()
             .build();
         let plan = Plan::new(catalog, policy).unwrap();
@@ -243,7 +243,7 @@ world caller { import api; }"#;
     #[test]
     fn rejects_a_policy_from_another_catalog() {
         let first = Catalog::new().unwrap();
-        let policy = Policy::builder(&first).build();
+        let policy = PolicyBuilder::new(&first).build();
         let second = Catalog::new().unwrap();
         assert!(matches!(
             Plan::new(second, policy),

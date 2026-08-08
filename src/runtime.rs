@@ -2,7 +2,7 @@
 //! Each component receives its own store, WASI context, application state, and fuel budget.
 
 use crate::{
-    Component, ComponentId, ComponentRef,
+    Component, ComponentId,
     application::{HostBindings, StateFactory},
     binding::{ComponentBinding, RuntimeBinding},
     catalog::{Catalog, CatalogError},
@@ -310,7 +310,7 @@ impl<H: Send + 'static> Runtime<H> {
     }
 
     /// Reports whether a component has avoided a trapping call.
-    pub fn is_healthy(&self, component: impl ComponentRef) -> Result<bool, RuntimeError> {
+    pub fn is_healthy<B>(&self, component: Component<B>) -> Result<bool, RuntimeError> {
         let component = component.id();
         let name = self.plan.catalog.component(component)?.name().to_owned();
         let runtime = runtime_for(&self.table, component, &name)?;
@@ -667,7 +667,7 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Application, Catalog, Policy};
+    use crate::{Application, catalog::Catalog, policy::PolicyBuilder};
     use std::sync::atomic::AtomicUsize;
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
@@ -728,9 +728,9 @@ world consumer { import api; }"#;
                 .unwrap();
             components.push(component);
         }
-        let mut policy = Policy::builder(&catalog);
+        let mut policy = PolicyBuilder::new(&catalog);
         for component in &components {
-            policy = policy.include(*component).unwrap();
+            policy = policy.include_id(*component).unwrap();
         }
         let policy = policy.build();
         let plan = Plan::new(catalog, policy).unwrap();
@@ -779,9 +779,9 @@ world consumer { import api; }"#;
         let second = app.add_untyped("second", consumer_bytes()).unwrap();
         let policy = app
             .policy()
-            .include(first)
+            .include_id(first)
             .unwrap()
-            .allow_host_import(second, "demo:stack/api@0.1.0")
+            .allow_host_import_id(second, "demo:stack/api@0.1.0")
             .unwrap()
             .build();
         let result = app.runtime(policy).build();

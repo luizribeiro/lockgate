@@ -187,7 +187,7 @@ world provider { export api; }"#;
     let provider = app
         .add_untyped("provider", component_bytes(wit, "provider"))
         .unwrap();
-    let policy = app.policy().link(caller, provider).unwrap().build();
+    let policy = app.policy().link_ids(caller, provider).unwrap().build();
     assert!(matches!(
         app.runtime(policy).build(),
         Err(RuntimeBuildError::UnsupportedSiblingType { reason, .. })
@@ -210,9 +210,9 @@ world provider { export api; }"#;
         .unwrap();
     let policy = app
         .policy()
-        .include(caller)
+        .include_id(caller)
         .unwrap()
-        .include(provider)
+        .include_id(provider)
         .unwrap()
         .build();
     assert!(matches!(
@@ -240,9 +240,9 @@ world provider { export api; }"#;
         .unwrap();
     let policy = app
         .policy()
-        .link(caller, first)
+        .link_ids(caller, first)
         .unwrap()
-        .link(caller, second)
+        .link_ids(caller, second)
         .unwrap()
         .build();
     assert!(matches!(
@@ -262,7 +262,7 @@ fn plan_compares_complete_structural_types() {
     let provider = app
         .add_untyped("provider", component_bytes(&provider_wit, "provider"))
         .unwrap();
-    let policy = app.policy().link(caller, provider).unwrap().build();
+    let policy = app.policy().link_ids(caller, provider).unwrap().build();
     let error = match app.runtime(policy).build() {
         Ok(_) => panic!("mismatched structural types unexpectedly planned"),
         Err(error) => error.to_string(),

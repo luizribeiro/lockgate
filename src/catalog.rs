@@ -22,7 +22,7 @@ use wit_parser::{Resolve, WorldItem};
 
 static NEXT_CATALOG: AtomicU64 = AtomicU64::new(1);
 
-/// An opaque component handle that can only be created by a [`Catalog`].
+/// An opaque component identity issued by an [`crate::Application`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ComponentId {
     catalog: u64,
@@ -38,13 +38,11 @@ pub struct Component<B> {
     binding: PhantomData<fn() -> B>,
 }
 
-/// A catalog-issued component handle accepted by policy and runtime APIs.
-pub trait ComponentRef: Copy {
-    /// Returns the untyped identity carried by this handle.
+pub(crate) trait ComponentRef: Copy {
     fn id(self) -> ComponentId;
 }
 
-/// The SHA-256 digest of the exact component bytes supplied to a catalog.
+/// The SHA-256 digest of the exact component bytes supplied to an application.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ArtifactDigest([u8; 32]);
 
@@ -65,7 +63,7 @@ pub struct ExportInfo {
     pub(crate) runtime_signature: Signature,
 }
 
-/// Read-only metadata for a cataloged component.
+/// Read-only metadata for an admitted component.
 pub struct ComponentInfo<'a> {
     id: ComponentId,
     entry: &'a ComponentEntry,
@@ -90,8 +88,7 @@ struct InspectedComponent {
     component: WasmtimeComponent,
 }
 
-/// A collection of decoded, compiled component artifacts.
-pub struct Catalog {
+pub(crate) struct Catalog {
     identity: u64,
     engine: Engine,
     components: Vec<ComponentEntry>,
@@ -125,8 +122,7 @@ pub enum CatalogError {
 }
 
 impl Catalog {
-    /// Creates an empty catalog with component-model support enabled.
-    pub fn new() -> Result<Self, CatalogError> {
+    pub(crate) fn new() -> Result<Self, CatalogError> {
         let mut config = Config::new();
         config.wasm_component_model(true).consume_fuel(true);
         let engine = Engine::new(&config).map_err(|error| CatalogError::Engine(error.into()))?;
@@ -142,7 +138,7 @@ impl Catalog {
     ///
     /// Admission requires every export described by `B` to exist in the component with the same
     /// WIT type. Additional component exports are allowed.
-    pub fn add<B: ComponentBinding>(
+    pub(crate) fn add<B: ComponentBinding>(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
@@ -167,7 +163,7 @@ impl Catalog {
     /// The returned handle refers to the same catalog entry and compiled component. Admission
     /// requires every export described by `B` to exist with the same WIT type; a failed check
     /// leaves the catalog unchanged.
-    pub fn admit<B: ComponentBinding>(
+    pub(crate) fn admit<B: ComponentBinding>(
         &self,
         component: impl ComponentRef,
     ) -> Result<Component<B>, CatalogError> {
@@ -186,8 +182,8 @@ impl Catalog {
         })
     }
 
-    /// Decodes and compiles an artifact without requiring an application binding.
-    pub fn add_untyped(
+    #[cfg(test)]
+    pub(crate) fn add_untyped(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
@@ -226,7 +222,7 @@ impl Catalog {
     }
 
     /// Returns metadata for a component handle from this catalog.
-    pub fn component(
+    pub(crate) fn component(
         &self,
         component: impl ComponentRef,
     ) -> Result<ComponentInfo<'_>, CatalogError> {
@@ -236,7 +232,7 @@ impl Catalog {
     }
 
     /// Iterates over discovered component metadata in insertion order.
-    pub fn components(&self) -> impl ExactSizeIterator<Item = ComponentInfo<'_>> {
+    pub(crate) fn components(&self) -> impl ExactSizeIterator<Item = ComponentInfo<'_>> {
         self.components
             .iter()
             .enumerate()

@@ -1,7 +1,7 @@
 //! Typed application assembly with generated host-interface wiring.
 
 use crate::{
-    Component, ComponentId, ComponentInfo, ComponentRef,
+    Component, ComponentId, ComponentInfo,
     binding::{ApplicationBinding, HostImportBinding},
     catalog::{Catalog, CatalogError},
     policy::{Policy, PolicyBuilder},
@@ -122,15 +122,15 @@ impl<S: Send + 'static> Application<S> {
     /// Admits an existing artifact under an additional generated binding role.
     pub fn admit<B: ApplicationBinding<S>>(
         &mut self,
-        component: impl ComponentRef,
+        component: Component<impl Sized>,
     ) -> Result<Component<B>, CatalogError> {
         let component = self.catalog.admit::<B>(component)?;
         self.register::<B>(component.id());
         Ok(component)
     }
 
-    /// Adds an artifact without generated application bindings.
-    pub fn add_untyped(
+    #[cfg(test)]
+    pub(crate) fn add_untyped(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,

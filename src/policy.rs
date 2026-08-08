@@ -1,7 +1,7 @@
 //! Immutable, programmatic capability policy construction.
 //! Policy grants refer to opaque catalog handles instead of names copied from configuration files.
 
-use crate::catalog::{Catalog, CatalogError, ComponentId, ComponentRef};
+use crate::catalog::{Catalog, CatalogError, Component, ComponentId};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -24,19 +24,19 @@ pub struct PolicyBuilder<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LinkGrant {
+pub(crate) struct LinkGrant {
     caller: ComponentId,
     provider: ComponentId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostImportGrant {
+pub(crate) struct HostImportGrant {
     component: ComponentId,
     interface: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DirectoryGrant {
+pub(crate) struct DirectoryGrant {
     component: ComponentId,
     host: PathBuf,
     guest: PathBuf,
@@ -44,7 +44,7 @@ pub struct DirectoryGrant {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DirectoryAccess {
+pub(crate) enum DirectoryAccess {
     ReadOnly,
     ReadWrite,
 }
@@ -67,11 +67,6 @@ pub enum PolicyError {
 }
 
 impl Policy {
-    #[cfg(test)]
-    pub(crate) fn builder(catalog: &Catalog) -> PolicyBuilder<'_> {
-        PolicyBuilder::new(catalog)
-    }
-
     pub(crate) fn links(&self) -> &[LinkGrant] {
         &self.links
     }
@@ -107,21 +102,30 @@ impl<'a> PolicyBuilder<'a> {
 
 impl PolicyBuilder<'_> {
     /// Includes a component that needs no other grants in the runtime.
-    pub fn include(mut self, component: impl ComponentRef) -> Result<Self, PolicyError> {
-        let component = component.id();
+    pub fn include<B>(self, component: Component<B>) -> Result<Self, PolicyError> {
+        self.include_id(component.id())
+    }
+
+    pub(crate) fn include_id(mut self, component: ComponentId) -> Result<Self, PolicyError> {
         self.catalog.component(component)?;
         self.include_component(component);
         Ok(self)
     }
 
     /// Permits a caller's typed imports to be satisfied by a provider.
-    pub fn link(
-        mut self,
-        caller: impl ComponentRef,
-        provider: impl ComponentRef,
+    pub fn link<C, P>(
+        self,
+        caller: Component<C>,
+        provider: Component<P>,
     ) -> Result<Self, PolicyError> {
-        let caller = caller.id();
-        let provider = provider.id();
+        self.link_ids(caller.id(), provider.id())
+    }
+
+    pub(crate) fn link_ids(
+        mut self,
+        caller: ComponentId,
+        provider: ComponentId,
+    ) -> Result<Self, PolicyError> {
         let caller_info = self.catalog.component(caller)?;
         let provider_info = self.catalog.component(provider)?;
         let matches = caller_info.imports().iter().any(|import| {
@@ -147,11 +151,18 @@ impl PolicyBuilder<'_> {
 
     /// Permits one component import to be implemented by the embedding host.
     pub fn allow_host_import(
-        mut self,
-        component: impl ComponentRef,
+        self,
+        component: Component<impl Sized>,
         interface: impl Into<String>,
     ) -> Result<Self, PolicyError> {
-        let component = component.id();
+        self.allow_host_import_id(component.id(), interface)
+    }
+
+    pub(crate) fn allow_host_import_id(
+        mut self,
+        component: ComponentId,
+        interface: impl Into<String>,
+    ) -> Result<Self, PolicyError> {
         let interface = interface.into();
         let info = self.catalog.component(component)?;
         if !info.imports().iter().any(|import| import == &interface) {
@@ -171,9 +182,9 @@ impl PolicyBuilder<'_> {
         Ok(self)
     }
 
-    pub fn read_only_dir(
+    pub fn read_only_dir<B>(
         self,
-        component: impl ComponentRef,
+        component: Component<B>,
         host: impl Into<PathBuf>,
         guest: impl Into<PathBuf>,
     ) -> Result<Self, PolicyError> {
@@ -185,9 +196,9 @@ impl PolicyBuilder<'_> {
         )
     }
 
-    pub fn read_write_dir(
+    pub fn read_write_dir<B>(
         self,
-        component: impl ComponentRef,
+        component: Component<B>,
         host: impl Into<PathBuf>,
         guest: impl Into<PathBuf>,
     ) -> Result<Self, PolicyError> {
@@ -262,39 +273,39 @@ fn valid_guest_path(path: &Path) -> bool {
 }
 
 impl LinkGrant {
-    pub fn caller(&self) -> ComponentId {
+    pub(crate) fn caller(&self) -> ComponentId {
         self.caller
     }
 
-    pub fn provider(&self) -> ComponentId {
+    pub(crate) fn provider(&self) -> ComponentId {
         self.provider
     }
 }
 
 impl HostImportGrant {
-    pub fn component(&self) -> ComponentId {
+    pub(crate) fn component(&self) -> ComponentId {
         self.component
     }
 
-    pub fn interface(&self) -> &str {
+    pub(crate) fn interface(&self) -> &str {
         &self.interface
     }
 }
 
 impl DirectoryGrant {
-    pub fn component(&self) -> ComponentId {
+    pub(crate) fn component(&self) -> ComponentId {
         self.component
     }
 
-    pub fn host(&self) -> &Path {
+    pub(crate) fn host(&self) -> &Path {
         &self.host
     }
 
-    pub fn guest(&self) -> &Path {
+    pub(crate) fn guest(&self) -> &Path {
         &self.guest
     }
 
-    pub fn access(&self) -> DirectoryAccess {
+    pub(crate) fn access(&self) -> DirectoryAccess {
         self.access
     }
 }
@@ -335,10 +346,15 @@ world caller { import api; }"#;
         let provider = catalog
             .add_untyped("provider", component_bytes("provider"))
             .unwrap();
-        let policy = Policy::builder(&catalog)
-            .link(caller, provider)
+        let policy = PolicyBuilder::new(&catalog)
+            .link_ids(caller, provider)
             .unwrap()
-            .read_only_dir(caller, std::env::temp_dir(), "/shared")
+            .directory(
+                caller,
+                std::env::temp_dir(),
+                PathBuf::from("/shared"),
+                DirectoryAccess::ReadOnly,
+            )
             .unwrap()
             .build();
         assert_eq!(policy.links().len(), 1);
@@ -351,13 +367,13 @@ world caller { import api; }"#;
         let caller = catalog
             .add_untyped("caller", component_bytes("caller"))
             .unwrap();
-        let policy = Policy::builder(&catalog)
-            .allow_host_import(caller, "demo:policy/api@0.1.0")
+        let policy = PolicyBuilder::new(&catalog)
+            .allow_host_import_id(caller, "demo:policy/api@0.1.0")
             .unwrap()
             .build();
         assert_eq!(policy.host_imports().len(), 1);
         assert!(matches!(
-            Policy::builder(&catalog).allow_host_import(caller, "demo:policy/missing@0.1.0"),
+            PolicyBuilder::new(&catalog).allow_host_import_id(caller, "demo:policy/missing@0.1.0"),
             Err(PolicyError::NoSuchHostImport { .. })
         ));
     }
@@ -369,7 +385,7 @@ world caller { import api; }"#;
             .add_untyped("provider", component_bytes("provider"))
             .unwrap();
         assert!(matches!(
-            Policy::builder(&catalog).link(provider, provider),
+            PolicyBuilder::new(&catalog).link_ids(provider, provider),
             Err(PolicyError::NoMatchingImport { .. })
         ));
 
@@ -378,7 +394,12 @@ world caller { import api; }"#;
             .add_untyped("caller", component_bytes("caller"))
             .unwrap();
         assert!(matches!(
-            Policy::builder(&catalog).read_only_dir(foreign, "/tmp", "/tmp"),
+            PolicyBuilder::new(&catalog).directory(
+                foreign,
+                PathBuf::from("/tmp"),
+                PathBuf::from("/tmp"),
+                DirectoryAccess::ReadOnly,
+            ),
             Err(PolicyError::Catalog(CatalogError::ForeignComponent))
         ));
     }
@@ -390,14 +411,20 @@ world caller { import api; }"#;
             .add_untyped("caller", component_bytes("caller"))
             .unwrap();
         assert!(matches!(
-            Policy::builder(&catalog).read_only_dir(caller, std::env::temp_dir(), "/a/../b"),
+            PolicyBuilder::new(&catalog).directory(
+                caller,
+                std::env::temp_dir(),
+                PathBuf::from("/a/../b"),
+                DirectoryAccess::ReadOnly,
+            ),
             Err(PolicyError::RelativeGuestPath(_))
         ));
         assert!(matches!(
-            Policy::builder(&catalog).read_only_dir(
+            PolicyBuilder::new(&catalog).directory(
                 caller,
                 std::env::temp_dir().join("lockgate-path-that-does-not-exist"),
-                "/shared"
+                PathBuf::from("/shared"),
+                DirectoryAccess::ReadOnly,
             ),
             Err(PolicyError::InvalidHostDirectory(_))
         ));

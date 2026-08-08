@@ -26,6 +26,7 @@ mod bindings {
     lockgate::bindings! {
         path: "wit",
         worlds: {
+            GreeterPlugin: "greeter-plugin",
             RunnablePlugin: "runnable-plugin",
             FileReaderPlugin: "file-reader-plugin",
         },
@@ -39,7 +40,7 @@ impl bindings::myapp::host::services::Host for HostContext<()> {
 }
 
 let mut app = Application::new()?;
-let greeter = app.add_untyped("greeter", greeter_wasm)?;
+let greeter = app.add::<bindings::GreeterPlugin>("greeter", greeter_wasm)?;
 let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
 
 let policy = app.policy()
@@ -55,7 +56,7 @@ let result = caller.runnable().run()?;
 
 `lockgate::bindings!` parses all listed application worlds together. It generates every imported host interface once, remaps each Wasmtime world to those shared bindings, and emits export contracts plus canonical host-interface installers. The application therefore implements `myapp:host/services@1.0.0` once even when several plugin roles import it.
 
-`Application::add::<Binding>` compares the generated export contract with metadata decoded from the artifact and returns a typed `Component<Binding>` only when they match. It also retains host-interface installers specialized for the application's state type. Sibling-only components use `add_untyped`. Runtime construction installs only policy-granted host interfaces and prepares every complete linker before creating state or stores.
+`Application::add::<Binding>` compares the generated export contract with metadata decoded from the artifact and returns a typed `Component<Binding>` only when they match. It also retains host-interface installers specialized for the application's state type. Even sibling-only providers are admitted through a narrow export-only world. Runtime construction installs only policy-granted host interfaces and prepares every complete linker before creating state or stores.
 
 `Runtime::component` turns an admitted handle into a lightweight generated client. The client mirrors the WIT structure as ordinary Rust method calls—component, then exported interface, then function—while Lockgate keeps Wasmtime stores, binding construction, fuel, locking, and trap health internal. A WIT `result<T, E>` remains inside the outer `Result<_, RuntimeError>`, so domain errors do not mark a component unhealthy.
 
@@ -110,7 +111,7 @@ world runnable-plugin {
 
 The caller and filereader consume those contracts. The separately versioned `demo:greeter` package is shared only by the sibling caller and provider. Lockgate itself compiles against neither package.
 
-Applications can define several plugin roles. A sibling-only provider does not need to implement a host-visible role, and unrelated plugin kinds do not need to share one artificial universal interface.
+Applications can define several plugin roles. A sibling-only provider can use a narrow export-only admission world, and unrelated plugin kinds do not need to share one artificial universal interface.
 
 ## Host integration
 
@@ -153,7 +154,7 @@ Secondary admission revalidates the existing artifact and merges its host-interf
 
 ## Enforcement lifecycle
 
-The catalog owned by `Application` hashes and compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to expose their real imports, exports, and function signatures. `Catalog` remains public for low-level untyped applications and artifact tooling.
+The private catalog owned by `Application` hashes and compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to expose their real imports, exports, and function signatures through `Application::components`. Artifact insertion is always admitted against a generated binding role.
 
 `Policy` contains catalog-owned handles. Grants automatically include their components; `.include(component)` adds a standalone component. Host imports and sibling links are distinct grants:
 
@@ -219,11 +220,11 @@ The root library has no build script and does not require `cargo-component` to c
 
 ## Add a demo component
 
-1. Choose or add an application-owned host-visible role under `examples/demo/wit/packages/host` if the host will call the component.
+1. Choose or add a narrow application admission world for the component; include host-visible exports and imports only when needed.
 2. Define the component world under its own `wit/world.wit`, importing host services and sibling packages explicitly.
 3. Use ordinary generated guest bindings for host and sibling calls.
-4. List host-callable worlds in one `lockgate::bindings!` invocation and implement each shared host interface once for `HostContext<S>`.
-5. Add host-callable artifacts with `app.add::<GeneratedBinding>` and sibling-only artifacts with `app.add_untyped`.
+4. List related admission worlds in a `lockgate::bindings!` invocation and implement each shared host interface once for `HostContext<S>`.
+5. Add every artifact with `app.add::<GeneratedBinding>`.
 6. Grant each host import, sibling link, and WASI capability separately; `Application` configures authorized host bindings automatically.
 7. Add the component ID to `IDS` in `examples/demo/build.rs`.
 
