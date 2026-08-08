@@ -214,9 +214,10 @@ Run the narrated demo and all checks:
 ```console
 cargo run -p lockgate-demo
 cargo test --workspace
+scripts/public-api
 ```
 
-The root library has no build script and does not require `cargo-component` to compile or test. The demo owns guest compilation and stages generated Wasm under Cargo's `OUT_DIR`.
+The API inventory command generates rustdoc JSON with `cargo rustdoc`, then reports root exports, inherent methods, enum variants, and the separate hidden ABI used by generated code. The root library has no build script and does not require `cargo-component` to compile or test. The demo owns guest compilation and stages generated Wasm under Cargo's `OUT_DIR`.
 
 ## Add a demo component
 

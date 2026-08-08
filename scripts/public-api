@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repository"
+
+RUSTC_BOOTSTRAP=1 cargo rustdoc -p lockgate --lib -- \
+  -Z unstable-options \
+  --output-format json \
+  --document-hidden-items >/dev/null
+
+api=target/doc/lockgate.json
+
+echo '# lockgate public API'
+echo
+echo 'Generated from rustdoc JSON with `cargo rustdoc`.'
+echo
+echo '## Root exports'
+echo
+jq -r '
+  . as $document
+  | $document.index[($document.root | tostring)].inner.module.items[] as $id
+  | $document.index[($id | tostring)]
+  | select(.inner.use)
+  | "- `" + .inner.use.name + "`"
+' "$api"
+
+echo
+echo '## Public inherent methods'
+echo
+jq -r '
+  . as $document
+  | [$document.index[($document.root | tostring)].inner.module.items[] as $use_id
+      | $document.index[($use_id | tostring)]
+      | select(.inner.use.id != null)
+      | {name: .inner.use.name, id: (.inner.use.id | tostring)}]
+  | .[]
+  | . as $type
+  | select($document.index[$type.id] != null)
+  | (($document.index[$type.id].inner | to_entries[0].value.impls) // [])[]? as $impl_id
+  | $document.index[($impl_id | tostring)].inner.impl
+  | select(.trait == null)
+  | .items[]? as $method_id
+  | $document.index[($method_id | tostring)]
+  | select(.visibility == "public")
+  | "- `" + $type.name + "::" + .name + "`"
+' "$api" | sort -u
+
+echo
+echo '## Public enum variants'
+echo
+jq -r '
+  . as $document
+  | [$document.index[($document.root | tostring)].inner.module.items[] as $use_id
+      | $document.index[($use_id | tostring)]
+      | select(.inner.use.id != null)
+      | {name: .inner.use.name, id: (.inner.use.id | tostring)}]
+  | .[]
+  | . as $type
+  | select($document.index[$type.id].inner.enum != null)
+  | $document.index[$type.id].inner.enum.variants[] as $variant_id
+  | $document.index[($variant_id | tostring)]
+  | "- `" + $type.name + "::" + .name + "`"
+' "$api" | sort -u
+
+echo
+echo '## Hidden generated-code ABI'
+echo
+jq -r '
+  . as $document
+  | $document.index[($document.root | tostring)].inner.module.items[] as $id
+  | $document.index[($id | tostring)]
+  | select(.name == "__private")
+  | .inner.module.items[] as $private_id
+  | $document.index[($private_id | tostring)]
+  | "- `__private::" + (.inner.use.name // .name) + "`"
+' "$api" | sort -u

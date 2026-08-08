@@ -26,6 +26,7 @@
           packages = with pkgs; [
             rust
             cargo-component
+            jq
             wasm-tools
             wkg
           ];
