@@ -2,10 +2,10 @@
 //! Each component receives its own store, WASI context, application state, and fuel budget.
 
 use crate::{
-    Component, ComponentId,
+    Component,
     application::{HostBindings, StateFactory},
     binding::{ComponentBinding, RuntimeBinding},
-    catalog::{Catalog, CatalogError},
+    catalog::{Catalog, CatalogError, ComponentId},
     plan::{Plan, ResolvedImport, Target},
     policy::{DirectoryAccess, DirectoryGrant, Policy},
 };
@@ -71,47 +71,25 @@ impl Drop for CallGuard {
     }
 }
 
-/// The identity of the component associated with a host call.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostComponent {
-    id: ComponentId,
-    name: String,
-}
-
-impl HostComponent {
-    /// Returns the catalog identity of this component.
-    pub fn id(&self) -> ComponentId {
-        self.id
-    }
-
-    /// Returns the application-assigned component name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
 /// Runtime-owned component context and application-defined state exposed to host bindings.
 pub struct HostContext<S = ()> {
-    component: HostComponent,
+    component_name: String,
     state: S,
     resources: ResourceTable,
 }
 
 impl<S> HostContext<S> {
-    fn new(component: ComponentId, name: String, state: S) -> Self {
+    fn new(component_name: String, state: S) -> Self {
         Self {
-            component: HostComponent {
-                id: component,
-                name,
-            },
+            component_name,
             state,
             resources: ResourceTable::new(),
         }
     }
 
-    /// Returns the identity of the component making host calls.
-    pub fn component(&self) -> &HostComponent {
-        &self.component
+    /// Returns the application-assigned name of the component making host calls.
+    pub fn component_name(&self) -> &str {
+        &self.component_name
     }
 
     /// Returns the application-defined state associated with this component.
@@ -201,8 +179,6 @@ pub struct RuntimeBuilder<H: Send + 'static = ()> {
 pub enum RuntimeBuildError {
     #[error("policy belongs to a different catalog")]
     ForeignPolicy,
-    #[error(transparent)]
-    Catalog(#[from] CatalogError),
     #[error("component `{caller}` has multiple authorized providers for `{interface}`")]
     AmbiguousProvider { caller: String, interface: String },
     #[error("component `{caller}` has no authorized provider for `{interface}`")]
@@ -223,8 +199,6 @@ pub enum RuntimeBuildError {
     UnsupportedSiblingType { target: String, reason: String },
     #[error("component `{component}` has multiple grants for guest directory `{guest}`")]
     DuplicateGuestDirectory { component: String, guest: String },
-    #[error("component `{component}` is not included in the policy")]
-    NotIncluded { component: String },
     #[error("component `{component}` imports `{interface}` without an authorized provider")]
     ImportDenied {
         component: String,
@@ -243,8 +217,6 @@ pub enum RuntimeBuildError {
         #[source]
         source: anyhow::Error,
     },
-    #[error("runtime synchronization state was poisoned during construction")]
-    Poisoned,
 }
 
 /// A typed failure while calling an instantiated component.
@@ -309,27 +281,20 @@ impl<H: Send + 'static> Runtime<H> {
         B::client(RuntimeComponent::new(self, component))
     }
 
-    /// Reports whether a component has avoided a trapping call.
-    pub fn is_healthy<B>(&self, component: Component<B>) -> Result<bool, RuntimeError> {
-        let component = component.id();
-        let name = self.plan.catalog.component(component)?.name().to_owned();
-        let runtime = runtime_for(&self.table, component, &name)?;
-        let runtime = runtime.lock().map_err(|_| RuntimeError::Poisoned)?;
-        Ok(runtime.healthy)
-    }
-
     fn prepare_instance(
         &self,
         component: ComponentId,
         host_bindings: &HostBindings<H>,
     ) -> Result<InstancePre<PluginStore<H>>, RuntimeBuildError> {
-        let entry = self.plan.catalog.entry(component)?;
-        let component_plan =
-            self.plan
-                .component(component)
-                .map_err(|_| RuntimeBuildError::NotIncluded {
-                    component: entry.name.clone(),
-                })?;
+        let entry = self
+            .plan
+            .catalog
+            .entry(component)
+            .expect("runtime plan order contains only cataloged components");
+        let component_plan = self
+            .plan
+            .component(component)
+            .expect("runtime plan order contains only included components");
         for import in &entry.direct_imports {
             if !component_plan
                 .direct_imports
@@ -373,24 +338,22 @@ impl<H: Send + 'static> Runtime<H> {
         state_factory: &StateFactory<H>,
         instance: InstancePre<PluginStore<H>>,
     ) -> Result<(), RuntimeBuildError> {
-        let entry = self.plan.catalog.entry(component)?;
-        let component_plan =
-            self.plan
-                .component(component)
-                .map_err(|_| RuntimeBuildError::NotIncluded {
-                    component: entry.name.clone(),
-                })?;
+        let entry = self
+            .plan
+            .catalog
+            .entry(component)
+            .expect("runtime plan order contains only cataloged components");
+        let component_plan = self
+            .plan
+            .component(component)
+            .expect("runtime plan order contains only included components");
         let engine = self.plan.catalog.engine();
         let mut wasi = WasiCtxBuilder::new();
         for directory in &component_plan.directories {
             preopen(&mut wasi, directory).map_err(|error| instantiate_error(&entry.name, error))?;
         }
         let state = PluginStore {
-            context: HostContext::new(
-                component,
-                entry.name.clone(),
-                state_factory(component, &entry.name),
-            ),
+            context: HostContext::new(entry.name.clone(), state_factory(&entry.name)),
             wasi: wasi.build(),
         };
         let mut store = Store::new(engine, state);
@@ -407,7 +370,12 @@ impl<H: Send + 'static> Runtime<H> {
         }));
         self.table
             .lock()
-            .map_err(|_| RuntimeBuildError::Poisoned)?
+            .map_err(|_| {
+                instantiate_error(
+                    &entry.name,
+                    anyhow::anyhow!("runtime synchronization state was poisoned"),
+                )
+            })?
             .components
             .insert(component, runtime);
         Ok(())
@@ -705,17 +673,30 @@ world consumer { import api; }"#;
     }
 
     #[test]
-    fn host_context_keeps_component_identity_separate_from_user_state() {
-        let mut catalog = Catalog::new().unwrap();
-        let component = catalog.add_untyped("provider", provider_bytes()).unwrap();
-        let mut context = HostContext::new(component, "provider".into(), vec![1]);
+    fn host_context_keeps_component_name_separate_from_user_state() {
+        let mut context = HostContext::new("provider".into(), vec![1]);
 
         context.state_mut().push(2);
 
-        assert_eq!(context.component().id(), component);
-        assert_eq!(context.component().name(), "provider");
+        assert_eq!(context.component_name(), "provider");
         assert_eq!(context.state(), &[1, 2]);
         assert!(context.resources_mut().is_empty());
+    }
+
+    #[test]
+    fn state_factory_receives_the_component_name() {
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let factory_names = Arc::clone(&names);
+        let mut app = Application::with_state_factory(move |name| {
+            factory_names.lock().unwrap().push(name.to_owned());
+        })
+        .unwrap();
+        let component = app.add_untyped("provider", provider_bytes()).unwrap();
+        let policy = app.policy().include_id(component).unwrap().build();
+
+        app.runtime(policy).build().unwrap();
+
+        assert_eq!(*names.lock().unwrap(), ["provider"]);
     }
 
     #[test]
@@ -771,7 +752,7 @@ world consumer { import api; }"#;
     fn all_linkers_are_preflighted_before_any_store_is_created() {
         let creations = Arc::new(AtomicUsize::new(0));
         let factory_creations = Arc::clone(&creations);
-        let mut app = Application::with_state_factory(move |_, _| {
+        let mut app = Application::with_state_factory(move |_| {
             factory_creations.fetch_add(1, Ordering::Relaxed);
         })
         .unwrap();

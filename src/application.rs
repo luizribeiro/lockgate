@@ -1,9 +1,9 @@
 //! Typed application assembly with generated host-interface wiring.
 
 use crate::{
-    Component, ComponentId, ComponentInfo,
+    Component, ComponentInfo,
     binding::{ApplicationBinding, HostImportBinding},
-    catalog::{Catalog, CatalogError},
+    catalog::{Catalog, CatalogError, ComponentId},
     policy::{Policy, PolicyBuilder},
     runtime::{PluginStore, RuntimeBuilder},
 };
@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) type StateFactory<S> = Arc<dyn Fn(ComponentId, &str) -> S + Send + Sync>;
+pub(crate) type StateFactory<S> = Arc<dyn Fn(&str) -> S + Send + Sync>;
 type HostInstaller<S> = fn(&mut wasmtime::component::Linker<PluginStore<S>>) -> anyhow::Result<()>;
 
 /// Generated host bindings retained for runtime preflight.
@@ -67,7 +67,7 @@ pub struct Application<S: Send + 'static = ()> {
 impl Application<()> {
     /// Creates a stateless application.
     pub fn new() -> Result<Self, CatalogError> {
-        Self::with_state_factory(|_, _| ())
+        Self::with_state_factory(|_| ())
     }
 }
 
@@ -77,14 +77,14 @@ impl<S: Clone + Send + Sync + 'static> Application<S> {
     /// Use shared ownership such as [`Arc`] when every component should observe the same logical
     /// state.
     pub fn with_state(state: S) -> Result<Self, CatalogError> {
-        Self::with_state_factory(move |_, _| state.clone())
+        Self::with_state_factory(move |_| state.clone())
     }
 }
 
 impl<S: Send + 'static> Application<S> {
     /// Creates an application with state constructed separately for each included component.
     pub fn with_state_factory(
-        factory: impl Fn(ComponentId, &str) -> S + Send + Sync + 'static,
+        factory: impl Fn(&str) -> S + Send + Sync + 'static,
     ) -> Result<Self, CatalogError> {
         Ok(Self {
             catalog: Catalog::new()?,

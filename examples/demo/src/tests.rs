@@ -25,7 +25,6 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
         .read("/etc/passwd")?;
 
     assert!(matches!(value, Err(message) if !message.is_empty()));
-    assert!(runtime.is_healthy(filereader)?);
     Ok(())
 }
 
@@ -53,6 +52,5 @@ fn one_instance_can_be_called_through_multiple_admitted_roles() -> Result<()> {
 
     assert!(matches!(run, Ok(message) if !message.is_empty()));
     assert!(matches!(read, Ok(message) if !message.is_empty()));
-    assert!(runtime.is_healthy(reader)?);
     Ok(())
 }

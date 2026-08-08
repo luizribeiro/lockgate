@@ -337,10 +337,10 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                                 &[#(#import_metadata),*];
 
                             fn bind<H: Send + 'static>(
-                                store: &mut #lockgate::__private::WasmtimeStore<
+                                store: &mut ::wasmtime::Store<
                                     #lockgate::__private::PluginStore<H>,
                                 >,
-                                instance: &#lockgate::__private::WasmtimeInstance,
+                                instance: &::wasmtime::component::Instance,
                             ) -> #lockgate::__private::AnyResult<Self> {
                                 Ok(Self::new(&mut *store, instance)?)
                             }

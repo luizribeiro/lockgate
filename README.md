@@ -35,7 +35,7 @@ mod bindings {
 
 impl bindings::myapp::host::services::Host for HostContext<()> {
     fn log(&mut self, message: String) {
-        println!("{}: {message}", self.component().name());
+        println!("{}: {message}", self.component_name());
     }
 }
 
@@ -84,7 +84,7 @@ runtime.component(observer).query_observer().on_query(query)?;
 runtime.component(database).database_connector().execute(statement)?;
 ```
 
-Both handles carry the same component identity and call the same store and instance. A deliberately combined world can instead export both interfaces and produce one client with both accessors. Unrelated roles require no common plugin trait or world hierarchy.
+Both handles refer to the same component store and instance. A deliberately combined world can instead export both interfaces and produce one client with both accessors. Unrelated roles require no common plugin trait or world hierarchy.
 
 If an application eventually needs guest-selected routing, it should define a domain-specific typed WIT service such as `render-with(provider, document)` rather than a universal string-and-value invocation protocol.
 
@@ -115,12 +115,12 @@ Applications can define several plugin roles. A sibling-only provider can use a 
 
 ## Host integration
 
-Lockgate constructs one `HostContext<S>` per component. The context always contains component identity and the component resource table; `S` is optional application state. A stateless application uses `S = ()`, so component metadata never depends on user initialization.
+Lockgate constructs one `HostContext<S>` per component. The context always contains the application-assigned component name and resource table; `S` is optional application state. A stateless application uses `S = ()`, so component metadata never depends on user initialization.
 
 ```rust,ignore
 impl bindings::myapp::host::services::Host for HostContext<()> {
     fn log(&mut self, message: String) {
-        println!("{}: {message}", self.component().name());
+        println!("{}: {message}", self.component_name());
     }
 }
 ```
@@ -132,7 +132,7 @@ type State = Arc<AppState>;
 
 impl bindings::myapp::host::services::Host for HostContext<State> {
     fn log(&mut self, message: String) {
-        self.state().logger.log(self.component().name(), message);
+        self.state().logger.log(self.component_name(), message);
     }
 }
 
@@ -140,14 +140,13 @@ let state = Arc::new(AppState::new());
 let mut app = Application::with_state(state)?;
 ```
 
-`Application::with_state_factory` can instead construct distinct state for each component. Host implementations use `HostContext::state`, `state_mut`, and `resources_mut`; `component().id()` and `component().name()` expose Lockgate-owned identity.
+`Application::with_state_factory` can instead construct distinct state from each component's application-assigned name. Host implementations use `HostContext::state`, `state_mut`, `resources_mut`, and `component_name`.
 
 A component may implement more than one application role without creating another instance:
 
 ```rust,ignore
 let runnable = app.add::<bindings::RunnablePlugin>("plugin", bytes)?;
 let reader = app.admit::<bindings::FileReaderPlugin>(runnable)?;
-assert_eq!(runnable.id(), reader.id());
 ```
 
 Secondary admission revalidates the existing artifact and merges its host-interface requirements. Canonical installers are deduplicated, and both typed handles access the same component store.

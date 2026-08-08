@@ -100,9 +100,7 @@ world matching { import services; export runnable; }"#;
         .allow_host_import(secondary, "demo:admission/services@0.1.0")
         .unwrap()
         .build();
-    let runtime = app.runtime(policy).build().unwrap();
-
-    assert!(runtime.is_healthy(runnable).unwrap());
+    app.runtime(policy).build().unwrap();
 }
 
 fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {
@@ -327,7 +325,6 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
         })
     };
     assert!(matches!(call_loop(), Err(RuntimeError::Trapped { .. })));
-    assert!(!runtime.is_healthy(looping).unwrap());
     assert!(matches!(call_loop(), Err(RuntimeError::Unhealthy { .. })));
 }
 

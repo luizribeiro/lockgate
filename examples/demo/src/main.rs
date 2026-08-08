@@ -30,7 +30,7 @@ const HOST_SERVICES: &str = "demo:host/services@0.1.0";
 
 impl bindings::demo::host::services::Host for HostContext<()> {
     fn log(&mut self, message: String) {
-        println!("  [host] {}: {message}", self.component().name());
+        println!("  [host] {}: {message}", self.component_name());
     }
 }
 

@@ -13,14 +13,11 @@ mod runtime;
 
 pub use application::Application;
 pub use catalog::{
-    ArtifactDigest, CatalogError, Component, ComponentId, ComponentInfo, ExportInfo,
-    FunctionSignature,
+    ArtifactDigest, CatalogError, Component, ComponentInfo, ExportInfo, FunctionSignature,
 };
 pub use lockgate_macros::bindings;
 pub use policy::{Policy, PolicyBuilder, PolicyError};
-pub use runtime::{
-    Event, HostComponent, HostContext, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError,
-};
+pub use runtime::{Event, HostContext, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError};
 
 #[doc(hidden)]
 pub mod __private {
@@ -30,8 +27,6 @@ pub mod __private {
     };
     pub use crate::runtime::{HostContextData, PluginStore, RuntimeComponent};
     pub use anyhow::Result as AnyResult;
-    pub use wasmtime::Store as WasmtimeStore;
-    pub use wasmtime::component::Instance as WasmtimeInstance;
 }
 
 #[cfg(test)]

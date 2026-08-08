@@ -22,9 +22,8 @@ use wit_parser::{Resolve, WorldItem};
 
 static NEXT_CATALOG: AtomicU64 = AtomicU64::new(1);
 
-/// An opaque component identity issued by an [`crate::Application`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ComponentId {
+pub(crate) struct ComponentId {
     catalog: u64,
     index: usize,
 }
@@ -65,7 +64,6 @@ pub struct ExportInfo {
 
 /// Read-only metadata for an admitted component.
 pub struct ComponentInfo<'a> {
-    id: ComponentId,
     entry: &'a ComponentEntry,
 }
 
@@ -228,21 +226,12 @@ impl Catalog {
     ) -> Result<ComponentInfo<'_>, CatalogError> {
         let id = component.id();
         let entry = self.entry(id)?;
-        Ok(ComponentInfo { id, entry })
+        Ok(ComponentInfo { entry })
     }
 
     /// Iterates over discovered component metadata in insertion order.
     pub(crate) fn components(&self) -> impl ExactSizeIterator<Item = ComponentInfo<'_>> {
-        self.components
-            .iter()
-            .enumerate()
-            .map(move |(index, entry)| ComponentInfo {
-                id: ComponentId {
-                    catalog: self.identity,
-                    index,
-                },
-                entry,
-            })
+        self.components.iter().map(|entry| ComponentInfo { entry })
     }
 
     pub(crate) fn identity(&self) -> u64 {
@@ -273,7 +262,7 @@ impl<B> Clone for Component<B> {
 
 impl<B> fmt::Debug for Component<B> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("Component").field(&self.id).finish()
+        formatter.write_str("Component")
     }
 }
 
@@ -304,17 +293,12 @@ impl<B> ComponentRef for Component<B> {
 }
 
 impl<B> Component<B> {
-    /// Erases the generated binding type from this handle.
-    pub fn id(self) -> ComponentId {
+    pub(crate) fn id(self) -> ComponentId {
         self.id
     }
 }
 
 impl ComponentInfo<'_> {
-    pub fn id(&self) -> ComponentId {
-        self.id
-    }
-
     pub fn name(&self) -> &str {
         &self.entry.name
     }
@@ -670,7 +654,7 @@ world caller { import api; }"#;
         let provider = catalog
             .add_untyped("greeter", component_bytes("provider"))
             .unwrap();
-        let caller = catalog
+        let _caller = catalog
             .add_untyped("caller", component_bytes("caller"))
             .unwrap();
         let info = catalog.component(provider).unwrap();
@@ -690,9 +674,9 @@ world caller { import api; }"#;
         assert_eq!(
             catalog
                 .components()
-                .map(|component| (component.id(), component.name().to_owned()))
+                .map(|component| component.name().to_owned())
                 .collect::<Vec<_>>(),
-            [(provider, "greeter".into()), (caller, "caller".into())]
+            ["greeter", "caller"]
         );
         assert!(
             catalog

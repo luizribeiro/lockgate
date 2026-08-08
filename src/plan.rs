@@ -2,7 +2,7 @@
 //! Every included import is authorized and structurally checked before any store is created.
 
 use crate::{
-    catalog::{Catalog, CatalogError, ComponentId, ExportInfo},
+    catalog::{Catalog, ComponentId, ExportInfo},
     plugin::validate_cross_store_signature,
     policy::{DirectoryGrant, Policy},
     runtime::RuntimeBuildError,
@@ -52,16 +52,22 @@ impl Plan {
             .collect::<HashMap<_, _>>();
 
         for grant in policy.host_imports() {
-            catalog.entry(grant.component())?;
+            catalog
+                .entry(grant.component())
+                .expect("policy host grants contain only validated component handles");
             components
                 .get_mut(&grant.component())
-                .ok_or(CatalogError::ForeignComponent)?
+                .expect("policy components include every host grant component")
                 .host_imports
                 .insert(grant.interface().into());
         }
         for grant in policy.directories() {
-            let entry = catalog.entry(grant.component())?;
-            let plan = components.get_mut(&grant.component()).unwrap();
+            let entry = catalog
+                .entry(grant.component())
+                .expect("policy directory grants contain only validated component handles");
+            let plan = components
+                .get_mut(&grant.component())
+                .expect("policy components include every directory grant component");
             if plan
                 .directories
                 .iter()
@@ -81,7 +87,9 @@ impl Plan {
             .collect::<Vec<_>>();
         for caller in policy.components() {
             let caller = *caller;
-            let caller_entry = catalog.entry(caller)?;
+            let caller_entry = catalog
+                .entry(caller)
+                .expect("policy components contain only validated component handles");
             for import in &caller_entry.direct_imports {
                 if components
                     .get(&caller)
@@ -96,12 +104,12 @@ impl Plan {
                     .filter(|(linked_caller, _)| *linked_caller == caller)
                     .map(|(_, provider)| *provider)
                     .filter(|provider| {
-                        catalog.entry(*provider).is_ok_and(|entry| {
-                            entry
-                                .exports
-                                .iter()
-                                .any(|export| export.interface() == import.interface)
-                        })
+                        catalog
+                            .entry(*provider)
+                            .expect("policy links contain only validated provider handles")
+                            .exports
+                            .iter()
+                            .any(|export| export.interface() == import.interface)
                     })
                     .collect::<HashSet<_>>();
                 if providers.is_empty() {
@@ -117,7 +125,9 @@ impl Plan {
                     });
                 }
                 let provider = *providers.iter().next().unwrap();
-                let provider_entry = catalog.entry(provider)?;
+                let provider_entry = catalog
+                    .entry(provider)
+                    .expect("selected providers come from validated policy links");
                 let mut functions = Vec::new();
                 for (function, expected) in &import.functions {
                     let target_name = format!("{}#{function}", import.interface);
@@ -171,11 +181,8 @@ impl Plan {
         })
     }
 
-    pub(crate) fn component(&self, id: ComponentId) -> Result<&ComponentPlan, CatalogError> {
-        self.catalog.entry(id)?;
-        self.components
-            .get(&id)
-            .ok_or(CatalogError::ForeignComponent)
+    pub(crate) fn component(&self, id: ComponentId) -> Option<&ComponentPlan> {
+        self.components.get(&id)
     }
 }
 
