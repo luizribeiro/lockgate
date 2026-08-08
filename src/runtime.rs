@@ -13,7 +13,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     sync::{
-        Arc, Mutex, MutexGuard, TryLockError, Weak,
+        Arc, Mutex, MutexGuard, TryLockError,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -28,24 +28,12 @@ const FUEL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
 static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
-type Observer = Arc<dyn Fn(Event) + Send + Sync>;
-
 /// Internal projection used by generated application binding installers.
 #[doc(hidden)]
 pub struct HostContextData<S>(std::marker::PhantomData<fn() -> S>);
 
 impl<S: 'static> HasData for HostContextData<S> {
     type Data<'a> = &'a mut HostContext<S>;
-}
-
-/// An observable cross-component broker event.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Event {
-    SiblingCall {
-        caller: String,
-        provider: String,
-        target: String,
-    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,7 +129,6 @@ struct ComponentRuntime<H: Send + 'static> {
 struct RuntimeTable<H: Send + 'static> {
     identity: u64,
     components: HashMap<ComponentId, Arc<Mutex<ComponentRuntime<H>>>>,
-    observer: Option<Observer>,
 }
 
 /// A fully instantiated set of isolated component stores.
@@ -163,15 +150,6 @@ impl<H: Send + 'static, B> Clone for RuntimeComponent<'_, H, B> {
     fn clone(&self) -> Self {
         *self
     }
-}
-
-/// Configures a runtime before any component is instantiated.
-pub struct RuntimeBuilder<H: Send + 'static = ()> {
-    catalog: Catalog,
-    policy: Policy,
-    observer: Option<Observer>,
-    state_factory: StateFactory<H>,
-    host_bindings: HostBindings<H>,
 }
 
 /// A typed failure while validating or instantiating a runtime.
@@ -245,16 +223,24 @@ pub enum RuntimeError {
 }
 
 impl<H: Send + 'static> Runtime<H> {
+    pub(crate) fn from_application(
+        catalog: Catalog,
+        policy: Policy,
+        state_factory: StateFactory<H>,
+        host_bindings: HostBindings<H>,
+    ) -> Result<Self, RuntimeBuildError> {
+        let plan = Plan::new(catalog, policy)?;
+        Self::build(plan, state_factory, host_bindings)
+    }
+
     fn build(
         plan: Plan,
-        observer: Option<Observer>,
         state_factory: StateFactory<H>,
         host_bindings: HostBindings<H>,
     ) -> Result<Self, RuntimeBuildError> {
         let table = Arc::new(Mutex::new(RuntimeTable {
             identity: NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed),
             components: HashMap::new(),
-            observer,
         }));
         let runtime = Self { plan, table };
         let mut prepared = HashMap::new();
@@ -323,7 +309,6 @@ impl<H: Send + 'static> Runtime<H> {
         wire_direct_imports(
             &mut linker,
             &self.table,
-            &entry.name,
             component_plan.direct_imports.values(),
         )
         .map_err(|error| instantiate_error(&entry.name, error))?;
@@ -407,35 +392,6 @@ impl<'runtime, H: Send + 'static, B: ComponentBinding> RuntimeComponent<'runtime
     }
 }
 
-impl<H: Send + 'static> RuntimeBuilder<H> {
-    pub(crate) fn from_application(
-        catalog: Catalog,
-        policy: Policy,
-        state_factory: StateFactory<H>,
-        host_bindings: HostBindings<H>,
-    ) -> Self {
-        RuntimeBuilder {
-            catalog,
-            policy,
-            observer: None,
-            state_factory,
-            host_bindings,
-        }
-    }
-
-    /// Sends broker events to an application observer from the start of instantiation.
-    pub fn with_observer(mut self, observer: impl Fn(Event) + Send + Sync + 'static) -> Self {
-        self.observer = Some(Arc::new(observer));
-        self
-    }
-
-    /// Validates the complete policy, then instantiates every included component.
-    pub fn build(self) -> Result<Runtime<H>, RuntimeBuildError> {
-        let plan = Plan::new(self.catalog, self.policy)?;
-        Runtime::build(plan, self.observer, self.state_factory, self.host_bindings)
-    }
-}
-
 impl<H: Send + 'static> ComponentRuntime<H> {
     fn call(&mut self, target: &Target, params: &[Val]) -> Result<Vec<Val>, anyhow::Error> {
         let interface = self
@@ -463,7 +419,6 @@ impl<H: Send + 'static> ComponentRuntime<H> {
 fn wire_direct_imports<'a, H: Send + 'static>(
     linker: &mut Linker<PluginStore<H>>,
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
-    caller: &str,
     imports: impl Iterator<Item = &'a ResolvedImport>,
 ) -> Result<(), anyhow::Error> {
     for import in imports {
@@ -471,16 +426,7 @@ fn wire_direct_imports<'a, H: Send + 'static>(
         for (function, target) in &import.functions {
             let target = target.clone();
             let runtimes = Arc::clone(runtimes);
-            let caller = caller.to_owned();
             instance.func_new(function, move |_store, _ty, params, results| {
-                emit(
-                    &Arc::downgrade(&runtimes),
-                    Event::SiblingCall {
-                        caller: caller.clone(),
-                        provider: target.component_name.clone(),
-                        target: target.key(),
-                    },
-                );
                 let values = invoke_target(&runtimes, &target, params)
                     .map_err(|error| wasmtime::Error::msg(error.to_string()))?;
                 if values.len() != results.len() {
@@ -494,15 +440,6 @@ fn wire_direct_imports<'a, H: Send + 'static>(
         }
     }
     Ok(())
-}
-
-fn emit<H: Send + 'static>(runtimes: &Weak<Mutex<RuntimeTable<H>>>, event: Event) {
-    let observer = runtimes
-        .upgrade()
-        .and_then(|runtimes| runtimes.lock().ok()?.observer.clone());
-    if let Some(observer) = observer {
-        observer(event);
-    }
 }
 
 fn invoke_target<H: Send + 'static>(
@@ -694,7 +631,7 @@ world consumer { import api; }"#;
         let component = app.add_untyped("provider", provider_bytes()).unwrap();
         let policy = app.policy().include_id(component).unwrap().build();
 
-        app.runtime(policy).build().unwrap();
+        app.runtime(policy).unwrap();
 
         assert_eq!(*names.lock().unwrap(), ["provider"]);
     }
@@ -765,7 +702,7 @@ world consumer { import api; }"#;
             .allow_host_import_id(second, "demo:stack/api@0.1.0")
             .unwrap()
             .build();
-        let result = app.runtime(policy).build();
+        let result = app.runtime(policy);
 
         assert!(matches!(
             result,

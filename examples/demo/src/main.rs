@@ -1,7 +1,7 @@
 //! Builds and narrates typed host calls, sibling forwarding, and filesystem isolation.
 
 use anyhow::Result;
-use lockgate::{Application, Event, HostContext};
+use lockgate::{Application, HostContext};
 
 mod bindings {
     lockgate::bindings! {
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
         .allow_host_import(filereader, HOST_SERVICES)?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
         .build();
-    let runtime = app.runtime(policy).with_observer(print_event).build()?;
+    let runtime = app.runtime(policy)?;
     println!("\n[call] caller.run()");
     let value = runtime.component(caller).runnable().run()?;
     println!("  => {value:?}");
@@ -65,14 +65,4 @@ fn main() -> Result<()> {
 
     println!("\n[host] still running");
     Ok(())
-}
-
-fn print_event(event: Event) {
-    match event {
-        Event::SiblingCall {
-            caller,
-            provider,
-            target,
-        } => println!("  [sibling] {caller} -> {provider} ({target})"),
-    }
 }

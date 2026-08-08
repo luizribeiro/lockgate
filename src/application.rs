@@ -5,7 +5,7 @@ use crate::{
     binding::{ApplicationBinding, HostImportBinding},
     catalog::{Catalog, CatalogError, ComponentId},
     policy::{Policy, PolicyBuilder},
-    runtime::{PluginStore, RuntimeBuilder},
+    runtime::{PluginStore, Runtime, RuntimeBuildError},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -133,14 +133,9 @@ impl<S: Send + 'static> Application<S> {
         self.catalog.add_untyped(name, bytes)
     }
 
-    /// Begins runtime construction for this application and an immutable capability policy.
-    pub fn runtime(self, policy: Policy) -> RuntimeBuilder<S> {
-        RuntimeBuilder::from_application(
-            self.catalog,
-            policy,
-            self.state_factory,
-            self.host_bindings,
-        )
+    /// Validates the policy and instantiates every included component.
+    pub fn runtime(self, policy: Policy) -> Result<Runtime<S>, RuntimeBuildError> {
+        Runtime::from_application(self.catalog, policy, self.state_factory, self.host_bindings)
     }
 
     fn register<B: ApplicationBinding<S>>(&mut self, component: ComponentId) {

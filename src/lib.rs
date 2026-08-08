@@ -15,7 +15,7 @@ pub use application::Application;
 pub use catalog::{CatalogError, Component};
 pub use lockgate_macros::bindings;
 pub use policy::{Policy, PolicyBuilder, PolicyError};
-pub use runtime::{Event, HostContext, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError};
+pub use runtime::{HostContext, Runtime, RuntimeBuildError, RuntimeError};
 
 #[doc(hidden)]
 pub mod __private {

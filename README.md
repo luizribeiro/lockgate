@@ -47,7 +47,7 @@ let policy = app.policy()
     .allow_host_import(caller, "myapp:host/services@1.0.0")?
     .build();
 
-let runtime = app.runtime(policy).build()?;
+let runtime = app.runtime(policy)?;
 
 let caller = runtime.component(caller);
 let result = caller.runnable().run()?;
@@ -172,8 +172,6 @@ Before creating stores, runtime construction:
 Host-facing interfaces are not subjected to sibling cross-store restrictions. Their generated bindings and Wasmtime perform the relevant type checking.
 
 Each component receives its own Wasmtime `Store`, application state, resource table, WASI context, and fuel budget. Stores begin with no preopens and networking denied. Sibling forwarding uses one mutex per component and an identity-based call stack that rejects cycles and depths greater than eight before locking a callee. A trapping call marks only that component unhealthy.
-
-`RuntimeBuilder::with_observer` installs an application-owned observer before validation and instantiation. `Event::SiblingCall` reports the logical caller, selected provider, and canonical WIT target.
 
 ## Repository layout
 

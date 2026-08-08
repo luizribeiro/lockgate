@@ -186,12 +186,6 @@ impl Plan {
     }
 }
 
-impl Target {
-    pub(crate) fn key(&self) -> String {
-        format!("{}#{}", self.interface, self.function)
-    }
-}
-
 fn target_from_info(component: ComponentId, component_name: String, export: &ExportInfo) -> Target {
     Target {
         component,

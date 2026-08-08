@@ -100,7 +100,7 @@ world matching { import services; export runnable; }"#;
         .allow_host_import(secondary, "demo:admission/services@0.1.0")
         .unwrap()
         .build();
-    app.runtime(policy).build().unwrap();
+    app.runtime(policy).unwrap();
 }
 
 fn component_bytes(wit: &str, world_name: &str) -> Vec<u8> {
@@ -186,7 +186,7 @@ world provider { export api; }"#;
         .unwrap();
     let policy = app.policy().link_ids(caller, provider).unwrap().build();
     assert!(matches!(
-        app.runtime(policy).build(),
+        app.runtime(policy),
         Err(RuntimeBuildError::UnsupportedSiblingType { reason, .. })
             if reason.contains("resource")
     ));
@@ -213,7 +213,7 @@ world provider { export api; }"#;
         .unwrap()
         .build();
     assert!(matches!(
-        app.runtime(policy).build(),
+        app.runtime(policy),
         Err(RuntimeBuildError::MissingProvider { caller, interface })
             if caller == "caller" && interface == "demo:missing/api@0.1.0"
     ));
@@ -243,7 +243,7 @@ world provider { export api; }"#;
         .unwrap()
         .build();
     assert!(matches!(
-        app.runtime(policy).build(),
+        app.runtime(policy),
         Err(RuntimeBuildError::AmbiguousProvider { .. })
     ));
 }
@@ -260,7 +260,7 @@ fn plan_compares_complete_structural_types() {
         .add_untyped("provider", component_bytes(&provider_wit, "provider"))
         .unwrap();
     let policy = app.policy().link_ids(caller, provider).unwrap().build();
-    let error = match app.runtime(policy).build() {
+    let error = match app.runtime(policy) {
         Ok(_) => panic!("mismatched structural types unexpectedly planned"),
         Err(error) => error.to_string(),
     };
@@ -316,7 +316,7 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
     let mut app = Application::new().unwrap();
     let looping = app.add::<LoopBinding>("looping", bytes).unwrap();
     let policy = app.policy().include(looping).unwrap().build();
-    let runtime = app.runtime(policy).build().unwrap();
+    let runtime = app.runtime(policy).unwrap();
     let call_loop = || {
         RuntimeComponent::new(&runtime, looping).invoke(|store, binding| {
             binding.function.call(store, &[], &mut [])?;
