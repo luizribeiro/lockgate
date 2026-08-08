@@ -1,7 +1,0 @@
-package demo:caller@0.1.0;
-
-world plugin {
-  import demo:host/services@0.1.0;
-  import demo:greeter/greeter@0.1.0;
-  export demo:host/runnable@0.1.0;
-}

@@ -193,12 +193,12 @@ examples/demo/
   build.rs               builds and stages executable demo components
   src/main.rs            generated host bindings and the narrated lifecycle
   components/            three independent Rust component crates
-  packages/              checked-in versioned sibling WIT package
-  wit/packages/host/     application-owned host and plugin-role contracts
+  wit/worlds.wit         guest implementation worlds
+  wit/deps/              shared host and sibling WIT contracts
   sandbox/               demo filesystem input
 ```
 
-Each guest component is its own tiny workspace, keeping its lockfile, target, and generated bindings independent from the host workspace.
+The guest components form a small workspace with one dependency set and lockfile, independent from the host workspace. Guest bindings are generated inline with `wit_bindgen::generate!`, and ordinary Cargo compiles the crates directly to native `wasm32-wasip2` components.
 
 ## Run it
 
@@ -216,13 +216,13 @@ cargo test --workspace
 scripts/public-api
 ```
 
-The API inventory command generates rustdoc JSON with `cargo rustdoc`, then reports root exports, inherent methods, enum variants, and the separate hidden ABI used by generated code. The root library has no build script and does not require `cargo-component` to compile or test. The demo owns guest compilation and stages generated Wasm under Cargo's `OUT_DIR`.
+The API inventory command generates rustdoc JSON with `cargo rustdoc`, then reports root exports, inherent methods, enum variants, and the separate hidden ABI used by generated code. The root library has no build script. The demo builds its guests with ordinary Cargo and stages the native `wasm32-wasip2` components under Cargo's `OUT_DIR`.
 
 ## Add a demo component
 
 1. Choose or add a narrow application admission world for the component; include host-visible exports and imports only when needed.
-2. Define the component world under its own `wit/world.wit`, importing host services and sibling packages explicitly.
-3. Use ordinary generated guest bindings for host and sibling calls.
+2. Add the component's implementation world to `examples/demo/wit/worlds.wit`, importing host services and sibling packages explicitly.
+3. Generate guest bindings inline with `wit_bindgen::generate!` and build for `wasm32-wasip2`.
 4. List related admission worlds in a `lockgate::bindings!` invocation and implement each shared host interface once for `HostContext<S>`.
 5. Add every artifact with `app.add::<GeneratedBinding>`.
 6. Grant each host import, sibling link, and WASI capability separately; `Application` configures authorized host bindings automatically.
@@ -230,7 +230,7 @@ The API inventory command generates rustdoc JSON with `cargo rustdoc`, then repo
 
 ## Current limits
 
-The flake pins Rust 1.97.1, `cargo-component` 0.21.1, `wasm-tools` 1.254.0, and `wkg` 0.15.1. Rust dependencies pin Wasmtime 47.0.3 and `wit-component`/`wit-parser` 0.255.0.
+The flake pins Rust 1.97.1 with its native `wasm32-wasip2` target. Rust dependencies pin `wit-bindgen` 0.60.0 for demo guests, Wasmtime 47.0.3, and `wit-component`/`wit-parser` 0.255.0 for the host.
 
 - Sibling forwarding supports synchronous functions whose values can move between independent stores. Resource handles, `error-context`, futures, and streams cannot cross that boundary.
 - Wasmtime 47's public component type conversion does not expose fixed-length lists and contains an unimplemented conversion for them. Lockgate rejects those artifacts before runtime type introspection.

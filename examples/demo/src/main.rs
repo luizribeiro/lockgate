@@ -5,7 +5,7 @@ use lockgate::{Application, HostContext};
 
 mod bindings {
     lockgate::bindings! {
-        path: "wit/packages/host",
+        path: "wit/deps/demo-host",
         worlds: {
             RunnablePlugin: "runnable-plugin",
             FileReaderPlugin: "file-reader-plugin",
@@ -15,7 +15,7 @@ mod bindings {
 
 mod greeter_bindings {
     lockgate::bindings! {
-        path: "wit/packages/greeter",
+        path: "wit/deps/demo-greeter",
         worlds: {
             GreeterPlugin: "greeter-plugin",
         },

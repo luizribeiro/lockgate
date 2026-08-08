@@ -1,7 +1,0 @@
-package demo:filereader@0.1.0;
-
-world plugin {
-  import demo:host/services@0.1.0;
-  export demo:host/runnable@0.1.0;
-  export demo:host/file-reader@0.1.0;
-}

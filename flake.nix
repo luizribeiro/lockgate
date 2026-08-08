@@ -19,16 +19,13 @@
         };
         rust = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "clippy" "rust-analyzer" "rust-src" "rustfmt" ];
-          targets = [ "wasm32-wasip1" "wasm32-wasip2" ];
+          targets = [ "wasm32-wasip2" ];
         };
       in {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             rust
-            cargo-component
             jq
-            wasm-tools
-            wkg
           ];
 
           RUST_BACKTRACE = "1";

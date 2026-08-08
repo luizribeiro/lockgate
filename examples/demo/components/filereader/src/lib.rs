@@ -1,5 +1,10 @@
-#[allow(unsafe_op_in_unsafe_fn)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "filereader",
+        generate_all,
+    });
+}
 
 use bindings::demo::host::services;
 use bindings::exports::demo::host::{file_reader, runnable};
@@ -11,7 +16,6 @@ impl file_reader::Guest for FileReader {
         let contents = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         Ok(contents.lines().next().unwrap_or_default().to_owned())
     }
-
 }
 
 impl runnable::Guest for FileReader {

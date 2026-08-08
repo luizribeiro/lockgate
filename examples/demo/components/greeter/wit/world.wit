@@ -1,6 +1,0 @@
-// The implementation world exports the separately packaged greeter contract.
-package demo:greeter-plugin@0.1.0;
-
-world plugin {
-  export demo:greeter/greeter@0.1.0;
-}

@@ -7,21 +7,27 @@ const IDS: [&str; 3] = ["greeter", "caller", "filereader"];
 fn main() {
     let demo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let component_target = output.join("component-target");
+    let guest_target = output.join("guest-target");
     let staged = output.join("demo");
     let cargo = env::var_os("CARGO").unwrap();
+    let guest_manifest = demo.join("components/Cargo.toml");
 
     println!(
         "cargo:rerun-if-changed={}",
-        demo.join("wit/packages/host/package.wit").display()
+        demo.join("wit/worlds.wit").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        demo.join("wit/packages/greeter/package.wit").display()
+        demo.join("wit/deps/demo-host/package.wit").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        demo.join("packages/demo-greeter-0.1.0.wasm").display()
+        demo.join("wit/deps/demo-greeter/package.wit").display()
+    );
+    println!("cargo:rerun-if-changed={}", guest_manifest.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        demo.join("components/Cargo.lock").display()
     );
     for id in IDS {
         let dir = demo.join("components").join(id);
@@ -29,36 +35,31 @@ fn main() {
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!(
             "cargo:rerun-if-changed={}",
-            dir.join("Cargo.lock").display()
-        );
-        println!(
-            "cargo:rerun-if-changed={}",
             dir.join("src/lib.rs").display()
         );
-        println!(
-            "cargo:rerun-if-changed={}",
-            dir.join("wit/world.wit").display()
-        );
-        let status = Command::new(&cargo)
-            .args([
-                "component",
-                "build",
-                "--quiet",
-                "--locked",
-                "--manifest-path",
-            ])
-            .arg(&manifest)
-            .arg("--target-dir")
-            .arg(&component_target)
-            .status()
-            .expect("cargo-component must be installed (enter the Nix dev shell)");
-        assert!(status.success(), "failed to build plugin {id}");
+    }
+    let status = Command::new(&cargo)
+        .args([
+            "build",
+            "--quiet",
+            "--locked",
+            "--workspace",
+            "--manifest-path",
+        ])
+        .arg(&guest_manifest)
+        .args(["--target", "wasm32-wasip2"])
+        .arg("--target-dir")
+        .arg(&guest_target)
+        .status()
+        .expect("failed to run Cargo for demo guests");
+    assert!(status.success(), "failed to build demo guests");
 
+    for id in IDS {
         let destination = staged.join("components").join(id);
         fs::create_dir_all(&destination).unwrap();
         fs::copy(
-            component_target
-                .join("wasm32-wasip1/debug")
+            guest_target
+                .join("wasm32-wasip2/debug")
                 .join(format!("{id}.wasm")),
             destination.join(format!("{id}.wasm")),
         )

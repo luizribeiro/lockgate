@@ -1,5 +1,10 @@
-#[allow(unsafe_op_in_unsafe_fn)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: "../../wit",
+        world: "greeter",
+        generate_all,
+    });
+}
 
 use bindings::exports::demo::greeter::greeter::Guest;
 

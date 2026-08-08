@@ -1,0 +1,18 @@
+// The implementation worlds compiled by the demo's three guest crates.
+package demo:components@0.1.0;
+
+world caller {
+  import demo:host/services@0.1.0;
+  import demo:greeter/greeter@0.1.0;
+  export demo:host/runnable@0.1.0;
+}
+
+world filereader {
+  import demo:host/services@0.1.0;
+  export demo:host/runnable@0.1.0;
+  export demo:host/file-reader@0.1.0;
+}
+
+world greeter {
+  export demo:greeter/greeter@0.1.0;
+}
