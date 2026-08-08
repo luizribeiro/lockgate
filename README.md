@@ -45,18 +45,18 @@ let caller = app.add::<bindings::RunnablePlugin>("caller", caller_wasm)?;
 let runtime = app
     .link(caller, greeter)?
     .allow_host_import(caller, "myapp:host/services@1.0.0")?
-    .runtime()?;
+    .run()?;
 
 let result = runtime.component(caller).run()?;
 ```
 
 `lockgate::bindings!` parses all listed application worlds together. It generates every imported host interface once, remaps each Wasmtime world to those shared bindings, and emits export contracts plus canonical host-interface installers. The application therefore implements `myapp:host/services@1.0.0` once even when several plugin roles import it.
 
-`Application::add::<Binding>` compares the generated export contract with metadata decoded from the artifact and returns a typed `Component<Binding>` only when they match. It also retains host-interface installers specialized for the application's state type. Even sibling-only providers are admitted through a narrow export-only world. Runtime construction installs only policy-granted host interfaces and prepares every complete linker before creating state or stores.
+`Application::add::<Binding>` compares the generated export contract with metadata decoded from the artifact and returns a typed `Component<Binding>` only when they match. It also retains host-interface installers specialized for the application's state type. Even sibling-only providers are admitted through a narrow export-only world. Runtime construction installs only explicitly granted host interfaces and prepares every complete linker before creating stores.
 
 `Runtime::component` turns an admitted handle into a lightweight generated client. Each binding role represents one exported interface, so its WIT functions become ordinary Rust methods directly on that client while Lockgate keeps Wasmtime stores, binding construction, fuel, locking, and trap health internal. A WIT `result<T, E>` remains inside the outer `Result<_, RuntimeError>`, so domain errors do not mark a component unhealthy.
 
-The generated binding implementation exists only when `HostContext<S>` implements every host trait imported by that role. A missing host implementation is therefore a compile-time error at `Application::add`, while artifact admission and policy validation remain runtime checks over the supplied bytes and grants.
+The generated binding implementation exists only when `HostContext<S>` implements every host trait imported by that role. A missing host implementation is therefore a compile-time error at `Application::add`, while artifact admission and grant validation remain runtime checks over the supplied bytes and grants.
 
 The runnable example contains the complete integration in `examples/demo/src/main.rs`.
 
@@ -66,7 +66,7 @@ The demo makes all three supported boundaries visible:
 
 1. The host calls `demo:host/runnable.run` through a generated `RunnablePlugin` binding.
 2. `caller` invokes the application host's `demo:host/services.log` through its generated guest binding.
-3. `caller` invokes `demo:greeter/greeter.greet` through a normal generated sibling import. Lockgate satisfies that import using a provider selected by policy and structural types discovered from the two component artifacts.
+3. `caller` invokes `demo:greeter/greeter.greet` through a normal generated sibling import. Lockgate satisfies that import using an explicitly linked provider and structural types discovered from the two component artifacts.
 
 Dynamic component selection is still possible: the application may choose among `Component<RunnablePlugin>` handles at runtime. Every call still goes through an admitted generated client, so selecting an artifact dynamically does not erase its interface authority.
 
@@ -153,7 +153,7 @@ Secondary admission revalidates the existing artifact and merges its host-interf
 
 The private catalog owned by `Application` compiles the exact supplied bytes, then uses `wit_component::decode` and Wasmtime component types to validate their real imports, exports, and function signatures. Artifact insertion is always admitted against a generated binding role.
 
-Capability grants use application-owned handles and automatically include their components; `.include(component)` adds a standalone component. Host imports and sibling links remain distinct grants:
+Every artifact added to an application is instantiated when the application runs. Capability grants control authority rather than membership, and use application-owned handles. Host imports and sibling links remain distinct grants:
 
 - `.allow_host_import(component, interface)` permits the embedding application to implement that exact interface when it is both imported by the artifact and declared by an admitted binding role.
 - `.link(caller, provider)` permits the provider to satisfy matching sibling imports on the caller.
@@ -170,7 +170,7 @@ Before creating stores, runtime construction:
 
 Host-facing interfaces are not subjected to sibling cross-store restrictions. Their generated bindings and Wasmtime perform the relevant type checking.
 
-Each component receives its own Wasmtime `Store`, application state, resource table, WASI context, and fuel budget. Stores begin with no preopens and networking denied. Sibling forwarding uses one mutex per component and an identity-based call stack that rejects cycles and depths greater than eight before locking a callee. A trapping call marks only that component unhealthy.
+Each component receives its own Wasmtime `Store`, resource table, WASI context, and fuel budget, while referencing the same initialized application state. Stores begin with no preopens and networking denied. Sibling forwarding uses one mutex per component and an identity-based call stack that rejects cycles and depths greater than eight before locking a callee. A trapping call marks only that component unhealthy.
 
 ## Repository layout
 
@@ -179,7 +179,7 @@ src/
   application.rs         typed assembly, application state, and host installers
   binding.rs             generated binding admission and loading contract
   catalog.rs             artifact identity and decoded component metadata
-  policy.rs              immutable host, sibling, and WASI grants
+  grants.rs              retained host, sibling, and WASI grants
   plan.rs                private provider resolution and preflight validation
   plugin.rs              structural type inspection and cross-store validation
   runtime.rs             isolated stores, host context, and sibling forwarding

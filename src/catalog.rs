@@ -195,8 +195,13 @@ impl Catalog {
         id
     }
 
-    pub(crate) fn identity(&self) -> u64 {
-        self.identity
+    pub(crate) fn component_ids(&self) -> Vec<ComponentId> {
+        (0..self.components.len())
+            .map(|index| ComponentId {
+                catalog: self.identity,
+                index,
+            })
+            .collect()
     }
 
     pub(crate) fn engine(&self) -> &Engine {

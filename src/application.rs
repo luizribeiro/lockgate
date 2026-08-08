@@ -4,8 +4,8 @@ use crate::{
     Component,
     binding::Binding,
     catalog::{ApplicationError, Catalog, ComponentId},
-    policy::{
-        DirectoryAccess, DirectoryGrant, HostImportGrant, LinkGrant, Policy, valid_guest_path,
+    grants::{
+        DirectoryAccess, DirectoryGrant, Grants, HostImportGrant, LinkGrant, valid_guest_path,
     },
     runtime::{PluginStore, Runtime, RuntimeBuildError},
 };
@@ -53,7 +53,7 @@ impl<S: Send + Sync + 'static> HostBindings<S> {
 /// A catalog assembled together with its application state and generated host bindings.
 pub struct Application<S: Send + Sync + 'static = ()> {
     catalog: Catalog,
-    policy: Policy,
+    grants: Grants,
     state: Arc<S>,
     host_bindings: HostBindings<S>,
 }
@@ -62,18 +62,12 @@ impl<S: Send + Sync + 'static> Application<S> {
     /// Creates an application whose state is shared by every component context.
     pub fn new(state: S) -> Result<Self, ApplicationError> {
         let catalog = Catalog::new()?;
-        let policy = Policy::new(catalog.identity());
         Ok(Self {
             catalog,
-            policy,
+            grants: Grants::default(),
             state: Arc::new(state),
             host_bindings: HostBindings::new(),
         })
-    }
-
-    /// Includes a component that needs no other capability grants.
-    pub fn include<B>(self, component: Component<B>) -> Result<Self, ApplicationError> {
-        self.include_id(component.id())
     }
 
     #[cfg(test)]
@@ -81,7 +75,7 @@ impl<S: Send + Sync + 'static> Application<S> {
         self.host_bindings.installer_count()
     }
 
-    /// Admits an artifact and retains its generated host-interface installers.
+    /// Adds an artifact to the application and retains its generated host-interface installers.
     pub fn add<B: Binding<S>>(
         &mut self,
         name: impl Into<String>,
@@ -159,19 +153,13 @@ impl<S: Send + Sync + 'static> Application<S> {
         )
     }
 
-    /// Validates the retained grants and instantiates every included component.
-    pub fn runtime(self) -> Result<Runtime<S>, RuntimeBuildError> {
-        Runtime::from_application(self.catalog, self.policy, self.state, self.host_bindings)
+    /// Validates the retained grants and runs every added component.
+    pub fn run(self) -> Result<Runtime<S>, RuntimeBuildError> {
+        Runtime::from_application(self.catalog, self.grants, self.state, self.host_bindings)
     }
 
     fn register<B: Binding<S>>(&mut self, component: ComponentId) {
         self.host_bindings.register::<B>(component);
-    }
-
-    pub(crate) fn include_id(mut self, component: ComponentId) -> Result<Self, ApplicationError> {
-        self.catalog.entry(component)?;
-        self.policy.include(component);
-        Ok(self)
     }
 
     pub(crate) fn link_ids(
@@ -194,11 +182,9 @@ impl<S: Send + Sync + 'static> Application<S> {
             });
         }
         let grant = LinkGrant { caller, provider };
-        if !self.policy.links.contains(&grant) {
-            self.policy.links.push(grant);
+        if !self.grants.links.contains(&grant) {
+            self.grants.links.push(grant);
         }
-        self.policy.include(caller);
-        self.policy.include(provider);
         Ok(self)
     }
 
@@ -219,13 +205,12 @@ impl<S: Send + Sync + 'static> Application<S> {
                 interface,
             });
         }
-        self.policy.include(component);
         let grant = HostImportGrant {
             component,
             interface,
         };
-        if !self.policy.host_imports.contains(&grant) {
-            self.policy.host_imports.push(grant);
+        if !self.grants.host_imports.contains(&grant) {
+            self.grants.host_imports.push(grant);
         }
         Ok(self)
     }
@@ -238,7 +223,6 @@ impl<S: Send + Sync + 'static> Application<S> {
         access: DirectoryAccess,
     ) -> Result<Self, ApplicationError> {
         self.catalog.entry(component)?;
-        self.policy.include(component);
         if !valid_guest_path(&guest) {
             return Err(ApplicationError::RelativeGuestPath(guest));
         }
@@ -254,8 +238,8 @@ impl<S: Send + Sync + 'static> Application<S> {
             guest,
             access,
         };
-        if !self.policy.directories.contains(&grant) {
-            self.policy.directories.push(grant);
+        if !self.grants.directories.contains(&grant) {
+            self.grants.directories.push(grant);
         }
         Ok(self)
     }

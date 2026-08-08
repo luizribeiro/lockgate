@@ -3,9 +3,8 @@
 use crate::catalog::ComponentId;
 use std::path::{Path, PathBuf};
 
-pub(crate) struct Policy {
-    pub(crate) catalog: u64,
-    pub(crate) components: Vec<ComponentId>,
+#[derive(Default)]
+pub(crate) struct Grants {
     pub(crate) links: Vec<LinkGrant>,
     pub(crate) host_imports: Vec<HostImportGrant>,
     pub(crate) directories: Vec<DirectoryGrant>,
@@ -35,24 +34,6 @@ pub(crate) struct DirectoryGrant {
 pub(crate) enum DirectoryAccess {
     ReadOnly,
     ReadWrite,
-}
-
-impl Policy {
-    pub(crate) fn new(catalog: u64) -> Self {
-        Self {
-            catalog,
-            components: Vec::new(),
-            links: Vec::new(),
-            host_imports: Vec::new(),
-            directories: Vec::new(),
-        }
-    }
-
-    pub(crate) fn include(&mut self, component: ComponentId) {
-        if !self.components.contains(&component) {
-            self.components.push(component);
-        }
-    }
 }
 
 pub(crate) fn valid_guest_path(path: &Path) -> bool {

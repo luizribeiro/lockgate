@@ -1,13 +1,13 @@
 //! Validated construction and isolated execution of capability-scoped components.
-//! Each component receives its own store, WASI context, application state, and fuel budget.
+//! Each component receives its own store, WASI context, and fuel budget while sharing application state.
 
 use crate::{
     Component,
     application::HostBindings,
     binding::Binding,
     catalog::{ApplicationError, Catalog, ComponentId},
+    grants::{DirectoryAccess, DirectoryGrant, Grants},
     plan::{Plan, ResolvedImport, Target},
-    policy::{DirectoryAccess, DirectoryGrant, Policy},
 };
 use std::{
     cell::RefCell,
@@ -135,8 +135,6 @@ impl<H: Send + Sync + 'static, B> Clone for RuntimeComponent<'_, H, B> {
 /// A typed failure while validating or instantiating a runtime.
 #[derive(Debug, Error)]
 pub enum RuntimeBuildError {
-    #[error("policy belongs to a different application")]
-    ForeignPolicy,
     #[error("component `{caller}` has multiple authorized providers for `{interface}`")]
     AmbiguousProvider { caller: String, interface: String },
     #[error("component `{caller}` has no authorized provider for `{interface}`")]
@@ -193,11 +191,11 @@ pub enum RuntimeError {
 impl<H: Send + Sync + 'static> Runtime<H> {
     pub(crate) fn from_application(
         catalog: Catalog,
-        policy: Policy,
+        grants: Grants,
         state: Arc<H>,
         host_bindings: HostBindings<H>,
     ) -> Result<Self, RuntimeBuildError> {
-        let plan = Plan::new(catalog, policy)?;
+        let plan = Plan::new(catalog, grants)?;
         Self::build(plan, state, host_bindings)
     }
 
@@ -247,7 +245,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             .plan
             .components
             .get(&component)
-            .expect("runtime plan order contains only included components");
+            .expect("runtime plan order contains only application components");
         let engine = self.plan.catalog.engine();
         let mut linker = Linker::new(engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
@@ -255,7 +253,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
         for interface in &component_plan.host_imports {
             host_bindings
                 .install(component, interface, &mut linker)
-                .expect("policy host grants contain only admitted host bindings")
+                .expect("host grants contain only admitted host bindings")
                 .map_err(|error| instantiate_error(&entry.name, error))?;
         }
         wire_direct_imports(
@@ -284,7 +282,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             .plan
             .components
             .get(&component)
-            .expect("runtime plan order contains only included components");
+            .expect("runtime plan order contains only application components");
         let engine = self.plan.catalog.engine();
         let mut wasi = WasiCtxBuilder::new();
         for directory in &component_plan.directories {
@@ -528,7 +526,7 @@ fn preopen(wasi: &mut WasiCtxBuilder, grant: &DirectoryGrant) -> Result<(), anyh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Application, binding::Binding, catalog::Catalog, policy::Policy};
+    use crate::{Application, binding::Binding, catalog::Catalog, grants::Grants};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -615,11 +613,7 @@ world consumer { import api; }"#;
                 .unwrap();
             components.push(component);
         }
-        let mut policy = Policy::new(catalog.identity());
-        for component in &components {
-            policy.include(*component);
-        }
-        let plan = Plan::new(catalog, policy).unwrap();
+        let plan = Plan::new(catalog, Grants::default()).unwrap();
         let targets = components
             .into_iter()
             .map(|component| {
@@ -656,16 +650,14 @@ world consumer { import api; }"#;
     #[test]
     fn all_linkers_are_preflighted_before_any_store_is_created() {
         let mut app = Application::new(()).unwrap();
-        let first = app.add_untyped("first", provider_bytes()).unwrap();
+        app.add_untyped("first", provider_bytes()).unwrap();
         let second = app
             .add::<FailingHostBinding>("second", consumer_bytes())
             .unwrap();
         let result = app
-            .include_id(first)
-            .unwrap()
             .allow_host_import(second, "demo:stack/api@0.1.0")
             .unwrap()
-            .runtime();
+            .run();
 
         assert!(matches!(
             result,

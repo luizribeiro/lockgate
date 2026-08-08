@@ -53,7 +53,7 @@ fn main() -> Result<()> {
         .allow_host_import(caller, HOST_SERVICES)?
         .allow_host_import(filereader, HOST_SERVICES)?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
-        .runtime()?;
+        .run()?;
     println!("\n[call] caller.run()");
     let value = runtime.component(caller).run()?;
     println!("  => {value:?}");

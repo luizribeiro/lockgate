@@ -1,10 +1,10 @@
 //! Private preflight validation and provider resolution for runtime construction.
-//! Every included import is authorized and structurally checked before any store is created.
+//! Every application import is authorized and structurally checked before any store is created.
 
 use crate::{
     catalog::{Catalog, ComponentId, ExportInfo},
+    grants::{DirectoryGrant, Grants},
     plugin::validate_cross_store_signature,
-    policy::{DirectoryGrant, Policy},
     runtime::RuntimeBuildError,
 };
 use std::collections::{HashMap, HashSet};
@@ -29,7 +29,7 @@ pub(crate) struct ComponentPlan {
     pub(crate) directories: Vec<DirectoryGrant>,
 }
 
-/// A catalog and policy compiled into deterministic provider selections.
+/// An application catalog and its grants compiled into deterministic provider selections.
 pub(crate) struct Plan {
     pub(crate) catalog: Catalog,
     pub(crate) components: HashMap<ComponentId, ComponentPlan>,
@@ -37,36 +37,32 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
-    /// Resolves all authority granted by a policy against the catalog's decoded WIT.
-    pub(crate) fn new(catalog: Catalog, policy: Policy) -> Result<Self, RuntimeBuildError> {
-        if policy.catalog != catalog.identity() {
-            return Err(RuntimeBuildError::ForeignPolicy);
-        }
-
-        let mut components = policy
-            .components
+    /// Resolves all retained grants against the catalog's decoded WIT.
+    pub(crate) fn new(catalog: Catalog, grants: Grants) -> Result<Self, RuntimeBuildError> {
+        let order = catalog.component_ids();
+        let mut components = order
             .iter()
             .copied()
             .map(|id| (id, ComponentPlan::default()))
             .collect::<HashMap<_, _>>();
 
-        for grant in &policy.host_imports {
+        for grant in &grants.host_imports {
             catalog
                 .entry(grant.component)
-                .expect("policy host grants contain only validated component handles");
+                .expect("host grants contain only validated component handles");
             components
                 .get_mut(&grant.component)
-                .expect("policy components include every host grant component")
+                .expect("application contains every host grant component")
                 .host_imports
                 .insert(grant.interface.clone());
         }
-        for grant in &policy.directories {
+        for grant in &grants.directories {
             let entry = catalog
                 .entry(grant.component)
-                .expect("policy directory grants contain only validated component handles");
+                .expect("directory grants contain only validated component handles");
             let plan = components
                 .get_mut(&grant.component)
-                .expect("policy components include every directory grant component");
+                .expect("application contains every directory grant component");
             if plan
                 .directories
                 .iter()
@@ -79,16 +75,16 @@ impl Plan {
             }
             plan.directories.push(grant.clone());
         }
-        let links = policy
+        let links = grants
             .links
             .iter()
             .map(|grant| (grant.caller, grant.provider))
             .collect::<Vec<_>>();
-        for caller in &policy.components {
+        for caller in &order {
             let caller = *caller;
             let caller_entry = catalog
                 .entry(caller)
-                .expect("policy components contain only validated component handles");
+                .expect("application contains only validated component handles");
             for import in &caller_entry.direct_imports {
                 if components
                     .get(&caller)
@@ -105,7 +101,7 @@ impl Plan {
                     .filter(|provider| {
                         catalog
                             .entry(*provider)
-                            .expect("policy links contain only validated provider handles")
+                            .expect("links contain only validated provider handles")
                             .exports
                             .iter()
                             .any(|export| export.interface == import.interface)
@@ -126,7 +122,7 @@ impl Plan {
                 let provider = *providers.iter().next().unwrap();
                 let provider_entry = catalog
                     .entry(provider)
-                    .expect("selected providers come from validated policy links");
+                    .expect("selected providers come from validated links");
                 let mut functions = Vec::new();
                 for (function, expected) in &import.functions {
                     let target_name = format!("{}#{function}", import.interface);
@@ -174,7 +170,7 @@ impl Plan {
         Ok(Self {
             catalog,
             components,
-            order: policy.components,
+            order,
         })
     }
 }
@@ -191,7 +187,7 @@ fn target_from_info(component: ComponentId, component_name: String, export: &Exp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::{LinkGrant, Policy};
+    use crate::grants::{Grants, LinkGrant};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -221,11 +217,9 @@ world caller { import api; }"#;
         let provider = catalog
             .add_untyped("provider", component_bytes(wit, "provider"))
             .unwrap();
-        let mut policy = Policy::new(catalog.identity());
-        policy.include(caller);
-        policy.include(provider);
-        policy.links.push(LinkGrant { caller, provider });
-        let plan = Plan::new(catalog, policy).unwrap();
+        let mut grants = Grants::default();
+        grants.links.push(LinkGrant { caller, provider });
+        let plan = Plan::new(catalog, grants).unwrap();
         assert!(
             plan.components
                 .get(&caller)
@@ -233,16 +227,5 @@ world caller { import api; }"#;
                 .direct_imports
                 .contains_key("demo:plan/api@0.1.0")
         );
-    }
-
-    #[test]
-    fn rejects_a_policy_from_another_catalog() {
-        let first = Catalog::new().unwrap();
-        let policy = Policy::new(first.identity());
-        let second = Catalog::new().unwrap();
-        assert!(matches!(
-            Plan::new(second, policy),
-            Err(RuntimeBuildError::ForeignPolicy)
-        ));
     }
 }

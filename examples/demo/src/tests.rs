@@ -15,7 +15,7 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
     let runtime = app
         .allow_host_import(filereader, HOST_SERVICES)?
         .read_only_dir(filereader, root.join("sandbox/shared"), "/shared")?
-        .runtime()?;
+        .run()?;
 
     let value = runtime.component(filereader).read("/etc/passwd")?;
 
@@ -35,7 +35,7 @@ fn one_instance_can_be_called_through_multiple_admitted_roles() -> Result<()> {
     let runtime = app
         .allow_host_import(reader, HOST_SERVICES)?
         .read_only_dir(reader, root.join("sandbox/shared"), "/shared")?
-        .runtime()?;
+        .run()?;
 
     let run = runtime.component(runnable).run()?;
     let read = runtime.component(reader).read("/shared/allowed.txt")?;
