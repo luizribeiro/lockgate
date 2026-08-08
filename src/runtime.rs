@@ -130,29 +130,18 @@ impl<S> HostContext<S> {
     }
 }
 
-/// Per-component store data available to application-defined host bindings.
+/// Per-component store data used by generated application bindings.
+#[doc(hidden)]
 pub struct PluginStore<S: Send + 'static = ()> {
     context: HostContext<S>,
     wasi: WasiCtx,
 }
 
 impl<S: Send + 'static> PluginStore<S> {
-    /// Returns the component context projected into generated host bindings.
-    pub fn context(&self) -> &HostContext<S> {
-        &self.context
-    }
-
     /// Returns the mutable component context projected into generated host bindings.
+    #[doc(hidden)]
     pub fn context_mut(&mut self) -> &mut HostContext<S> {
         &mut self.context
-    }
-
-    pub fn component_name(&self) -> &str {
-        self.context.component.name()
-    }
-
-    pub fn resources_mut(&mut self) -> &mut ResourceTable {
-        self.context.resources_mut()
     }
 }
 
@@ -283,19 +272,6 @@ pub enum RuntimeError {
     Poisoned,
 }
 
-impl Runtime<()> {
-    /// Begins configuring a runtime for a catalog and its policy.
-    pub fn builder(catalog: Catalog, policy: Policy) -> RuntimeBuilder<()> {
-        RuntimeBuilder {
-            catalog,
-            policy,
-            observer: None,
-            state_factory: Arc::new(|_, _| ()),
-            host_bindings: HostBindings::new(),
-        }
-    }
-}
-
 impl<H: Send + 'static> Runtime<H> {
     fn build(
         plan: Plan,
@@ -324,23 +300,6 @@ impl<H: Send + 'static> Runtime<H> {
             )?;
         }
         Ok(runtime)
-    }
-
-    /// Runs an application-defined operation against a raw component instance.
-    ///
-    /// Prefer [`Self::component`] for artifacts admitted with generated application bindings.
-    pub fn with_instance<R>(
-        &self,
-        component: ComponentId,
-        call: impl FnOnce(&mut Store<PluginStore<H>>, &Instance) -> anyhow::Result<R>,
-    ) -> Result<R, RuntimeError> {
-        let entry = self.plan.catalog.entry(component)?;
-        invoke_component_runtime(&self.table, component, &entry.name, |runtime| {
-            let ComponentRuntime {
-                store, instance, ..
-            } = runtime;
-            call(store, instance)
-        })
     }
 
     /// Creates a lightweight generated client for an admitted component role.
@@ -757,29 +716,6 @@ world consumer { import api; }"#;
         assert_eq!(context.component().name(), "provider");
         assert_eq!(context.state(), &[1, 2]);
         assert!(context.resources_mut().is_empty());
-    }
-
-    #[test]
-    fn application_shared_state_is_available_through_each_host_context() {
-        let shared = Arc::new(AtomicUsize::new(0));
-        let mut app = Application::with_state(Arc::clone(&shared)).unwrap();
-        let component = app.add_untyped("provider", provider_bytes()).unwrap();
-        let policy = app.policy().include(component).unwrap().build();
-        let runtime = app.runtime(policy).build().unwrap();
-
-        runtime
-            .with_instance(component, |store, _| {
-                assert!(Arc::ptr_eq(store.data().context().state(), &shared));
-                store
-                    .data()
-                    .context()
-                    .state()
-                    .fetch_add(1, Ordering::Relaxed);
-                Ok(())
-            })
-            .unwrap();
-
-        assert_eq!(shared.load(Ordering::Relaxed), 1);
     }
 
     #[test]

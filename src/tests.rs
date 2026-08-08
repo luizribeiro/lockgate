@@ -1,12 +1,17 @@
 //! Cross-layer tests for discovery, planning, authority, and fuel isolation.
 //! Small synthesized components keep the library suite independent from the runnable demo.
 
+use crate::{Application, CatalogError, HostContext, Runtime, RuntimeBuildError, RuntimeError};
 use crate::{
-    Application, Catalog, CatalogError, HostContext, PluginStore, Policy, Runtime,
-    RuntimeBuildError, RuntimeError,
+    binding::{ApplicationBinding, ComponentBinding, HostImportBinding},
+    catalog::Catalog,
+    runtime::{PluginStore, RuntimeComponent},
 };
 use std::error::Error as _;
-use wasmtime::{Store, component::Instance};
+use wasmtime::{
+    Store,
+    component::{Func, Instance},
+};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -175,19 +180,16 @@ interface api {
 }
 world caller { import api; }
 world provider { export api; }"#;
-    let mut catalog = Catalog::new().unwrap();
-    let caller = catalog
+    let mut app = Application::new().unwrap();
+    let caller = app
         .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
-    let provider = catalog
+    let provider = app
         .add_untyped("provider", component_bytes(wit, "provider"))
         .unwrap();
-    let policy = Policy::builder(&catalog)
-        .link(caller, provider)
-        .unwrap()
-        .build();
+    let policy = app.policy().link(caller, provider).unwrap().build();
     assert!(matches!(
-        Runtime::builder(catalog, policy).build(),
+        app.runtime(policy).build(),
         Err(RuntimeBuildError::UnsupportedSiblingType { reason, .. })
             if reason.contains("resource")
     ));
@@ -199,21 +201,22 @@ fn plan_requires_an_explicit_link_even_when_the_provider_is_present() {
 interface api { run: func(); }
 world caller { import api; }
 world provider { export api; }"#;
-    let mut catalog = Catalog::new().unwrap();
-    let caller = catalog
+    let mut app = Application::new().unwrap();
+    let caller = app
         .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
-    let provider = catalog
+    let provider = app
         .add_untyped("provider", component_bytes(wit, "provider"))
         .unwrap();
-    let policy = Policy::builder(&catalog)
+    let policy = app
+        .policy()
         .include(caller)
         .unwrap()
         .include(provider)
         .unwrap()
         .build();
     assert!(matches!(
-        Runtime::builder(catalog, policy).build(),
+        app.runtime(policy).build(),
         Err(RuntimeBuildError::MissingProvider { caller, interface })
             if caller == "caller" && interface == "demo:missing/api@0.1.0"
     ));
@@ -225,24 +228,25 @@ fn plan_rejects_ambiguous_providers() {
 interface api { run: func(); }
 world caller { import api; }
 world provider { export api; }"#;
-    let mut catalog = Catalog::new().unwrap();
-    let caller = catalog
+    let mut app = Application::new().unwrap();
+    let caller = app
         .add_untyped("caller", component_bytes(wit, "caller"))
         .unwrap();
-    let first = catalog
+    let first = app
         .add_untyped("first", component_bytes(wit, "provider"))
         .unwrap();
-    let second = catalog
+    let second = app
         .add_untyped("second", component_bytes(wit, "provider"))
         .unwrap();
-    let policy = Policy::builder(&catalog)
+    let policy = app
+        .policy()
         .link(caller, first)
         .unwrap()
         .link(caller, second)
         .unwrap()
         .build();
     assert!(matches!(
-        Runtime::builder(catalog, policy).build(),
+        app.runtime(policy).build(),
         Err(RuntimeBuildError::AmbiguousProvider { .. })
     ));
 }
@@ -251,18 +255,15 @@ world provider { export api; }"#;
 fn plan_compares_complete_structural_types() {
     let caller_wit = structural_wit("s32", "safe", "polite", "choice", "caller", "import");
     let provider_wit = structural_wit("u32", "careful", "quiet", "selection", "provider", "export");
-    let mut catalog = Catalog::new().unwrap();
-    let caller = catalog
+    let mut app = Application::new().unwrap();
+    let caller = app
         .add_untyped("caller", component_bytes(&caller_wit, "caller"))
         .unwrap();
-    let provider = catalog
+    let provider = app
         .add_untyped("provider", component_bytes(&provider_wit, "provider"))
         .unwrap();
-    let policy = Policy::builder(&catalog)
-        .link(caller, provider)
-        .unwrap()
-        .build();
-    let error = match Runtime::builder(catalog, policy).build() {
+    let policy = app.policy().link(caller, provider).unwrap().build();
+    let error = match app.runtime(policy).build() {
         Ok(_) => panic!("mismatched structural types unexpectedly planned"),
         Err(error) => error.to_string(),
     };
@@ -271,6 +272,37 @@ fn plan_compares_complete_structural_types() {
     assert!(error.contains("enum"));
     assert!(error.contains("flags"));
     assert!(error.contains("record"));
+}
+
+struct LoopBinding {
+    function: Func,
+}
+
+impl ComponentBinding for LoopBinding {
+    const WORLD: &'static str = "loop";
+    const EXPORTS: &'static [crate::binding::BindingExport] = &[];
+
+    fn bind<H: Send + 'static>(
+        store: &mut Store<PluginStore<H>>,
+        instance: &Instance,
+    ) -> anyhow::Result<Self> {
+        let interface = instance
+            .get_export_index(&mut *store, None, "demo:fuel/api@0.1.0")
+            .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
+        let function = instance
+            .get_export_index(&mut *store, Some(&interface), "run")
+            .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
+        let function = instance
+            .get_func(&mut *store, function)
+            .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
+        Ok(Self { function })
+    }
+}
+
+impl ApplicationBinding<()> for LoopBinding {
+    fn host_imports() -> Vec<HostImportBinding<()>> {
+        Vec::new()
+    }
 }
 
 #[test]
@@ -284,32 +316,19 @@ fn fuel_trap_marks_only_the_looping_component_unhealthy() {
             (export "demo:fuel/api@0.1.0" (instance $api)))"#,
     )
     .unwrap();
-    let mut catalog = Catalog::new().unwrap();
-    let looping = catalog.add_untyped("looping", bytes).unwrap();
-    let policy = Policy::builder(&catalog).include(looping).unwrap().build();
-    let runtime = Runtime::builder(catalog, policy).build().unwrap();
-    let call_loop = |store: &mut Store<PluginStore>, instance: &Instance| {
-        let interface = instance
-            .get_export_index(&mut *store, None, "demo:fuel/api@0.1.0")
-            .ok_or_else(|| anyhow::anyhow!("interface is not exported"))?;
-        let function = instance
-            .get_export_index(&mut *store, Some(&interface), "run")
-            .ok_or_else(|| anyhow::anyhow!("function is not exported"))?;
-        let function = instance
-            .get_func(&mut *store, function)
-            .ok_or_else(|| anyhow::anyhow!("export is not a function"))?;
-        function.call(store, &[], &mut [])?;
-        Ok(())
+    let mut app = Application::new().unwrap();
+    let looping = app.add::<LoopBinding>("looping", bytes).unwrap();
+    let policy = app.policy().include(looping).unwrap().build();
+    let runtime = app.runtime(policy).build().unwrap();
+    let call_loop = || {
+        RuntimeComponent::new(&runtime, looping).invoke(|store, binding| {
+            binding.function.call(store, &[], &mut [])?;
+            Ok(())
+        })
     };
-    assert!(matches!(
-        runtime.with_instance(looping, call_loop),
-        Err(RuntimeError::Trapped { .. })
-    ));
+    assert!(matches!(call_loop(), Err(RuntimeError::Trapped { .. })));
     assert!(!runtime.is_healthy(looping).unwrap());
-    assert!(matches!(
-        runtime.with_instance(looping, call_loop),
-        Err(RuntimeError::Unhealthy { .. })
-    ));
+    assert!(matches!(call_loop(), Err(RuntimeError::Unhealthy { .. })));
 }
 
 fn structural_wit(

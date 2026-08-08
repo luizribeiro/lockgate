@@ -71,7 +71,7 @@ The demo makes all three supported boundaries visible:
 2. `caller` invokes the application host's `demo:host/services.log` through its generated guest binding.
 3. `caller` invokes `demo:greeter/greeter.greet` through a normal generated sibling import. Lockgate satisfies that import using a provider selected by policy and structural types discovered from the two component artifacts.
 
-Dynamic component selection is still possible: the application may choose among `Component<RunnablePlugin>` handles at runtime. `ComponentId` and `Runtime::with_instance` remain available as the untyped escape hatch for artifact-driven tooling.
+Dynamic component selection is still possible: the application may choose among `Component<RunnablePlugin>` handles at runtime. Every call still goes through an admitted generated client, so selecting an artifact dynamically does not erase its interface authority.
 
 An artifact can implement several independent roles without being instantiated more than once. Admit it through each narrow world when different parts of the application should receive different authority:
 

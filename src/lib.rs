@@ -18,8 +18,7 @@ pub use catalog::{
 pub use lockgate_macros::bindings;
 pub use policy::{DirectoryAccess, HostImportGrant, Policy, PolicyBuilder, PolicyError};
 pub use runtime::{
-    Event, HostComponent, HostContext, PluginStore, Runtime, RuntimeBuildError, RuntimeBuilder,
-    RuntimeError,
+    Event, HostComponent, HostContext, Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeError,
 };
 
 #[doc(hidden)]

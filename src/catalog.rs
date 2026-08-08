@@ -612,7 +612,7 @@ world caller { import api; }"#;
         }];
 
         fn bind<H: Send + 'static>(
-            _store: &mut Store<crate::PluginStore<H>>,
+            _store: &mut Store<crate::__private::PluginStore<H>>,
             _instance: &Instance,
         ) -> anyhow::Result<Self> {
             Ok(Self)
@@ -630,7 +630,7 @@ world caller { import api; }"#;
         }];
 
         fn bind<H: Send + 'static>(
-            _store: &mut Store<crate::PluginStore<H>>,
+            _store: &mut Store<crate::__private::PluginStore<H>>,
             _instance: &Instance,
         ) -> anyhow::Result<Self> {
             Ok(Self)
@@ -648,7 +648,7 @@ world caller { import api; }"#;
         }];
 
         fn bind<H: Send + 'static>(
-            _store: &mut Store<crate::PluginStore<H>>,
+            _store: &mut Store<crate::__private::PluginStore<H>>,
             _instance: &Instance,
         ) -> anyhow::Result<Self> {
             Ok(Self)
