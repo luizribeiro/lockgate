@@ -183,6 +183,21 @@ pub struct Runtime<H: Send + 'static = ()> {
     table: Arc<Mutex<RuntimeTable<H>>>,
 }
 
+/// Runtime access retained by generated component clients.
+#[doc(hidden)]
+pub struct RuntimeComponent<'runtime, H: Send + 'static, B> {
+    runtime: &'runtime Runtime<H>,
+    component: Component<B>,
+}
+
+impl<H: Send + 'static, B> Copy for RuntimeComponent<'_, H, B> {}
+
+impl<H: Send + 'static, B> Clone for RuntimeComponent<'_, H, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 /// Configures a runtime before any component is instantiated.
 pub struct RuntimeBuilder<H: Send + 'static = ()> {
     catalog: Catalog,
@@ -334,15 +349,7 @@ impl<H: Send + 'static> Runtime<H> {
         component: Component<B>,
         call: impl FnOnce(&mut Store<PluginStore<H>>, B) -> anyhow::Result<R>,
     ) -> Result<R, RuntimeError> {
-        let id = component.id();
-        let entry = self.plan.catalog.entry(id)?;
-        with_component_runtime(&self.table, id, &entry.name, |runtime| {
-            let ComponentRuntime {
-                store, instance, ..
-            } = runtime;
-            let binding = B::bind(store, instance)?;
-            call(store, binding)
-        })
+        RuntimeComponent::new(self, component).invoke(call)
     }
 
     /// Reports whether a component has avoided a trapping call.
@@ -447,6 +454,31 @@ impl<H: Send + 'static> Runtime<H> {
             .components
             .insert(component, runtime);
         Ok(())
+    }
+}
+
+impl<'runtime, H: Send + 'static, B: ComponentBinding> RuntimeComponent<'runtime, H, B> {
+    /// Creates the internal runtime view used by generated clients.
+    #[doc(hidden)]
+    pub fn new(runtime: &'runtime Runtime<H>, component: Component<B>) -> Self {
+        Self { runtime, component }
+    }
+
+    /// Invokes a generated binding while preserving Lockgate's call invariants.
+    #[doc(hidden)]
+    pub fn invoke<R>(
+        &self,
+        call: impl FnOnce(&mut Store<PluginStore<H>>, B) -> anyhow::Result<R>,
+    ) -> Result<R, RuntimeError> {
+        let id = self.component.id();
+        let entry = self.runtime.plan.catalog.entry(id)?;
+        with_component_runtime(&self.runtime.table, id, &entry.name, |runtime| {
+            let ComponentRuntime {
+                store, instance, ..
+            } = runtime;
+            let binding = B::bind(store, instance)?;
+            call(store, binding)
+        })
     }
 }
 
