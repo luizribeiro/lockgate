@@ -328,14 +328,14 @@ impl<H: Send + 'static> Runtime<H> {
 
     /// Runs an application-defined operation against a raw component instance.
     ///
-    /// Prefer [`Self::with_component`] for artifacts admitted with [`Catalog::add`](crate::Catalog::add).
+    /// Prefer [`Self::component`] for artifacts admitted with generated application bindings.
     pub fn with_instance<R>(
         &self,
         component: ComponentId,
         call: impl FnOnce(&mut Store<PluginStore<H>>, &Instance) -> anyhow::Result<R>,
     ) -> Result<R, RuntimeError> {
         let entry = self.plan.catalog.entry(component)?;
-        with_component_runtime(&self.table, component, &entry.name, |runtime| {
+        invoke_component_runtime(&self.table, component, &entry.name, |runtime| {
             let ComponentRuntime {
                 store, instance, ..
             } = runtime;
@@ -343,16 +343,9 @@ impl<H: Send + 'static> Runtime<H> {
         })
     }
 
-    /// Runs a generated application binding against an admitted component.
-    pub fn with_component<B: ComponentBinding, R>(
-        &self,
-        component: Component<B>,
-        call: impl FnOnce(&mut Store<PluginStore<H>>, B) -> anyhow::Result<R>,
-    ) -> Result<R, RuntimeError> {
-        RuntimeComponent::new(self, component).invoke(call)
-    }
-
-    /// Creates a generated client for an admitted component role.
+    /// Creates a lightweight generated client for an admitted component role.
+    ///
+    /// The client performs no work until one of its WIT methods is called.
     pub fn component<B: RuntimeBinding<H>>(&self, component: Component<B>) -> B::Client<'_> {
         B::client(RuntimeComponent::new(self, component))
     }
@@ -477,7 +470,7 @@ impl<'runtime, H: Send + 'static, B: ComponentBinding> RuntimeComponent<'runtime
     ) -> Result<R, RuntimeError> {
         let id = self.component.id();
         let entry = self.runtime.plan.catalog.entry(id)?;
-        with_component_runtime(&self.runtime.table, id, &entry.name, |runtime| {
+        invoke_component_runtime(&self.runtime.table, id, &entry.name, |runtime| {
             let ComponentRuntime {
                 store, instance, ..
             } = runtime;
@@ -590,7 +583,7 @@ fn invoke_target<H: Send + 'static>(
     target: &Target,
     params: &[Val],
 ) -> Result<Vec<Val>, RuntimeError> {
-    with_component_runtime(
+    invoke_component_runtime(
         runtimes,
         target.component,
         &target.component_name,
@@ -598,7 +591,7 @@ fn invoke_target<H: Send + 'static>(
     )
 }
 
-fn with_component_runtime<H: Send + 'static, R>(
+fn invoke_component_runtime<H: Send + 'static, R>(
     runtimes: &Arc<Mutex<RuntimeTable<H>>>,
     component: ComponentId,
     component_name: &str,

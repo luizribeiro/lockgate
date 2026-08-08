@@ -45,15 +45,11 @@ fn main() -> Result<()> {
         .build();
     let runtime = app.runtime(policy).with_observer(print_event).build()?;
     println!("\n[call] caller.run()");
-    let value = runtime.with_component(caller, |store, bindings| {
-        Ok(bindings.demo_host_runnable().call_run(&mut *store)?)
-    })?;
+    let value = runtime.component(caller).runnable().run()?;
     println!("  => {value:?}");
 
     println!("\n[call] filereader.run()");
-    let value = runtime.with_component(filereader, |store, bindings| {
-        Ok(bindings.demo_host_runnable().call_run(&mut *store)?)
-    })?;
+    let value = runtime.component(filereader).runnable().run()?;
     println!("  => {value:?}");
 
     println!("\n[host] still running");

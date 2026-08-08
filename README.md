@@ -49,14 +49,15 @@ let policy = Policy::builder(app.catalog())
 
 let runtime = app.runtime(policy).build()?;
 
-let result = runtime.with_component(caller, |store, plugin| {
-    Ok(plugin.myapp_host_runnable().call_run(store)?)
-})?;
+let caller = runtime.component(caller);
+let result = caller.runnable().run()?;
 ```
 
 `lockgate::bindings!` parses all listed application worlds together. It generates every imported host interface once, remaps each Wasmtime world to those shared bindings, and emits export contracts plus canonical host-interface installers. The application therefore implements `myapp:host/services@1.0.0` once even when several plugin roles import it.
 
 `Application::add::<Binding>` compares the generated export contract with metadata decoded from the artifact and returns a typed `Component<Binding>` only when they match. It also retains host-interface installers specialized for the application's state type. Sibling-only components use `add_untyped`. Runtime construction installs only policy-granted host interfaces and prepares every complete linker before creating state or stores.
+
+`Runtime::component` turns an admitted handle into a lightweight generated client. The client mirrors the WIT structure as ordinary Rust method calls—component, then exported interface, then function—while Lockgate keeps Wasmtime stores, binding construction, fuel, locking, and trap health internal. A WIT `result<T, E>` remains inside the outer `Result<_, RuntimeError>`, so domain errors do not mark a component unhealthy.
 
 The generated `ApplicationBinding<S>` implementation exists only when `HostContext<S>` implements every host trait imported by that role. A missing host implementation is therefore a compile-time error at `Application::add`, while artifact admission and policy validation remain runtime checks over the supplied bytes and grants.
 
@@ -71,6 +72,18 @@ The demo makes all three supported boundaries visible:
 3. `caller` invokes `demo:greeter/greeter.greet` through a normal generated sibling import. Lockgate satisfies that import using a provider selected by policy and structural types discovered from the two component artifacts.
 
 Dynamic component selection is still possible: the application may choose among `Component<RunnablePlugin>` handles at runtime. `ComponentId` and `Runtime::with_instance` remain available as the untyped escape hatch for artifact-driven tooling.
+
+An artifact can implement several independent roles without being instantiated more than once. Admit it through each narrow world when different parts of the application should receive different authority:
+
+```rust,ignore
+let observer = app.add::<bindings::QueryObserverPlugin>("database", bytes)?;
+let database = app.admit::<bindings::DatabaseConnectorPlugin>(observer)?;
+
+runtime.component(observer).query_observer().on_query(query)?;
+runtime.component(database).database_connector().execute(statement)?;
+```
+
+Both handles carry the same component identity and call the same store and instance. A deliberately combined world can instead export both interfaces and produce one client with both accessors. Unrelated roles require no common plugin trait or world hierarchy.
 
 If an application eventually needs guest-selected routing, it should define a domain-specific typed WIT service such as `render-with(provider, document)` rather than a universal string-and-value invocation protocol.
 

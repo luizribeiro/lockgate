@@ -31,8 +31,8 @@ pub struct ComponentId {
 
 /// A component handle whose artifact was admitted against generated application bindings.
 ///
-/// The binding parameter is preserved so [`crate::Runtime::with_component`] can construct the
-/// correct generated binding without exposing a raw Wasmtime instance.
+/// The binding parameter is preserved so [`crate::Runtime::component`] can construct the correct
+/// generated client without exposing a raw Wasmtime instance.
 pub struct Component<B> {
     id: ComponentId,
     binding: PhantomData<fn() -> B>,
