@@ -52,9 +52,9 @@ let result = runtime.component(caller).run()?;
 
 `lockgate::bindings!` parses all listed application worlds together. It generates every imported host interface once, remaps each Wasmtime world to those shared bindings, and emits export contracts plus canonical host-interface installers. The application therefore implements `myapp:host/services@1.0.0` once even when several plugin roles import it.
 
-`Application::add::<Binding>` compares the generated export contract with metadata decoded from the artifact and returns a typed `Component<Binding>` only when they match. It also retains host-interface installers specialized for the application's state type. Even sibling-only providers are admitted through a narrow export-only world. Runtime construction installs only explicitly granted host interfaces and prepares every complete linker before creating stores.
+`Application::add::<Role>` compares each requested generated export contract with metadata decoded from the artifact. A single role returns one typed component handle; a tuple of roles returns a matching tuple of handles after every role validates atomically. It also retains host-interface installers specialized for the application's state type. Even sibling-only providers use a narrow export-only role. Runtime construction installs only explicitly granted host interfaces and prepares every complete linker before creating stores.
 
-`Runtime::component` turns an admitted handle into a lightweight generated client. Each binding role represents one exported interface, so its WIT functions become ordinary Rust methods directly on that client while Lockgate keeps Wasmtime stores, binding construction, fuel, locking, and trap health internal. A WIT `result<T, E>` remains inside the outer `Result<_, RuntimeError>`, so domain errors do not mark a component unhealthy.
+`Runtime::component` turns a typed handle into a lightweight generated client. Each binding role represents one exported interface, so its WIT functions become ordinary Rust methods directly on that client while Lockgate keeps Wasmtime stores, binding construction, fuel, locking, and trap health internal. A WIT `result<T, E>` remains inside the outer `Result<_, RuntimeError>`, so domain errors do not mark a component unhealthy.
 
 The generated binding implementation exists only when `HostContext<S>` implements every host trait imported by that role. A missing host implementation is therefore a compile-time error at `Application::add`, while artifact admission and grant validation remain runtime checks over the supplied bytes and grants.
 
@@ -68,19 +68,21 @@ The demo makes all three supported boundaries visible:
 2. `caller` invokes the application host's `demo:host/services.log` through its generated guest binding.
 3. `caller` invokes `demo:greeter/greeter.greet` through a normal generated sibling import. Lockgate satisfies that import using an explicitly linked provider and structural types discovered from the two component artifacts.
 
-Dynamic component selection is still possible: the application may choose among `Component<RunnablePlugin>` handles at runtime. Every call still goes through an admitted generated client, so selecting an artifact dynamically does not erase its interface authority.
+Dynamic component selection is still possible: the application may choose among `Component<RunnablePlugin>` handles at runtime. Every call still goes through a generated typed client, so selecting an artifact dynamically does not erase its interface authority.
 
-An artifact can implement several independent roles without being instantiated more than once. Admit it through each narrow world when different parts of the application should receive different authority:
+An artifact can implement several independent roles without being instantiated more than once. Add it with each narrow role needed by the application:
 
 ```rust,ignore
-let observer = app.add::<bindings::QueryObserverPlugin>("database", bytes)?;
-let database = app.admit::<bindings::DatabaseConnectorPlugin>(observer)?;
+let (observer, database) = app.add::<(
+    bindings::QueryObserverPlugin,
+    bindings::DatabaseConnectorPlugin,
+)>("database", bytes)?;
 
 runtime.component(observer).on_query(query)?;
 runtime.component(database).execute(statement)?;
 ```
 
-Both handles refer to the same component store and instance. Binding worlds export exactly one interface, so additional component capabilities always enter through `Application::admit`; unrelated roles require no common plugin trait or world hierarchy.
+Both handles refer to the same component store and instance. Binding worlds export exactly one interface, while tuple addition validates all requested capabilities atomically; unrelated roles require no common plugin trait or world hierarchy.
 
 If an application eventually needs guest-selected routing, it should define a domain-specific typed WIT service such as `render-with(provider, document)` rather than a universal string-and-value invocation protocol.
 
@@ -143,11 +145,13 @@ Host implementations use `HostContext::state`, `resources_mut`, and `component_n
 A component may implement more than one application role without creating another instance:
 
 ```rust,ignore
-let runnable = app.add::<bindings::RunnablePlugin>("plugin", bytes)?;
-let reader = app.admit::<bindings::FileReaderPlugin>(runnable)?;
+let (runnable, reader) = app.add::<(
+    bindings::RunnablePlugin,
+    bindings::FileReaderPlugin,
+)>("plugin", bytes)?;
 ```
 
-Secondary admission revalidates the existing artifact and merges its host-interface requirements. Canonical installers are deduplicated, and both typed handles access the same component store.
+Multi-role addition validates every requested role atomically and merges their host-interface requirements. Canonical installers are deduplicated, and every returned typed handle accesses the same component store.
 
 ## Enforcement lifecycle
 

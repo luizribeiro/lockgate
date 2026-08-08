@@ -2,7 +2,7 @@
 //! The catalog compiles artifacts and retains the component structure needed for enforcement.
 
 use crate::{
-    binding::{Binding, BindingExport},
+    binding::{BindingExport, RoleSet},
     plugin::{DirectImport, Signature, interface_functions, validate_introspectable_interface},
 };
 use std::{
@@ -84,7 +84,7 @@ pub enum ApplicationError {
     },
     #[error("component `{caller}` imports no interface exported by `{provider}")]
     NoMatchingImport { caller: String, provider: String },
-    #[error("component `{component}` was not admitted with host interface `{interface}`")]
+    #[error("host interface `{interface}` is unavailable for component `{component}`")]
     HostImportUnavailable {
         component: String,
         interface: String,
@@ -109,55 +109,34 @@ impl Catalog {
         })
     }
 
-    /// Decodes, compiles, and admits an artifact against generated application bindings.
+    /// Decodes, compiles, and admits an artifact against generated application roles.
     ///
-    /// Admission requires every export described by `B` to exist in the component with the same
+    /// Admission requires every requested role export to exist in the component with the same
     /// WIT type. Additional component exports are allowed.
-    pub(crate) fn add<S: Send + Sync + 'static, B: Binding<S>>(
+    pub(crate) fn add<S: Send + Sync + 'static, R: RoleSet<S>>(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
-    ) -> Result<Component<B>, ApplicationError> {
+    ) -> Result<Component<R>, ApplicationError> {
         let name = name.into();
         let mut entry = self.inspect_new(&name, bytes.as_ref())?;
-        validate_binding(B::EXPORTS, &entry.binding_exports).map_err(|source| {
-            ApplicationError::WorldMismatch {
-                name: name.clone(),
-                world: B::WORLD.into(),
-                source,
-            }
-        })?;
-        entry.host_imports.extend(B::HOST_IMPORTS);
-        let id = self.insert(entry);
-        Ok(Component {
-            id,
-            binding: PhantomData,
-        })
-    }
-
-    /// Admits an existing artifact against an additional generated application binding.
-    ///
-    /// The returned handle refers to the same catalog entry and compiled component. Admission
-    /// requires every export described by `B` to exist with the same WIT type; a failed check
-    /// leaves the catalog unchanged.
-    pub(crate) fn admit<S: Send + Sync + 'static, B: Binding<S>>(
-        &mut self,
-        component: Component<impl Sized>,
-    ) -> Result<Component<B>, ApplicationError> {
-        let id = component.id;
-        {
-            let entry = self.entry(id)?;
-            validate_binding(B::EXPORTS, &entry.binding_exports).map_err(|source| {
-                ApplicationError::WorldMismatch {
-                    name: entry.name.clone(),
-                    world: B::WORLD.into(),
+        let mut mismatch = None;
+        R::for_each_role(&mut |world, exports, host_imports, _| {
+            if mismatch.is_none()
+                && let Err(source) = validate_binding(exports, &entry.binding_exports)
+            {
+                mismatch = Some(ApplicationError::WorldMismatch {
+                    name: name.clone(),
+                    world: world.into(),
                     source,
-                }
-            })?;
+                });
+            }
+            entry.host_imports.extend(host_imports);
+        });
+        if let Some(error) = mismatch {
+            return Err(error);
         }
-        self.components[id.index]
-            .host_imports
-            .extend(B::HOST_IMPORTS);
+        let id = self.insert(entry);
         Ok(Component {
             id,
             binding: PhantomData,
@@ -249,6 +228,13 @@ impl<B> Hash for Component<B> {
 impl<B> Component<B> {
     pub(crate) fn id(self) -> ComponentId {
         self.id
+    }
+
+    pub(crate) fn cast<R>(self) -> Component<R> {
+        Component {
+            id: self.id,
+            binding: PhantomData,
+        }
     }
 }
 
@@ -441,6 +427,7 @@ fn exported_interface_names(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding::{Binding, RoleSet};
     use wasmtime::{Store, component::Instance};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
@@ -562,6 +549,42 @@ world caller { import api; }"#;
         }
     }
 
+    macro_rules! impl_test_role_set {
+        ($binding:ty) => {
+            impl<S: Send + Sync + 'static> RoleSet<S> for $binding {
+                type Handles = Component<Self>;
+
+                #[allow(clippy::type_complexity)]
+                fn for_each_role(
+                    visitor: &mut dyn FnMut(
+                        &'static str,
+                        &'static [BindingExport],
+                        &'static [&'static str],
+                        fn(
+                            &str,
+                            &mut wasmtime::component::Linker<crate::__private::PluginStore<S>>,
+                        ) -> anyhow::Result<()>,
+                    ),
+                ) {
+                    visitor(
+                        <Self as Binding<S>>::WORLD,
+                        <Self as Binding<S>>::EXPORTS,
+                        <Self as Binding<S>>::HOST_IMPORTS,
+                        <Self as Binding<S>>::install_host_import,
+                    );
+                }
+
+                fn handles(component: Component<Self>) -> Self::Handles {
+                    component
+                }
+            }
+        };
+    }
+
+    impl_test_role_set!(GreeterBinding);
+    impl_test_role_set!(HealthBinding);
+    impl_test_role_set!(MissingBinding);
+
     fn component_bytes(world_name: &str) -> Vec<u8> {
         let mut resolve = Resolve::new();
         let package = resolve.push_str("catalog.wit", WIT).unwrap();
@@ -609,13 +632,16 @@ world caller { import api; }"#;
     }
 
     #[test]
-    fn admits_one_artifact_under_multiple_bindings() {
+    fn adds_one_artifact_under_multiple_roles() {
         let mut catalog = Catalog::new().unwrap();
-        let greeter = catalog
-            .add::<(), GreeterBinding>("combined", component_bytes("multi-provider"))
+        let component = catalog
+            .add::<(), (GreeterBinding, HealthBinding)>(
+                "combined",
+                component_bytes("multi-provider"),
+            )
             .unwrap();
-
-        let health = catalog.admit::<(), HealthBinding>(greeter).unwrap();
+        let (greeter, health) =
+            <(GreeterBinding, HealthBinding) as RoleSet<()>>::handles(component);
 
         assert_eq!(greeter.id(), health.id());
         assert_eq!(catalog.components.len(), 1);
@@ -623,15 +649,13 @@ world caller { import api; }"#;
     }
 
     #[test]
-    fn failed_additional_admission_leaves_the_catalog_unchanged() {
+    fn failed_role_set_addition_leaves_the_catalog_unchanged() {
         let mut catalog = Catalog::new().unwrap();
-        let greeter = catalog
-            .add::<(), GreeterBinding>("greeter", component_bytes("provider"))
-            .unwrap();
-        let error = catalog.admit::<(), MissingBinding>(greeter).unwrap_err();
+        let error = catalog
+            .add::<(), (GreeterBinding, MissingBinding)>("greeter", component_bytes("provider"))
+            .unwrap_err();
 
         assert!(matches!(error, ApplicationError::WorldMismatch { .. }));
-        assert_eq!(catalog.components.len(), 1);
-        assert_eq!(catalog.entry(greeter.id()).unwrap().name, "greeter");
+        assert!(catalog.components.is_empty());
     }
 }

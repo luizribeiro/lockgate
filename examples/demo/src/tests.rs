@@ -24,14 +24,13 @@ fn filereader_cannot_read_outside_its_preopened_directory() -> Result<()> {
 }
 
 #[test]
-fn one_instance_can_be_called_through_multiple_admitted_roles() -> Result<()> {
+fn one_instance_can_be_called_through_multiple_roles() -> Result<()> {
     let root = artifacts::root()?;
     let mut app = Application::new(())?;
-    let reader = app.add::<bindings::FileReaderPlugin>(
+    let (reader, runnable) = app.add::<(bindings::FileReaderPlugin, bindings::RunnablePlugin)>(
         "filereader",
         artifacts::component_bytes("filereader")?,
     )?;
-    let runnable = app.admit::<bindings::RunnablePlugin>(reader)?;
     let runtime = app
         .allow_host_import(reader, HOST_SERVICES)?
         .read_only_dir(reader, root.join("sandbox/shared"), "/shared")?

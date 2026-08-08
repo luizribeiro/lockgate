@@ -591,6 +591,31 @@ world consumer { import api; }"#;
         }
     }
 
+    impl crate::binding::RoleSet<()> for FailingHostBinding {
+        type Handles = Component<Self>;
+
+        #[allow(clippy::type_complexity)]
+        fn for_each_role(
+            visitor: &mut dyn FnMut(
+                &'static str,
+                &'static [crate::binding::BindingExport],
+                &'static [&'static str],
+                fn(&str, &mut Linker<PluginStore<()>>) -> anyhow::Result<()>,
+            ),
+        ) {
+            visitor(
+                <Self as Binding<()>>::WORLD,
+                <Self as Binding<()>>::EXPORTS,
+                <Self as Binding<()>>::HOST_IMPORTS,
+                <Self as Binding<()>>::install_host_import,
+            );
+        }
+
+        fn handles(component: Component<Self>) -> Self::Handles {
+            component
+        }
+    }
+
     #[test]
     fn host_contexts_share_application_state() {
         let state = Arc::new(vec![1]);

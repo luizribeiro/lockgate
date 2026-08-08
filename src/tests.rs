@@ -71,12 +71,13 @@ interface services { log: func(message: string); }
 interface runnable { run: func() -> string; }
 world matching { import services; export runnable; }"#;
     let mut app = Application::new(()).unwrap();
-    let runnable = app
-        .add::<typed_bindings::RunnablePlugin>("plugin", component_bytes(wit, "matching"))
+    let (runnable, secondary) = app
+        .add::<(
+            typed_bindings::RunnablePlugin,
+            typed_bindings::SecondaryPlugin,
+        )>("plugin", component_bytes(wit, "matching"))
         .unwrap();
-    let secondary = app
-        .admit::<typed_bindings::SecondaryPlugin>(runnable)
-        .unwrap();
+    assert_eq!(runnable.id(), secondary.id());
     assert_eq!(app.host_installer_count(), 1);
     app.allow_host_import(secondary, "demo:admission/services@0.1.0")
         .unwrap()
@@ -277,6 +278,31 @@ impl Binding<()> for LoopBinding {
     where
         (): 'runtime,
     {
+    }
+}
+
+impl crate::binding::RoleSet<()> for LoopBinding {
+    type Handles = crate::Component<Self>;
+
+    #[allow(clippy::type_complexity)]
+    fn for_each_role(
+        visitor: &mut dyn FnMut(
+            &'static str,
+            &'static [crate::binding::BindingExport],
+            &'static [&'static str],
+            fn(&str, &mut wasmtime::component::Linker<PluginStore<()>>) -> anyhow::Result<()>,
+        ),
+    ) {
+        visitor(
+            <Self as Binding<()>>::WORLD,
+            <Self as Binding<()>>::EXPORTS,
+            <Self as Binding<()>>::HOST_IMPORTS,
+            <Self as Binding<()>>::install_host_import,
+        );
+    }
+
+    fn handles(component: crate::Component<Self>) -> Self::Handles {
+        component
     }
 }
 

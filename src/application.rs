@@ -2,7 +2,7 @@
 
 use crate::{
     Component,
-    binding::Binding,
+    binding::RoleSet,
     catalog::{ApplicationError, Catalog, ComponentId},
     grants::{
         DirectoryAccess, DirectoryGrant, Grants, HostImportGrant, LinkGrant, valid_guest_path,
@@ -25,11 +25,13 @@ impl<S: Send + Sync + 'static> HostBindings<S> {
         }
     }
 
-    fn register<B: Binding<S>>(&mut self, component: ComponentId) {
+    fn register<R: RoleSet<S>>(&mut self, component: ComponentId) {
         let bindings = self.components.entry(component).or_default();
-        for interface in B::HOST_IMPORTS {
-            bindings.insert(interface, B::install_host_import);
-        }
+        R::for_each_role(&mut |_, _, host_imports, install| {
+            for interface in host_imports {
+                bindings.insert(interface, install);
+            }
+        });
     }
 
     pub(crate) fn install(
@@ -76,24 +78,14 @@ impl<S: Send + Sync + 'static> Application<S> {
     }
 
     /// Adds an artifact to the application and retains its generated host-interface installers.
-    pub fn add<B: Binding<S>>(
+    pub fn add<R: RoleSet<S>>(
         &mut self,
         name: impl Into<String>,
         bytes: impl AsRef<[u8]>,
-    ) -> Result<Component<B>, ApplicationError> {
-        let component = self.catalog.add::<S, B>(name, bytes)?;
-        self.register::<B>(component.id());
-        Ok(component)
-    }
-
-    /// Admits an existing artifact under an additional generated binding role.
-    pub fn admit<B: Binding<S>>(
-        &mut self,
-        component: Component<impl Sized>,
-    ) -> Result<Component<B>, ApplicationError> {
-        let component = self.catalog.admit::<S, B>(component)?;
-        self.register::<B>(component.id());
-        Ok(component)
+    ) -> Result<R::Handles, ApplicationError> {
+        let component = self.catalog.add::<S, R>(name, bytes)?;
+        self.register::<R>(component.id());
+        Ok(R::handles(component))
     }
 
     #[cfg(test)]
@@ -158,8 +150,8 @@ impl<S: Send + Sync + 'static> Application<S> {
         Runtime::from_application(self.catalog, self.grants, self.state, self.host_bindings)
     }
 
-    fn register<B: Binding<S>>(&mut self, component: ComponentId) {
-        self.host_bindings.register::<B>(component);
+    fn register<R: RoleSet<S>>(&mut self, component: ComponentId) {
+        self.host_bindings.register::<R>(component);
     }
 
     pub(crate) fn link_ids(
@@ -272,7 +264,7 @@ world caller { import api; }"#;
     }
 
     #[test]
-    fn rejects_unrelated_links_and_unadmitted_host_imports() {
+    fn rejects_unrelated_links_and_unavailable_host_imports() {
         let mut app = Application::new(()).unwrap();
         let provider = app
             .add_untyped("provider", component_bytes("provider"))

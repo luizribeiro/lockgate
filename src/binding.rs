@@ -1,6 +1,9 @@
 //! Typed application bindings used for catalog admission and runtime calls.
 
-use crate::runtime::{PluginStore, RuntimeComponent};
+use crate::{
+    Component,
+    runtime::{PluginStore, RuntimeComponent},
+};
 use wasmtime::{
     Store,
     component::{Instance, Linker},
@@ -37,3 +40,61 @@ pub trait Binding<S: Send + Sync + 'static>: Sized + 'static {
     where
         S: 'runtime;
 }
+
+/// One or more generated binding roles validated together during artifact addition.
+#[doc(hidden)]
+pub trait RoleSet<S: Send + Sync + 'static>: Sized + 'static {
+    type Handles;
+
+    #[allow(clippy::type_complexity)]
+    fn for_each_role(
+        visitor: &mut dyn FnMut(
+            &'static str,
+            &'static [BindingExport],
+            &'static [&'static str],
+            fn(&str, &mut Linker<PluginStore<S>>) -> anyhow::Result<()>,
+        ),
+    );
+
+    fn handles(component: Component<Self>) -> Self::Handles;
+}
+
+macro_rules! impl_role_set_tuple {
+    ($($role:ident),+) => {
+        impl<S, $($role),+> RoleSet<S> for ($($role,)+)
+        where
+            S: Send + Sync + 'static,
+            $($role: RoleSet<S>,)+
+        {
+            type Handles = ($(<$role as RoleSet<S>>::Handles,)+);
+
+            #[allow(clippy::type_complexity)]
+            fn for_each_role(
+                visitor: &mut dyn FnMut(
+                    &'static str,
+                    &'static [BindingExport],
+                    &'static [&'static str],
+                    fn(&str, &mut Linker<PluginStore<S>>) -> anyhow::Result<()>,
+                ),
+            ) {
+                $(<$role as RoleSet<S>>::for_each_role(visitor);)+
+            }
+
+            fn handles(component: Component<Self>) -> Self::Handles {
+                ($(<$role as RoleSet<S>>::handles(component.cast()),)+)
+            }
+        }
+    };
+}
+
+impl_role_set_tuple!(A, B);
+impl_role_set_tuple!(A, B, C);
+impl_role_set_tuple!(A, B, C, D);
+impl_role_set_tuple!(A, B, C, D, E);
+impl_role_set_tuple!(A, B, C, D, E, F);
+impl_role_set_tuple!(A, B, C, D, E, F, G);
+impl_role_set_tuple!(A, B, C, D, E, F, G, H);
+impl_role_set_tuple!(A, B, C, D, E, F, G, H, I);
+impl_role_set_tuple!(A, B, C, D, E, F, G, H, I, J);
+impl_role_set_tuple!(A, B, C, D, E, F, G, H, I, J, K);
+impl_role_set_tuple!(A, B, C, D, E, F, G, H, I, J, K, L);

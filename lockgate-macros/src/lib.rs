@@ -247,13 +247,16 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
             let client =
                 generate_runtime_client(&source, &resolve, selected, wasmtime_with, &lockgate)?;
             let generated_client_name = format_ident!("{}Client", selected.rust_name);
-            let host_bounds = host_imports.values().map(|id| {
-                let path = interface_module_path(&resolve, *id);
-                quote! {
-                    #lockgate::HostContext<S>:
-                        super::__lockgate_shared_imports::#(#path)::*::Host,
-                }
-            });
+            let host_bounds = host_imports
+                .values()
+                .map(|id| {
+                    let path = interface_module_path(&resolve, *id);
+                    quote! {
+                        #lockgate::HostContext<S>:
+                            super::__lockgate_shared_imports::#(#path)::*::Host,
+                    }
+                })
+                .collect::<Vec<_>>();
             let installers = host_imports.iter().enumerate().map(|(index, (_, id))| {
                 let installer = format_ident!("__lockgate_install_host_import_{index}");
                 let path = interface_module_path(&resolve, *id);
@@ -376,6 +379,39 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                                 #generated_client_name { inner: component }
                             }
                         }
+
+                        impl<S: Send + Sync + 'static> #lockgate::__private::RoleSet<S> for #rust_name
+                        where
+                            #(#host_bounds)*
+                        {
+                            type Handles = #lockgate::Component<Self>;
+
+                            #[allow(clippy::type_complexity)]
+                            fn for_each_role(
+                                visitor: &mut dyn FnMut(
+                                    &'static str,
+                                    &'static [#lockgate::__private::BindingExport],
+                                    &'static [&'static str],
+                                    fn(
+                                        &str,
+                                        &mut ::wasmtime::component::Linker<
+                                            #lockgate::__private::PluginStore<S>,
+                                        >,
+                                    ) -> #lockgate::__private::AnyResult<()>,
+                                ),
+                            ) {
+                                visitor(
+                                    <Self as #lockgate::__private::Binding<S>>::WORLD,
+                                    <Self as #lockgate::__private::Binding<S>>::EXPORTS,
+                                    <Self as #lockgate::__private::Binding<S>>::HOST_IMPORTS,
+                                    <Self as #lockgate::__private::Binding<S>>::install_host_import,
+                                );
+                            }
+
+                            fn handles(component: #lockgate::Component<Self>) -> Self::Handles {
+                                component
+                            }
+                        }
                     };
 
                     #client
@@ -432,7 +468,7 @@ fn generate_runtime_client(
     if resolve.worlds[selected.id].exports.len() != 1 {
         return Err(syn::Error::new_spanned(
             &selected.world,
-            "Lockgate binding roles must export exactly one interface; admit multi-interface components under additional narrow roles",
+            "Lockgate binding roles must export exactly one interface; add multi-interface components with a tuple of narrow roles",
         ));
     }
     let mut exported = Vec::new();

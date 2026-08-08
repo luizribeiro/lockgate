@@ -43,11 +43,11 @@ fn main() -> Result<()> {
     )?;
     let caller =
         app.add::<bindings::RunnablePlugin>("caller", artifacts::component_bytes("caller")?)?;
-    let filereader = app.add::<bindings::FileReaderPlugin>(
-        "filereader",
-        artifacts::component_bytes("filereader")?,
-    )?;
-    let filereader_runnable = app.admit::<bindings::RunnablePlugin>(filereader)?;
+    let (filereader, filereader_runnable) =
+        app.add::<(bindings::FileReaderPlugin, bindings::RunnablePlugin)>(
+            "filereader",
+            artifacts::component_bytes("filereader")?,
+        )?;
     let runtime = app
         .link(caller, greeter)?
         .allow_host_import(caller, HOST_SERVICES)?

@@ -18,7 +18,7 @@ pub use runtime::{HostContext, Runtime, RuntimeBuildError, RuntimeError};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::binding::{Binding, BindingExport};
+    pub use crate::binding::{Binding, BindingExport, RoleSet};
     pub use crate::runtime::{PluginStore, RuntimeComponent};
     pub use anyhow::Result as AnyResult;
 }
