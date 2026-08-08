@@ -26,8 +26,9 @@ pub use runtime::{
 pub mod __private {
     pub use crate::binding::{
         ApplicationBinding, BindingExport, BindingImport, ComponentBinding, HostImportBinding,
+        RuntimeBinding,
     };
-    pub use crate::runtime::HostContextData;
+    pub use crate::runtime::{HostContextData, RuntimeComponent};
     pub use anyhow::Result as AnyResult;
     pub use wasmtime::Store as WasmtimeStore;
     pub use wasmtime::component::Instance as WasmtimeInstance;

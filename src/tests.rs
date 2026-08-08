@@ -20,6 +20,44 @@ mod typed_bindings {
     }
 }
 
+mod client_bindings {
+    crate::bindings! {
+        path: "src/testdata/clients.wit",
+        worlds: {
+            QueryObserverPlugin: "query-observer-plugin",
+            DatabaseConnectorPlugin: "database-connector-plugin",
+            ObservableDatabasePlugin: "observable-database-plugin",
+        },
+    }
+}
+
+#[allow(dead_code, clippy::too_many_arguments)]
+fn generated_clients_preserve_wit_signatures(
+    runtime: &Runtime,
+    observer: crate::Component<client_bindings::QueryObserverPlugin>,
+    database: crate::Component<client_bindings::DatabaseConnectorPlugin>,
+    combined: crate::Component<client_bindings::ObservableDatabasePlugin>,
+    query: client_bindings::__lockgate_world_0::exports::demo::clients::query_observer::Query,
+    phase: client_bindings::__lockgate_world_0::exports::demo::clients::query_observer::Phase,
+    interest: client_bindings::__lockgate_world_0::exports::demo::clients::query_observer::Interest,
+    combined_query: client_bindings::__lockgate_world_2::exports::demo::clients::query_observer::Query,
+    combined_interest: client_bindings::__lockgate_world_2::exports::demo::clients::query_observer::Interest,
+) {
+    let _ = runtime
+        .component(observer)
+        .query_observer()
+        .observe(&query, Some(phase), interest);
+    let _ = runtime
+        .component(database)
+        .database_connector()
+        .execute("select 1", &[]);
+    let combined = runtime.component(combined);
+    let _ = combined
+        .query_observer()
+        .observe(&combined_query, None, combined_interest);
+    let _ = combined.database_connector().execute("select 1", &[]);
+}
+
 impl typed_bindings::demo::admission::services::Host for HostContext<()> {
     fn log(&mut self, _message: String) {}
 }

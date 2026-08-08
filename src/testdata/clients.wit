@@ -1,0 +1,51 @@
+package demo:clients@0.1.0;
+
+interface query-observer {
+  record query {
+    text: string,
+    labels: list<string>,
+  }
+
+  enum phase {
+    planned,
+    executing,
+  }
+
+  flags interest {
+    reads,
+    writes,
+  }
+
+  variant observation {
+    ignored,
+    recorded(string),
+  }
+
+  observe: func(query: query, phase: option<phase>, interest: interest) -> result<observation, string>;
+}
+
+interface database-connector {
+  record row {
+    columns: list<string>,
+  }
+
+  resource connection {
+    constructor();
+    query: func(statement: string) -> result<list<row>, string>;
+  }
+
+  execute: func(statement: string, parameters: list<string>) -> result<list<row>, string>;
+}
+
+world query-observer-plugin {
+  export query-observer;
+}
+
+world database-connector-plugin {
+  export database-connector;
+}
+
+world observable-database-plugin {
+  export query-observer;
+  export database-connector;
+}

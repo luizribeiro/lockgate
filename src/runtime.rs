@@ -4,7 +4,7 @@
 use crate::{
     Component, ComponentId, ComponentRef,
     application::{HostBindings, StateFactory},
-    binding::ComponentBinding,
+    binding::{ComponentBinding, RuntimeBinding},
     catalog::{Catalog, CatalogError},
     plan::{Plan, ResolvedImport, Target},
     policy::{DirectoryAccess, DirectoryGrant, Policy},
@@ -350,6 +350,11 @@ impl<H: Send + 'static> Runtime<H> {
         call: impl FnOnce(&mut Store<PluginStore<H>>, B) -> anyhow::Result<R>,
     ) -> Result<R, RuntimeError> {
         RuntimeComponent::new(self, component).invoke(call)
+    }
+
+    /// Creates a generated client for an admitted component role.
+    pub fn component<B: RuntimeBinding<H>>(&self, component: Component<B>) -> B::Client<'_> {
+        B::client(RuntimeComponent::new(self, component))
     }
 
     /// Reports whether a component has avoided a trapping call.

@@ -3,8 +3,11 @@ use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 use quote::{format_ident, quote};
-use std::collections::{BTreeMap, BTreeSet};
-use syn::{Ident, LitStr, Token, braced, parse::Parse, parse::ParseStream};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use syn::{
+    FnArg, GenericArgument, Ident, ImplItem, Item, ItemImpl, LitStr, PathArguments, ReturnType,
+    Token, Type, TypePath, braced, parse::Parse, parse::ParseStream,
+};
 use wit_parser::{InterfaceId, Resolve, WorldId, WorldItem};
 
 #[proc_macro]
@@ -186,6 +189,13 @@ struct SelectedWorld {
     imports: Vec<lockgate_schema::Import>,
 }
 
+struct ExportedInterface {
+    accessor: Ident,
+    public_accessor: Ident,
+    module_path: Vec<Ident>,
+    client_name: Ident,
+}
+
 fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
     let lockgate = lockgate_path(&input.path)?;
     let root = std::env::var("CARGO_MANIFEST_DIR").map_err(|error| {
@@ -279,148 +289,580 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
         }
     });
 
-    let worlds = selected.iter().map(|selected| {
-        let alias = &selected.alias;
-        let world = &selected.world;
-        let rust_name = &selected.rust_name;
-        let module = &selected.module;
-        let export_metadata = selected.exports.iter().map(|export| {
-            let interface = &export.interface;
-            let item = &export.item;
-            let signature = &export.signature;
-            quote! {
-                #lockgate::__private::BindingExport {
-                    interface: #interface,
-                    item: #item,
-                    signature: #signature,
-                }
-            }
-        });
-        let import_metadata = selected.imports.iter().map(|import| {
-            let interface = &import.interface;
-            quote! {
-                #lockgate::__private::BindingImport { interface: #interface }
-            }
-        });
-        let host_imports = resolve.worlds[selected.id]
-            .imports
-            .values()
-            .filter_map(|item| match item {
-                WorldItem::Interface { id, .. } => {
-                    Some((resolve.id_of(*id).expect("validated named import"), *id))
-                }
-                _ => None,
-            })
-            .collect::<BTreeMap<_, _>>();
-        let host_bounds = host_imports.values().map(|id| {
-            let path = interface_module_path(&resolve, *id);
-            quote! {
-                #lockgate::HostContext<S>:
-                    super::__lockgate_shared_imports::#(#path)::*::Host,
-            }
-        });
-        let installers = host_imports.iter().enumerate().map(|(index, (_, id))| {
-            let installer = format_ident!("__lockgate_install_host_import_{index}");
-            let path = interface_module_path(&resolve, *id);
-            quote! {
-                fn #installer<S: Send + 'static>(
-                    linker: &mut ::wasmtime::component::Linker<
-                        #lockgate::PluginStore<S>,
-                    >,
-                ) -> #lockgate::__private::AnyResult<()>
-                where
-                    #lockgate::HostContext<S>:
-                        super::__lockgate_shared_imports::#(#path)::*::Host,
-                {
-                    super::__lockgate_shared_imports::#(#path)::*::add_to_linker::<
-                        _,
-                        #lockgate::__private::HostContextData<S>,
-                    >(linker, #lockgate::PluginStore::context_mut)?;
-                    Ok(())
-                }
-            }
-        });
-        let installer_entries = host_imports.keys().enumerate().map(|(index, interface)| {
-            let installer = format_ident!("__lockgate_install_host_import_{index}");
-            quote! {
-                #lockgate::__private::HostImportBinding {
-                    interface: #interface,
-                    install: #installer::<S>,
-                }
-            }
-        });
-        let remappings = resolve.worlds[selected.id]
-            .imports
-            .iter()
-            .filter_map(|(key, item)| match item {
-                WorldItem::Interface { id, .. } => Some((key, *id)),
-                _ => None,
-            })
-            .map(|(key, id)| {
-                let lookup = match key {
-                    wit_parser::WorldKey::Name(name) => name.clone(),
-                    wit_parser::WorldKey::Interface(_) => {
-                        resolve.id_of(id).expect("validated named import")
-                    }
-                };
-                let lookup = LitStr::new(&lookup, world.span());
-                let path = interface_module_path(&resolve, id);
+    let worlds = selected
+        .iter()
+        .map(|selected| -> syn::Result<TokenStream2> {
+            let alias = &selected.alias;
+            let world = &selected.world;
+            let rust_name = &selected.rust_name;
+            let module = &selected.module;
+            let export_metadata = selected.exports.iter().map(|export| {
+                let interface = &export.interface;
+                let item = &export.item;
+                let signature = &export.signature;
                 quote! {
-                    #lookup: super::__lockgate_shared_imports::#(#path)::*
+                    #lockgate::__private::BindingExport {
+                        interface: #interface,
+                        item: #item,
+                        signature: #signature,
+                    }
                 }
             });
-        quote! {
-            #[doc(hidden)]
-            pub mod #module {
-                ::wasmtime::component::bindgen!({
-                    path: #path,
-                    world: #world,
-                    with: { #(#remappings),* },
-                });
-
-                const _: () = {
-                    #(#installers)*
-
-                    impl #lockgate::__private::ComponentBinding for #rust_name {
-                        const WORLD: &'static str = #world;
-                        const EXPORTS: &'static [#lockgate::__private::BindingExport] =
-                            &[#(#export_metadata),*];
-                        const IMPORTS: &'static [#lockgate::__private::BindingImport] =
-                            &[#(#import_metadata),*];
-
-                        fn bind<H: Send + 'static>(
-                            store: &mut #lockgate::__private::WasmtimeStore<
-                                #lockgate::PluginStore<H>,
-                            >,
-                            instance: &#lockgate::__private::WasmtimeInstance,
-                        ) -> #lockgate::__private::AnyResult<Self> {
-                            Ok(Self::new(&mut *store, instance)?)
-                        }
+            let import_metadata = selected.imports.iter().map(|import| {
+                let interface = &import.interface;
+                quote! {
+                    #lockgate::__private::BindingImport { interface: #interface }
+                }
+            });
+            let host_imports = resolve.worlds[selected.id]
+                .imports
+                .values()
+                .filter_map(|item| match item {
+                    WorldItem::Interface { id, .. } => {
+                        Some((resolve.id_of(*id).expect("validated named import"), *id))
                     }
-
-                    impl<S: Send + 'static> #lockgate::__private::ApplicationBinding<S>
-                        for #rust_name
+                    _ => None,
+                })
+                .collect::<BTreeMap<_, _>>();
+            let wasmtime_with = host_imports
+                .iter()
+                .map(|(canonical, id)| {
+                    let path = interface_module_path(&resolve, *id)
+                        .into_iter()
+                        .map(|segment| segment.to_string())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    (
+                        canonical.clone(),
+                        format!("super::__lockgate_shared_imports::{path}"),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            let client =
+                generate_runtime_client(&source, &resolve, selected, wasmtime_with, &lockgate)?;
+            let client_name = format_ident!("{}Client", selected.alias);
+            let generated_client_name = format_ident!("{}Client", selected.rust_name);
+            let host_bounds = host_imports.values().map(|id| {
+                let path = interface_module_path(&resolve, *id);
+                quote! {
+                    #lockgate::HostContext<S>:
+                        super::__lockgate_shared_imports::#(#path)::*::Host,
+                }
+            });
+            let installers = host_imports.iter().enumerate().map(|(index, (_, id))| {
+                let installer = format_ident!("__lockgate_install_host_import_{index}");
+                let path = interface_module_path(&resolve, *id);
+                quote! {
+                    fn #installer<S: Send + 'static>(
+                        linker: &mut ::wasmtime::component::Linker<
+                            #lockgate::PluginStore<S>,
+                        >,
+                    ) -> #lockgate::__private::AnyResult<()>
                     where
-                        #(#host_bounds)*
+                        #lockgate::HostContext<S>:
+                            super::__lockgate_shared_imports::#(#path)::*::Host,
                     {
-                        fn host_imports() -> ::std::vec::Vec<
-                            #lockgate::__private::HostImportBinding<S>,
-                        > {
-                            ::std::vec![#(#installer_entries),*]
-                        }
+                        super::__lockgate_shared_imports::#(#path)::*::add_to_linker::<
+                            _,
+                            #lockgate::__private::HostContextData<S>,
+                        >(linker, #lockgate::PluginStore::context_mut)?;
+                        Ok(())
                     }
-                };
-            }
+                }
+            });
+            let installer_entries = host_imports.keys().enumerate().map(|(index, interface)| {
+                let installer = format_ident!("__lockgate_install_host_import_{index}");
+                quote! {
+                    #lockgate::__private::HostImportBinding {
+                        interface: #interface,
+                        install: #installer::<S>,
+                    }
+                }
+            });
+            let remappings = resolve.worlds[selected.id]
+                .imports
+                .iter()
+                .filter_map(|(key, item)| match item {
+                    WorldItem::Interface { id, .. } => Some((key, *id)),
+                    _ => None,
+                })
+                .map(|(key, id)| {
+                    let lookup = match key {
+                        wit_parser::WorldKey::Name(name) => name.clone(),
+                        wit_parser::WorldKey::Interface(_) => {
+                            resolve.id_of(id).expect("validated named import")
+                        }
+                    };
+                    let lookup = LitStr::new(&lookup, world.span());
+                    let path = interface_module_path(&resolve, id);
+                    quote! {
+                        #lookup: super::__lockgate_shared_imports::#(#path)::*
+                    }
+                });
+            Ok(quote! {
+                #[doc(hidden)]
+                pub mod #module {
+                    ::wasmtime::component::bindgen!({
+                        path: #path,
+                        world: #world,
+                        with: { #(#remappings),* },
+                    });
 
-            pub use #module::#rust_name as #alias;
-        }
-    });
+                    const _: () = {
+                        #(#installers)*
+
+                        impl #lockgate::__private::ComponentBinding for #rust_name {
+                            const WORLD: &'static str = #world;
+                            const EXPORTS: &'static [#lockgate::__private::BindingExport] =
+                                &[#(#export_metadata),*];
+                            const IMPORTS: &'static [#lockgate::__private::BindingImport] =
+                                &[#(#import_metadata),*];
+
+                            fn bind<H: Send + 'static>(
+                                store: &mut #lockgate::__private::WasmtimeStore<
+                                    #lockgate::PluginStore<H>,
+                                >,
+                                instance: &#lockgate::__private::WasmtimeInstance,
+                            ) -> #lockgate::__private::AnyResult<Self> {
+                                Ok(Self::new(&mut *store, instance)?)
+                            }
+                        }
+
+                        impl<S: Send + 'static> #lockgate::__private::ApplicationBinding<S>
+                            for #rust_name
+                        where
+                            #(#host_bounds)*
+                        {
+                            fn host_imports() -> ::std::vec::Vec<
+                                #lockgate::__private::HostImportBinding<S>,
+                            > {
+                                ::std::vec![#(#installer_entries),*]
+                            }
+                        }
+                    };
+
+                    #client
+                }
+
+                pub use #module::#rust_name as #alias;
+                pub use #module::#generated_client_name as #client_name;
+            })
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(quote! {
         #shared_bindings
         #(#shared_reexports)*
         #(#worlds)*
     })
+}
+
+fn generate_runtime_client(
+    source: &std::path::Path,
+    resolve: &Resolve,
+    selected: &SelectedWorld,
+    with: HashMap<String, String>,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    let mut wasmtime_resolve = wasmtime_wit_parser::Resolve::new();
+    wasmtime_resolve.all_features = true;
+    let (package, _) = wasmtime_resolve.push_path(source).map_err(|error| {
+        syn::Error::new_spanned(
+            &selected.world,
+            format!(
+                "failed to prepare Wasmtime client signatures from {}: {error:#}",
+                source.display()
+            ),
+        )
+    })?;
+    let world = wasmtime_resolve
+        .select_world(&[package], Some(&selected.world.value()))
+        .map_err(|error| syn::Error::new_spanned(&selected.world, error.to_string()))?;
+    let mut options = wasmtime_wit_bindgen::Opts {
+        with,
+        ..Default::default()
+    };
+    options.wasmtime_crate = Some("::wasmtime".into());
+    let generated = options
+        .generate(&mut wasmtime_resolve, world)
+        .map_err(|error| syn::Error::new_spanned(&selected.world, error.to_string()))?;
+    let generated = syn::parse_file(&generated).map_err(|error| {
+        syn::Error::new_spanned(
+            &selected.world,
+            format!("failed to read generated Wasmtime signatures: {error}"),
+        )
+    })?;
+
+    let mut exported = Vec::new();
+    let mut short_names = BTreeMap::<String, usize>::new();
+    for (key, item) in &resolve.worlds[selected.id].exports {
+        let WorldItem::Interface { id, .. } = item else {
+            return Err(syn::Error::new_spanned(
+                &selected.world,
+                "runtime clients require interface exports",
+            ));
+        };
+        let (accessor, module_path, short_name) = match key {
+            wit_parser::WorldKey::Name(name) => {
+                let name = rust_ident(name);
+                (
+                    format_ident!("{name}"),
+                    vec![format_ident!("exports"), format_ident!("{name}")],
+                    name,
+                )
+            }
+            wit_parser::WorldKey::Interface(_) => {
+                let path = interface_module_path(resolve, *id);
+                let accessor = path
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("_");
+                let short = rust_ident(
+                    resolve.interfaces[*id]
+                        .name
+                        .as_deref()
+                        .expect("named exported interface"),
+                );
+                let mut module_path = vec![format_ident!("exports")];
+                module_path.extend(path);
+                (format_ident!("{accessor}"), module_path, short)
+            }
+        };
+        *short_names.entry(short_name.clone()).or_default() += 1;
+        exported.push((accessor, module_path, short_name));
+    }
+
+    let interfaces = exported
+        .into_iter()
+        .enumerate()
+        .map(|(index, (accessor, module_path, short_name))| {
+            let public_accessor = if short_names[&short_name] == 1 {
+                format_ident!("{short_name}")
+            } else {
+                accessor.clone()
+            };
+            ExportedInterface {
+                accessor,
+                public_accessor,
+                module_path,
+                client_name: format_ident!("__lockgate_client_{index}"),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let rust_name = &selected.rust_name;
+    let world_client = format_ident!("{rust_name}Client");
+    let mut interface_modules = Vec::new();
+    let mut interface_accessors = Vec::new();
+    for interface in interfaces {
+        let module_items = nested_module_items(&generated.items, &interface.module_path)
+            .ok_or_else(|| {
+                syn::Error::new_spanned(
+                    &selected.world,
+                    format!(
+                        "could not locate generated export module `{}`",
+                        interface
+                            .module_path
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("::")
+                    ),
+                )
+            })?;
+        let (module, accessor) = generate_interface_client(
+            module_items,
+            &interface,
+            rust_name,
+            &world_client,
+            lockgate,
+        )?;
+        interface_modules.push(module);
+        interface_accessors.push(accessor);
+    }
+
+    Ok(quote! {
+        pub struct #world_client<'runtime, S: Send + 'static> {
+            inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
+        }
+
+        impl<'runtime, S: Send + 'static> #world_client<'runtime, S> {
+            #(#interface_accessors)*
+        }
+
+        #(#interface_modules)*
+
+        impl<S: Send + 'static> #lockgate::__private::RuntimeBinding<S> for #rust_name {
+            type Client<'runtime> = #world_client<'runtime, S>
+            where
+                S: 'runtime;
+
+            fn client<'runtime>(
+                component: #lockgate::__private::RuntimeComponent<'runtime, S, Self>,
+            ) -> Self::Client<'runtime>
+            where
+                S: 'runtime,
+            {
+                #world_client { inner: component }
+            }
+        }
+    })
+}
+
+fn nested_module_items<'a>(items: &'a [Item], path: &[Ident]) -> Option<&'a [Item]> {
+    let mut items = items;
+    for segment in path {
+        let module = items.iter().find_map(|item| match item {
+            Item::Mod(module) if module.ident == *segment => Some(module),
+            _ => None,
+        })?;
+        items = &module.content.as_ref()?.1;
+    }
+    Some(items)
+}
+
+fn generate_interface_client(
+    items: &[Item],
+    interface: &ExportedInterface,
+    rust_name: &Ident,
+    _world_client: &Ident,
+    lockgate: &TokenStream2,
+) -> syn::Result<(TokenStream2, TokenStream2)> {
+    let mut calls = BTreeMap::<String, Vec<syn::ImplItemFn>>::new();
+    let mut resources = BTreeMap::<String, Ident>::new();
+    for item in items {
+        let Item::Impl(item) = item else {
+            continue;
+        };
+        let Some(target) = impl_target(item) else {
+            continue;
+        };
+        if !target.starts_with("Guest") {
+            continue;
+        }
+        for impl_item in &item.items {
+            let ImplItem::Fn(function) = impl_item else {
+                continue;
+            };
+            if function.sig.ident.to_string().starts_with("call_") {
+                calls
+                    .entry(target.clone())
+                    .or_default()
+                    .push(function.clone());
+            } else if target == "Guest"
+                && function.sig.inputs.len() == 1
+                && let ReturnType::Type(_, ty) = &function.sig.output
+                && let Some(resource) = type_path_last_ident(ty)
+                && resource.to_string().starts_with("Guest")
+            {
+                resources.insert(resource.to_string(), function.sig.ident.clone());
+            }
+        }
+    }
+
+    let module = &interface.client_name;
+    let module_path = &interface.module_path;
+    let export_path = quote!(#(#module_path)::*);
+    let root_accessor = &interface.accessor;
+    let public_accessor = &interface.public_accessor;
+    let direct_calls = calls.remove("Guest").unwrap_or_default();
+    let direct_methods = direct_calls
+        .iter()
+        .map(|function| generate_client_method(function, root_accessor, None, lockgate))
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let mut resource_structs = Vec::new();
+    let mut resource_accessors = Vec::new();
+    for (guest, functions) in calls {
+        let Some(accessor) = resources.get(&guest) else {
+            return Err(syn::Error::new_spanned(
+                &interface.public_accessor,
+                format!("could not locate generated resource accessor for `{guest}`"),
+            ));
+        };
+        let resource_name = guest.strip_prefix("Guest").unwrap_or(&guest);
+        let resource_client = format_ident!("{}Client", resource_name);
+        let methods = functions
+            .iter()
+            .map(|function| {
+                generate_client_method(function, root_accessor, Some(accessor), lockgate)
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        resource_accessors.push(quote! {
+            pub fn #accessor(&self) -> #resource_client<'runtime, S> {
+                #resource_client { inner: self.inner }
+            }
+        });
+        resource_structs.push(quote! {
+            pub struct #resource_client<'runtime, S: Send + 'static> {
+                inner: #lockgate::__private::RuntimeComponent<'runtime, S, super::#rust_name>,
+            }
+
+            impl<'runtime, S: Send + 'static> #resource_client<'runtime, S> {
+                #(#methods)*
+            }
+        });
+    }
+
+    let interface_module = quote! {
+        #[doc(hidden)]
+        pub mod #module {
+            #[allow(unused_imports)]
+            use super::#export_path::*;
+
+            pub struct Client<'runtime, S: Send + 'static> {
+                inner: #lockgate::__private::RuntimeComponent<'runtime, S, super::#rust_name>,
+            }
+
+            impl<'runtime, S: Send + 'static> Client<'runtime, S> {
+                pub(super) fn new(
+                    inner: #lockgate::__private::RuntimeComponent<
+                        'runtime,
+                        S,
+                        super::#rust_name,
+                    >,
+                ) -> Self {
+                    Self { inner }
+                }
+
+                #(#direct_methods)*
+                #(#resource_accessors)*
+            }
+
+            #(#resource_structs)*
+        }
+    };
+    let world_accessor = quote! {
+        pub fn #public_accessor(&self) -> #module::Client<'runtime, S> {
+            #module::Client::new(self.inner)
+        }
+    };
+    Ok((interface_module, world_accessor))
+}
+
+fn impl_target(item: &ItemImpl) -> Option<String> {
+    let Type::Path(TypePath { path, .. }) = item.self_ty.as_ref() else {
+        return None;
+    };
+    path.segments
+        .last()
+        .map(|segment| segment.ident.to_string())
+}
+
+fn type_path_last_ident(ty: &Type) -> Option<&Ident> {
+    let Type::Path(TypePath { path, .. }) = ty else {
+        return None;
+    };
+    path.segments.last().map(|segment| &segment.ident)
+}
+
+fn generate_client_method(
+    function: &syn::ImplItemFn,
+    root_accessor: &Ident,
+    resource_accessor: Option<&Ident>,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    if function.sig.asyncness.is_some() {
+        return Err(syn::Error::new_spanned(
+            &function.sig,
+            "asynchronous guest exports are unsupported by the synchronous Lockgate runtime",
+        ));
+    }
+    let original = &function.sig.ident;
+    let Some(name) = original
+        .to_string()
+        .strip_prefix("call_")
+        .map(str::to_owned)
+    else {
+        return Err(syn::Error::new_spanned(
+            original,
+            "generated guest call is missing the `call_` prefix",
+        ));
+    };
+    let name = format_ident!("{name}");
+    let mut inputs = function.sig.inputs.iter();
+    let Some(receiver) = inputs.next() else {
+        return Err(syn::Error::new_spanned(
+            &function.sig,
+            "generated guest call is missing its receiver",
+        ));
+    };
+    let Some(_store) = inputs.next() else {
+        return Err(syn::Error::new_spanned(
+            &function.sig,
+            "generated guest call is missing its store parameter",
+        ));
+    };
+    let params = inputs.cloned().collect::<Vec<_>>();
+    let args = params
+        .iter()
+        .map(|param| match param {
+            FnArg::Typed(param) => match param.pat.as_ref() {
+                syn::Pat::Ident(ident) => Ok(ident.ident.clone()),
+                pattern => Err(syn::Error::new_spanned(
+                    pattern,
+                    "generated guest parameter must use an identifier pattern",
+                )),
+            },
+            FnArg::Receiver(receiver) => Err(syn::Error::new_spanned(
+                receiver,
+                "generated guest call has an unexpected receiver parameter",
+            )),
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+    let result = generated_result_type(&function.sig.output)?;
+    let guest = if let Some(resource) = resource_accessor {
+        quote!(binding.#root_accessor().#resource())
+    } else {
+        quote!(binding.#root_accessor())
+    };
+    Ok(quote! {
+        pub fn #name(#receiver, #(#params),*)
+            -> ::std::result::Result<#result, #lockgate::RuntimeError>
+        {
+            self.inner.invoke(|store, binding| {
+                Ok(#guest.#original(&mut *store, #(#args),*)?)
+            })
+        }
+    })
+}
+
+fn generated_result_type(output: &ReturnType) -> syn::Result<Type> {
+    let ReturnType::Type(_, ty) = output else {
+        return Err(syn::Error::new_spanned(
+            output,
+            "generated guest call does not return a Wasmtime result",
+        ));
+    };
+    let Type::Path(TypePath { path, .. }) = ty.as_ref() else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "generated guest call uses an unsupported return type",
+        ));
+    };
+    let Some(segment) = path.segments.last() else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "generated result path is empty",
+        ));
+    };
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return Err(syn::Error::new_spanned(
+            segment,
+            "generated Wasmtime result is missing its value type",
+        ));
+    };
+    arguments
+        .args
+        .iter()
+        .find_map(|argument| match argument {
+            GenericArgument::Type(ty) => Some(ty.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            syn::Error::new_spanned(arguments, "generated Wasmtime result has no value type")
+        })
 }
 
 fn interface_module_path(resolve: &Resolve, interface: InterfaceId) -> Vec<Ident> {

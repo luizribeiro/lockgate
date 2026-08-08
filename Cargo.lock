@@ -954,6 +954,8 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+ "wasmtime-internal-wit-bindgen",
+ "wit-parser 0.252.0",
  "wit-parser 0.255.0",
 ]
 

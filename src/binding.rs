@@ -1,6 +1,6 @@
 //! Typed application bindings used for catalog admission and runtime calls.
 
-use crate::runtime::PluginStore;
+use crate::runtime::{PluginStore, RuntimeComponent};
 use wasmtime::{
     Store,
     component::{Instance, Linker},
@@ -46,4 +46,16 @@ pub trait ComponentBinding: Sized + 'static {
 #[doc(hidden)]
 pub trait ApplicationBinding<S: Send + 'static>: ComponentBinding {
     fn host_imports() -> Vec<HostImportBinding<S>>;
+}
+
+/// A generated binding that can construct an ergonomic runtime client.
+#[doc(hidden)]
+pub trait RuntimeBinding<S: Send + 'static>: ComponentBinding {
+    type Client<'runtime>
+    where
+        S: 'runtime;
+
+    fn client<'runtime>(component: RuntimeComponent<'runtime, S, Self>) -> Self::Client<'runtime>
+    where
+        S: 'runtime;
 }
