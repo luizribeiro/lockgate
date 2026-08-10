@@ -100,6 +100,17 @@ impl<S: Send + Sync + 'static> Application<S> {
         Ok(R::handles(component))
     }
 
+    /// Reports whether an artifact implements every role in `R` without adding it.
+    ///
+    /// Invalid artifacts and metadata return an error. A valid component whose exports do not
+    /// satisfy the requested generated bindings returns `Ok(false)`.
+    pub fn supports<R: RoleSet<S>>(
+        &self,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<bool, ApplicationError> {
+        self.catalog.supports::<S, R>(bytes)
+    }
+
     /// Returns the metadata embedded by an admitted plugin.
     pub fn metadata<B>(
         &self,

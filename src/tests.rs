@@ -136,6 +136,33 @@ world mismatched { export runnable; }"#;
 }
 
 #[test]
+fn applications_probe_roles_without_adding_components() {
+    let matching = r#"package demo:admission@0.1.0;
+
+interface runnable { run: func() -> string; }
+world matching { export runnable; }"#;
+    let mismatched = r#"package demo:admission@0.1.0;
+
+interface runnable { run: func(input: string) -> string; }
+world mismatched { export runnable; }"#;
+    let mut app = Application::new(()).unwrap();
+
+    assert!(
+        app.supports::<typed_bindings::RunnablePlugin>(component_bytes(matching, "matching"))
+            .unwrap()
+    );
+    assert!(
+        !app.supports::<typed_bindings::RunnablePlugin>(component_bytes(mismatched, "mismatched"))
+            .unwrap()
+    );
+    assert_eq!(app.host_installer_count(), 0);
+    let component = app
+        .add::<typed_bindings::RunnablePlugin>(component_bytes(matching, "matching"))
+        .unwrap();
+    assert_eq!(component.id().index, 0);
+}
+
+#[test]
 fn catalog_accepts_fixed_lists() {
     let wit = r#"package demo:fixed-list@0.1.0;
 

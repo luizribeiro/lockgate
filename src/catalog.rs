@@ -125,27 +125,27 @@ impl Catalog {
         bytes: impl AsRef<[u8]>,
     ) -> Result<Component<R>, ApplicationError> {
         let mut entry = inspect(&self.engine, bytes.as_ref())?;
-        let mut mismatch = None;
-        R::for_each_role(&mut |world, exports, host_imports, _| {
-            if mismatch.is_none()
-                && let Err(source) = validate_binding(exports, &entry.binding_exports)
-            {
-                mismatch = Some(ApplicationError::WorldMismatch {
-                    plugin: entry.metadata.id().into(),
-                    world: world.into(),
-                    source,
-                });
-            }
+        validate_roles::<S, R>(&entry)?;
+        R::for_each_role(&mut |_, _, host_imports, _| {
             entry.host_imports.extend(host_imports);
         });
-        if let Some(error) = mismatch {
-            return Err(error);
-        }
         let id = self.insert(entry);
         Ok(Component {
             id,
             binding: PhantomData,
         })
+    }
+
+    pub(crate) fn supports<S: Send + Sync + 'static, R: RoleSet<S>>(
+        &self,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<bool, ApplicationError> {
+        let entry = inspect(&self.engine, bytes.as_ref())?;
+        match validate_roles::<S, R>(&entry) {
+            Ok(()) => Ok(true),
+            Err(ApplicationError::WorldMismatch { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     #[cfg(test)]
@@ -187,6 +187,27 @@ impl Catalog {
             .get(id.index)
             .ok_or(ApplicationError::ForeignComponent)
     }
+}
+
+fn validate_roles<S: Send + Sync + 'static, R: RoleSet<S>>(
+    entry: &ComponentEntry,
+) -> Result<(), ApplicationError> {
+    let mut mismatch = None;
+    R::for_each_role(&mut |world, exports, _, _| {
+        if mismatch.is_none()
+            && let Err(source) = validate_binding(exports, &entry.binding_exports)
+        {
+            mismatch = Some(ApplicationError::WorldMismatch {
+                plugin: entry.metadata.id().into(),
+                world: world.into(),
+                source,
+            });
+        }
+    });
+    if let Some(error) = mismatch {
+        return Err(error);
+    }
+    Ok(())
 }
 
 impl<B> Copy for Component<B> {}
