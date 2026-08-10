@@ -4,7 +4,6 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "provider",
-        async: false,
         metadata: {
             id: "coding.provider.inkling",
             name: "Inkling",
@@ -30,7 +29,7 @@ struct InklingProvider;
 impl Guest for InklingProvider {
     type Conversation = InklingConversation;
 
-    fn open(system_prompt: String, tools: Vec<ToolSpec>) -> Result<Conversation, String> {
+    async fn open(system_prompt: String, tools: Vec<ToolSpec>) -> Result<Conversation, String> {
         Ok(Conversation::new(InklingConversation {
             messages: RefCell::new(vec![WireMessage::system(system_prompt)]),
             tools: tools
@@ -47,24 +46,29 @@ struct InklingConversation {
 }
 
 impl GuestConversation for InklingConversation {
-    fn send(&self, prompt: String) -> Result<Completion, String> {
+    async fn send(&self, prompt: String) -> Result<Completion, String> {
         self.messages.borrow_mut().push(WireMessage::user(prompt));
-        self.complete()
+        self.complete().await
     }
 
-    fn resume(&self, results: Vec<ToolResult>) -> Result<Completion, String> {
+    async fn resume(&self, results: Vec<ToolResult>) -> Result<Completion, String> {
         self.messages
             .borrow_mut()
             .extend(results.into_iter().map(WireMessage::tool));
-        self.complete()
+        self.complete().await
     }
 }
 
 impl InklingConversation {
-    fn complete(&self) -> Result<Completion, String> {
-        let base_url = setting("base-url").unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
-        let model = setting("model").unwrap_or_else(|| DEFAULT_MODEL.to_owned());
+    async fn complete(&self) -> Result<Completion, String> {
+        let base_url = setting("base-url")
+            .await
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+        let model = setting("model")
+            .await
+            .unwrap_or_else(|| DEFAULT_MODEL.to_owned());
         let max_tokens = setting("max-tokens")
+            .await
             .map(|value| {
                 value
                     .parse()
@@ -81,13 +85,14 @@ impl InklingConversation {
         };
         let request = serde_json::to_string(&request).map_err(|error| error.to_string())?;
         let response = http_client::post(
-            &format!("{}/chat/completions", base_url.trim_end_matches('/')),
-            &[http_client::Header {
+            format!("{}/chat/completions", base_url.trim_end_matches('/')),
+            vec![http_client::Header {
                 name: "content-type".to_owned(),
                 value: "application/json".to_owned(),
             }],
-            &request,
-        )?;
+            request,
+        )
+        .await?;
         if !(200..300).contains(&response.status) {
             return Err(format!(
                 "Inkling returned HTTP {}: {}",
@@ -115,8 +120,8 @@ impl InklingConversation {
     }
 }
 
-fn setting(key: &str) -> Option<String> {
-    provider_settings::get(key)
+async fn setting(key: &str) -> Option<String> {
+    provider_settings::get(key.to_owned()).await
 }
 
 #[derive(Serialize)]

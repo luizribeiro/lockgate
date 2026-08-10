@@ -4,7 +4,6 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "tool",
-        async: false,
         metadata: {
             id: "coding.tool.list-files",
             name: "List Files Tool",
@@ -20,20 +19,22 @@ use bindings::exports::coding::agent::tool::Guest;
 struct ListFiles;
 
 impl Guest for ListFiles {
-    fn name() -> String {
+    async fn name() -> String {
         "list_files".to_owned()
     }
 
-    fn description() -> String {
+    async fn description() -> String {
         "List relative paths in the current workspace".to_owned()
     }
 
-    fn input_schema() -> String {
+    async fn input_schema() -> String {
         serde_json::json!({ "type": "object", "properties": {} }).to_string()
     }
 
-    fn run(_arguments_json: String) -> Result<String, String> {
-        workspace::list_files().map(|files| files.join("\n"))
+    async fn run(_arguments_json: String) -> Result<String, String> {
+        workspace::list_files()
+            .await
+            .map(|files| files.join("\n"))
     }
 }
 

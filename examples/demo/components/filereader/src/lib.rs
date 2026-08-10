@@ -2,7 +2,6 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "filereader",
-        async: false,
         metadata: {
             id: "demo.filereader",
             name: "File Reader",
@@ -18,16 +17,16 @@ use bindings::exports::demo::host::{file_reader, runnable};
 struct FileReader;
 
 impl file_reader::Guest for FileReader {
-    fn read(path: String) -> Result<String, String> {
+    async fn read(path: String) -> Result<String, String> {
         let contents = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         Ok(contents.lines().next().unwrap_or_default().to_owned())
     }
 }
 
 impl runnable::Guest for FileReader {
-    fn run() -> Result<String, String> {
-        services::log("filereader is reading its preopened directory");
-        <Self as file_reader::Guest>::read("/shared/allowed.txt".into())
+    async fn run() -> Result<String, String> {
+        services::log("filereader is reading its preopened directory".to_owned()).await;
+        <Self as file_reader::Guest>::read("/shared/allowed.txt".into()).await
     }
 }
 

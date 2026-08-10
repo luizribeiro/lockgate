@@ -2,7 +2,6 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "caller",
-        async: false,
         metadata: {
             id: "demo.caller",
             name: "Caller",
@@ -19,9 +18,9 @@ use bindings::exports::demo::host::runnable::Guest;
 struct Caller;
 
 impl Guest for Caller {
-    fn run() -> Result<String, String> {
-        services::log("caller is invoking its greeter sibling");
-        Ok(greeter::greet("world"))
+    async fn run() -> Result<String, String> {
+        services::log("caller is invoking its greeter sibling".to_owned()).await;
+        Ok(greeter::greet("world".to_owned()).await)
     }
 }
 

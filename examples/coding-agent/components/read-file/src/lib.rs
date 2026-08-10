@@ -4,7 +4,6 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "tool",
-        async: false,
         metadata: {
             id: "coding.tool.read-file",
             name: "Read File Tool",
@@ -26,15 +25,15 @@ struct Arguments {
 struct ReadFile;
 
 impl Guest for ReadFile {
-    fn name() -> String {
+    async fn name() -> String {
         "read_file".to_owned()
     }
 
-    fn description() -> String {
+    async fn description() -> String {
         "Read a UTF-8 file using a path relative to the workspace".to_owned()
     }
 
-    fn input_schema() -> String {
+    async fn input_schema() -> String {
         serde_json::json!({
             "type": "object",
             "properties": { "path": { "type": "string" } },
@@ -44,10 +43,10 @@ impl Guest for ReadFile {
         .to_string()
     }
 
-    fn run(arguments_json: String) -> Result<String, String> {
+    async fn run(arguments_json: String) -> Result<String, String> {
         let arguments: Arguments = serde_json::from_str(&arguments_json)
             .map_err(|error| format!("invalid arguments: {error}"))?;
-        workspace::read_file(&arguments.path)
+        workspace::read_file(arguments.path).await
     }
 }
 

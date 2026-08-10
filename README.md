@@ -268,7 +268,7 @@ examples/demo/
 examples/coding-agent/   TUI agent with provider and tool component roles
 ```
 
-The guest components form a small workspace with one dependency set and lockfile, independent from the host workspace. Each guest depends only on `lockgate-plugin`; Cargo compiles the generated bindings and metadata directly to native `wasm32-wasip3` components.
+The guest components form a small workspace with one dependency set and lockfile, independent from the host workspace. Each guest depends only on `lockgate-plugin`; Cargo compiles the generated bindings and metadata directly to native `wasm32-wasip2` components.
 
 ## Run it
 
@@ -286,13 +286,13 @@ cargo test --workspace
 scripts/public-api
 ```
 
-The API inventory command generates rustdoc JSON with `cargo rustdoc`, then reports root exports, inherent methods, enum variants, and the separate hidden ABI used by generated code. The root library has no build script. The demo builds its guests with Cargo's nightly `build-std` support and stages the native `wasm32-wasip3` components under Cargo's `OUT_DIR`.
+The API inventory command generates rustdoc JSON with `cargo rustdoc`, then reports root exports, inherent methods, enum variants, and the separate hidden ABI used by generated code. The root library has no build script. The demo builds its guests with Cargo's nightly `build-std` support and stages the native `wasm32-wasip2` components under Cargo's `OUT_DIR`.
 
 ## Add a demo component
 
 1. Choose or add a narrow application admission world for the component; include host-visible exports and imports only when needed.
 2. Add the component's implementation world to `examples/demo/wit/worlds.wit`, importing host services and sibling packages explicitly.
-3. Generate guest bindings and embed required metadata with `lockgate_plugin::bindings!`, then build for `wasm32-wasip3`.
+3. Generate guest bindings and embed required metadata with `lockgate_plugin::bindings!`, then build for `wasm32-wasip2`.
 4. List related admission worlds in a `lockgate::bindings!` invocation and implement each shared host interface once for `HostContext<S>`.
 5. Add every artifact with `app.add::<GeneratedBinding>`.
 6. Grant each host import, sibling link, and WASI capability separately; `Application` configures authorized host bindings automatically.
@@ -300,7 +300,7 @@ The API inventory command generates rustdoc JSON with `cargo rustdoc`, then repo
 
 ## Current limits
 
-Rust's `wasm32-wasip3` target is Tier 3 and is not distributed through rustup yet. The flake therefore supplies nightly Rust with `rust-src`, builds the standard library on demand, and builds wasi-sdk 34 RC2's cooperative WASIp3 libc variant. Wasmtime is pinned to the exact prepared 48.0.0 release commit because released Wasmtime 47 predates the finalized two-slot threading encoding emitted by the current toolchain.
+The flake supplies nightly Rust with `rust-src`, builds the WASIp2 standard library on demand, and provides wasi-sdk 34 RC2's sysroot. Lockgate hosts both WASIp2 and WASIp3 interfaces so plugins can use the P2 standard library alongside newer component APIs.
 
 - Sibling forwarding supports native async functions whose parameters and results can move between independent stores. Resource handles, `error-context`, futures, and streams cannot cross that boundary.
 - Sibling provider cycles are linkable because forwarding closures resolve stores only when called; runtime guards reject re-entry. A component that calls an import during its own instantiation can still fail when its provider store is not available yet.

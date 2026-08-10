@@ -2,7 +2,6 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "greeter",
-        async: false,
         metadata: {
             id: "demo.greeter",
             name: "Greeter",
@@ -17,7 +16,7 @@ use bindings::exports::demo::greeter::greeter::Guest;
 struct Greeter;
 
 impl Guest for Greeter {
-    fn greet(name: String) -> String {
+    async fn greet(name: String) -> String {
         format!("Hello, {name}!")
     }
 }

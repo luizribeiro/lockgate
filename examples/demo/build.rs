@@ -12,19 +12,18 @@ fn main() {
     let cargo = env::var_os("CARGO").unwrap();
     let wasi_sysroot = PathBuf::from(
         env::var_os("WASI_SYSROOT")
-            .expect("WASI_SYSROOT must point to a sysroot containing wasm32-wasip3 libc"),
+            .expect("WASI_SYSROOT must point to a sysroot containing wasm32-wasip2 libc"),
     );
-    let wasi_libdir = wasi_sysroot.join("lib/wasm32-wasip3");
-    let cabi_realloc = wasi_libdir.join("__cabi_realloc_wrapper.o");
+    let wasi_libdir = wasi_sysroot.join("lib/wasm32-wasip2");
     assert!(
-        cabi_realloc.is_file(),
-        "WASI_SYSROOT must contain the cooperative cabi_realloc wrapper at {}",
-        cabi_realloc.display()
+        wasi_libdir.join("libc.a").is_file(),
+        "WASI_SYSROOT must contain wasm32-wasip2 libc at {}",
+        wasi_libdir.display()
     );
     let guest_manifest = demo.join("components/Cargo.toml");
 
     println!("cargo:rerun-if-env-changed=WASI_SYSROOT");
-    println!("cargo:rerun-if-env-changed=CARGO_TARGET_WASM32_WASIP3_LINKER");
+    println!("cargo:rerun-if-env-changed=CARGO_TARGET_WASM32_WASIP2_LINKER");
 
     println!(
         "cargo:rerun-if-changed={}",
@@ -62,14 +61,7 @@ fn main() {
     }
     let status = Command::new(&cargo)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .env(
-            "RUSTFLAGS",
-            format!(
-                "-Lnative={} -Clink-arg={} -Clink-arg=-lc -Clink-arg=--export=__wasm_init_task -Clink-arg=--export=__wasm_init_async_task",
-                wasi_libdir.display(),
-                cabi_realloc.display()
-            ),
-        )
+        .env("RUSTFLAGS", format!("-Lnative={}", wasi_libdir.display()))
         .args([
             "build",
             "--quiet",
@@ -79,7 +71,7 @@ fn main() {
             "--manifest-path",
         ])
         .arg(&guest_manifest)
-        .args(["--target", "wasm32-wasip3"])
+        .args(["--target", "wasm32-wasip2"])
         .arg("--target-dir")
         .arg(&guest_target)
         .status()
@@ -91,7 +83,7 @@ fn main() {
         fs::create_dir_all(&destination).unwrap();
         fs::copy(
             guest_target
-                .join("wasm32-wasip3/debug")
+                .join("wasm32-wasip2/debug")
                 .join(format!("{id}.wasm")),
             destination.join(format!("{id}.wasm")),
         )

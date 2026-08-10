@@ -32,7 +32,7 @@ Start Inkling as usual:
 inklingrs serve models/Inkling-Small-mxfp4
 ```
 
-The component build uses the same WASIp3 toolchain as `examples/demo` and requires `WASI_SYSROOT`.
+The component build uses the same WASIp2 toolchain as `examples/demo` and requires `WASI_SYSROOT`.
 From the repository root:
 
 ```sh

@@ -62,39 +62,6 @@
             runHook postInstall
           '';
         };
-        wasiLibcSource = pkgs.fetchFromGitHub {
-          owner = "WebAssembly";
-          repo = "wasi-libc";
-          rev = "f3e872871c6fb77db9727a18ab812a1a8f6e85ce";
-          hash = "sha256-zume/L6ovStZnbfSRX/J0T1XofjyIQGsnp60RpEVabk=";
-        };
-        wasiSysroot = pkgs.stdenvNoCC.mkDerivation {
-          pname = "wasi-sysroot-wasip3-coop";
-          version = "34.0-rc.2";
-          src = wasiLibcSource;
-          nativeBuildInputs = with pkgs; [ cmake gnumake wasm-tools ];
-          cmakeFlags = [
-            "-DCMAKE_C_COMPILER=${wasiSdk}/bin/clang"
-            "-DCMAKE_AR=${wasiSdk}/bin/llvm-ar"
-            "-DCMAKE_RANLIB=${wasiSdk}/bin/llvm-ranlib"
-            "-DCMAKE_NM=${wasiSdk}/bin/llvm-nm"
-            "-DTARGET_TRIPLE=wasm32-wasip3"
-            "-DENABLE_COOP_THREADS=ON"
-            "-DBUILD_SHARED=OFF"
-            "-DBINDINGS_TARGET=OFF"
-            "-DUSE_WASM_COMPONENT_LD=OFF"
-            "-DBUILTINS_LIB=${wasiSdk}/lib/clang/23/lib/wasm32-unknown-wasip3/libclang_rt.builtins.a"
-          ];
-          postInstall = ''
-            wrapper_dir=$(mktemp -d)
-            cd "$wrapper_dir"
-            ${wasiSdk}/bin/llvm-ar x \
-              "$out/lib/wasm32-wasip3/libc.a" \
-              __cabi_realloc_wrapper.S.obj
-            mv __cabi_realloc_wrapper.S.obj \
-              "$out/lib/wasm32-wasip3/__cabi_realloc_wrapper.o"
-          '';
-        };
       in {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
@@ -103,7 +70,7 @@
           ];
 
           RUST_BACKTRACE = "1";
-          WASI_SYSROOT = wasiSysroot;
+          WASI_SYSROOT = "${wasiSdk}/share/wasi-sysroot";
         };
       });
 }
