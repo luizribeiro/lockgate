@@ -4,6 +4,7 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "tool",
+        async: false,
         metadata: {
             id: "coding.tool.read-file",
             name: "Read File Tool",

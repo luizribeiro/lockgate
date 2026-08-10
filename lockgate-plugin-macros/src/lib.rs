@@ -3,9 +3,16 @@ use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
-use syn::{Ident, LitByteStr, LitStr, Token, braced, parse::Parse, parse::ParseStream};
+use syn::{
+    Ident, LitBool, LitByteStr, LitStr, Token, braced,
+    ext::IdentExt,
+    parse::{Parse, ParseStream},
+};
 
 /// Generates guest bindings and embeds required Lockgate plugin metadata.
+///
+/// Async bindings follow the WIT declarations unless `async: false` explicitly
+/// requests synchronous lowering.
 #[proc_macro]
 pub fn bindings(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as BindingsInput);
@@ -18,6 +25,7 @@ pub fn bindings(input: TokenStream) -> TokenStream {
 struct BindingsInput {
     path: LitStr,
     world: LitStr,
+    async_: Option<LitBool>,
     metadata: MetadataInput,
 }
 
@@ -39,13 +47,15 @@ impl Parse for BindingsInput {
         };
         let mut path = None;
         let mut world = None;
+        let mut async_ = None;
         let mut metadata = None;
         while !options.is_empty() {
-            let option: Ident = options.parse()?;
+            let option = options.call(Ident::parse_any)?;
             options.parse::<Token![:]>()?;
             match option.to_string().as_str() {
                 "path" => parse_once(&mut path, options.parse()?, &option)?,
                 "world" => parse_once(&mut world, options.parse()?, &option)?,
+                "async" => parse_once(&mut async_, options.parse()?, &option)?,
                 "metadata" => {
                     let metadata_content;
                     braced!(metadata_content in options);
@@ -66,6 +76,7 @@ impl Parse for BindingsInput {
         Ok(Self {
             path: path.ok_or_else(|| required(input, "path"))?,
             world: world.ok_or_else(|| required(input, "world"))?,
+            async_,
             metadata: metadata.ok_or_else(|| required(input, "metadata"))?,
         })
     }
@@ -120,13 +131,14 @@ fn expand(input: BindingsInput) -> syn::Result<TokenStream2> {
     let length = encoded.len();
     let path = input.path;
     let world = input.world;
+    let async_option = input.async_.map(|value| quote!(async: #value,));
     let section = lockgate_schema::PLUGIN_METADATA_SECTION;
     Ok(quote! {
         #plugin::__wit_bindgen::generate!({
             path: #path,
             world: #world,
             generate_all,
-            async: false,
+            #async_option
             disable_custom_section_link_helpers: true,
             runtime_path: #runtime_path,
         });

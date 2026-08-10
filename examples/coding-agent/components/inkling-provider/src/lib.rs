@@ -4,6 +4,7 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "provider",
+        async: false,
         metadata: {
             id: "coding.provider.inkling",
             name: "Inkling",

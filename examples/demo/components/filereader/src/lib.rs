@@ -2,6 +2,7 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "filereader",
+        async: false,
         metadata: {
             id: "demo.filereader",
             name: "File Reader",

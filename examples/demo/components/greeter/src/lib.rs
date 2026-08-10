@@ -2,6 +2,7 @@ mod bindings {
     lockgate_plugin::bindings!({
         path: "../../wit",
         world: "greeter",
+        async: false,
         metadata: {
             id: "demo.greeter",
             name: "Greeter",
