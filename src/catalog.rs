@@ -47,6 +47,7 @@ pub(crate) struct ComponentEntry {
     pub(crate) metadata: PluginMetadata,
     binding_exports: Vec<lockgate_schema::Export>,
     pub(crate) direct_imports: Vec<DirectImport>,
+    pub(crate) wasi_imports: HashSet<String>,
     pub(crate) exports: Vec<ExportInfo>,
     pub(crate) host_imports: HashSet<&'static str>,
     pub(crate) component: WasmtimeComponent,
@@ -91,6 +92,8 @@ pub enum ApplicationError {
         component: String,
         interface: String,
     },
+    #[error("component `{component}` does not import `wasi:http/client@0.3.0`")]
+    OutboundHttpUnavailable { component: String },
     #[error("guest directory path must be normalized absolute POSIX: `{0}")]
     RelativeGuestPath(PathBuf),
     #[error("host directory does not exist or is not a directory: `{0}")]
@@ -279,12 +282,14 @@ fn inspect(engine: &Engine, bytes: &[u8]) -> Result<ComponentEntry, ApplicationE
         }
     })?;
     let mut direct_imports = Vec::new();
+    let mut wasi_imports = HashSet::new();
     for item in resolve.worlds[world].imports.values() {
         let WorldItem::Interface { id, .. } = item else {
             continue;
         };
         let interface = resolve.id_of(*id).expect("named interface was validated");
         if interface.starts_with("wasi:") {
+            wasi_imports.insert(interface);
             continue;
         }
         validate_introspectable_interface(&resolve, *id).map_err(|source| {
@@ -347,6 +352,7 @@ fn inspect(engine: &Engine, bytes: &[u8]) -> Result<ComponentEntry, ApplicationE
         metadata,
         binding_exports,
         direct_imports,
+        wasi_imports,
         exports,
         component,
         host_imports: HashSet::new(),

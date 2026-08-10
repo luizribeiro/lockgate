@@ -8,6 +8,7 @@ pub(crate) struct Grants {
     pub(crate) links: Vec<LinkGrant>,
     pub(crate) host_imports: Vec<HostImportGrant>,
     pub(crate) directories: Vec<DirectoryGrant>,
+    pub(crate) outbound_http: Vec<OutboundHttpGrant>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +21,11 @@ pub(crate) struct LinkGrant {
 pub(crate) struct HostImportGrant {
     pub(crate) component: ComponentId,
     pub(crate) interface: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OutboundHttpGrant {
+    pub(crate) component: ComponentId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

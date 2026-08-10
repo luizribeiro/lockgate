@@ -223,6 +223,7 @@ Every artifact added to an application is instantiated when the application runs
 
 - `.allow_host_import(component, interface)` permits the embedding application to implement that exact interface when it is both imported by the artifact and declared by an admitted binding role.
 - `.link(caller, provider)` permits the provider to satisfy matching sibling imports on the caller.
+- `.allow_outbound_http(component)` permits a component that imports `wasi:http/client@0.3.0` to make outbound HTTP requests.
 - Directory grants add narrowly scoped WASI preopens.
 
 Before creating stores, runtime construction:
@@ -236,7 +237,7 @@ Before creating stores, runtime construction:
 
 Host-facing interfaces are not subjected to sibling cross-store restrictions. Their generated bindings and Wasmtime perform the relevant type checking.
 
-Each component receives its own Wasmtime `Store`, resource table, WASI context, and fuel budget, while referencing the same initialized application state. Stores begin with no preopens and networking denied. Sibling forwarding uses one mutex per component and an identity-based call stack that rejects cycles and depths greater than eight before locking a callee. A trapping call marks only that component unhealthy.
+Each component receives its own Wasmtime `Store`, resource table, WASI context, and fuel budget, while referencing the same initialized application state. Stores begin with no preopens and networking denied unless the application grants outbound WASI HTTP. Sibling forwarding uses one mutex per component and an identity-based call stack that rejects cycles and depths greater than eight before locking a callee. A trapping call marks only that component unhealthy.
 
 The default instruction budget is 100,000 units of Wasmtime fuel per component call and during
 initialization. Applications with more substantial plugins can set a different bounded value with

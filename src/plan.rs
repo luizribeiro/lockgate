@@ -27,6 +27,7 @@ pub(crate) struct ComponentPlan {
     pub(crate) direct_imports: HashMap<String, ResolvedImport>,
     pub(crate) host_imports: HashSet<String>,
     pub(crate) directories: Vec<DirectoryGrant>,
+    pub(crate) outbound_http: bool,
 }
 
 /// An application catalog and its grants compiled into deterministic provider selections.
@@ -74,6 +75,12 @@ impl Plan {
                 });
             }
             plan.directories.push(grant.clone());
+        }
+        for grant in &grants.outbound_http {
+            components
+                .get_mut(&grant.component)
+                .expect("application contains every outbound HTTP grant component")
+                .outbound_http = true;
         }
         let links = grants
             .links
@@ -187,7 +194,7 @@ fn target_from_info(component: ComponentId, plugin_id: String, export: &ExportIn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grants::{Grants, LinkGrant};
+    use crate::grants::{Grants, LinkGrant, OutboundHttpGrant};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -226,5 +233,25 @@ world caller { import api; }"#;
                 .direct_imports
                 .contains_key("demo:plan/api@0.1.0")
         );
+    }
+
+    #[test]
+    fn retains_outbound_http_grants_per_component() {
+        let wit = r#"package wasi:http@0.3.0;
+interface client { send: func(); }
+world caller { import client; }
+world other {}"#;
+        let mut catalog = Catalog::new().unwrap();
+        let caller = catalog.add_untyped(component_bytes(wit, "caller")).unwrap();
+        let other = catalog.add_untyped(component_bytes(wit, "other")).unwrap();
+        let mut grants = Grants::default();
+        grants
+            .outbound_http
+            .push(OutboundHttpGrant { component: caller });
+
+        let plan = Plan::new(catalog, grants).unwrap();
+
+        assert!(plan.components[&caller].outbound_http);
+        assert!(!plan.components[&other].outbound_http);
     }
 }

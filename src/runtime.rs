@@ -23,6 +23,7 @@ use wasmtime::{
     component::{Accessor, Instance, InstancePre, Linker, ResourceTable, Val},
 };
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpHooks, WasiHttpView};
 
 pub(crate) const DEFAULT_FUEL_PER_CALL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
@@ -78,8 +79,14 @@ pub fn host_context_data<S: Send + Sync + 'static>(
 pub struct PluginStore<S: Send + Sync + 'static = ()> {
     context: HostContext<S>,
     wasi: WasiCtx,
+    http: WasiHttpCtx,
+    http_hooks: HttpHooks,
     call_path: Vec<ComponentId>,
 }
+
+struct HttpHooks;
+
+impl WasiHttpHooks for HttpHooks {}
 
 impl<S: Send + Sync + 'static> PluginStore<S> {
     /// Returns the mutable component context projected into generated host bindings.
@@ -94,6 +101,18 @@ impl<S: Send + Sync + 'static> WasiView for PluginStore<S> {
         WasiCtxView {
             ctx: &mut self.wasi,
             table: &mut self.context.resources,
+        }
+    }
+}
+
+impl<S: Send + Sync + 'static> WasiHttpView for PluginStore<S> {
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.context.resources,
+            // TODO: Make outbound URL policies application-configurable and enforce them with
+            // per-component WASI HTTP hooks before dispatching each request.
+            hooks: &mut self.http_hooks,
         }
     }
 }
@@ -255,6 +274,10 @@ impl<H: Send + Sync + 'static> Runtime<H> {
         let mut linker = Linker::new(engine);
         wasmtime_wasi::p3::add_to_linker(&mut linker)
             .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
+        if component_plan.outbound_http {
+            wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+                .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
+        }
         for interface in &component_plan.host_imports {
             host_bindings
                 .install(component, interface, &mut linker)
@@ -297,6 +320,8 @@ impl<H: Send + Sync + 'static> Runtime<H> {
         let state = PluginStore {
             context: HostContext::new(entry.metadata.clone(), Arc::clone(state)),
             wasi: wasi.build(),
+            http: WasiHttpCtx::new(),
+            http_hooks: HttpHooks,
             call_path: Vec::new(),
         };
         let mut store = Store::new(engine, state);

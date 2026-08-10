@@ -5,7 +5,8 @@ use crate::{
     binding::RoleSet,
     catalog::{ApplicationError, Catalog, ComponentId},
     grants::{
-        DirectoryAccess, DirectoryGrant, Grants, HostImportGrant, LinkGrant, valid_guest_path,
+        DirectoryAccess, DirectoryGrant, Grants, HostImportGrant, LinkGrant, OutboundHttpGrant,
+        valid_guest_path,
     },
     runtime::{PluginStore, Runtime, RuntimeBuildError},
 };
@@ -145,6 +146,14 @@ impl<S: Send + Sync + 'static> Application<S> {
         self.allow_host_import_id(component.id(), interface)
     }
 
+    /// Permits one component to make outbound requests through `wasi:http`.
+    pub fn allow_outbound_http(
+        self,
+        component: Component<impl Sized>,
+    ) -> Result<Self, ApplicationError> {
+        self.allow_outbound_http_id(component.id())
+    }
+
     /// Preopens a host directory for read-only component access.
     pub fn read_only_dir<B>(
         self,
@@ -244,6 +253,23 @@ impl<S: Send + Sync + 'static> Application<S> {
         Ok(self)
     }
 
+    pub(crate) fn allow_outbound_http_id(
+        mut self,
+        component: ComponentId,
+    ) -> Result<Self, ApplicationError> {
+        let entry = self.catalog.entry(component)?;
+        if !entry.wasi_imports.contains("wasi:http/client@0.3.0") {
+            return Err(ApplicationError::OutboundHttpUnavailable {
+                component: entry.metadata.id().into(),
+            });
+        }
+        let grant = OutboundHttpGrant { component };
+        if !self.grants.outbound_http.contains(&grant) {
+            self.grants.outbound_http.push(grant);
+        }
+        Ok(self)
+    }
+
     pub(crate) fn directory(
         mut self,
         component: ComponentId,
@@ -288,8 +314,12 @@ world provider { export api; }
 world caller { import api; }"#;
 
     fn component_bytes(world_name: &str) -> Vec<u8> {
+        component_bytes_from(WIT, world_name)
+    }
+
+    fn component_bytes_from(wit: &str, world_name: &str) -> Vec<u8> {
         let mut resolve = Resolve::new();
-        let package = resolve.push_str("application.wit", WIT).unwrap();
+        let package = resolve.push_str("application.wit", wit).unwrap();
         let world = resolve.packages[package].worlds[world_name];
         let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
         embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
@@ -316,6 +346,30 @@ world caller { import api; }"#;
             app.allow_host_import_id(caller, "demo:application/api@0.1.0"),
             Err(ApplicationError::HostImportUnavailable { .. })
         ));
+    }
+
+    #[test]
+    fn grants_outbound_http_only_to_components_that_import_wasi_http() {
+        let mut app = Application::new(()).unwrap();
+        let provider = app.add_untyped(component_bytes("provider")).unwrap();
+        assert!(matches!(
+            app.allow_outbound_http_id(provider),
+            Err(ApplicationError::OutboundHttpUnavailable { .. })
+        ));
+
+        let wit = r#"package wasi:http@0.3.0;
+
+interface client { send: func(); }
+world caller { import client; }"#;
+        let mut app = Application::new(()).unwrap();
+        let caller = app
+            .add_untyped(component_bytes_from(wit, "caller"))
+            .unwrap();
+        let app = app.allow_outbound_http_id(caller).unwrap();
+        assert_eq!(
+            app.grants.outbound_http,
+            [OutboundHttpGrant { component: caller }]
+        );
     }
 
     #[test]
