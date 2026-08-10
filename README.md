@@ -223,7 +223,7 @@ Every artifact added to an application is instantiated when the application runs
 
 - `.allow_host_import(component, interface)` permits the embedding application to implement that exact interface when it is both imported by the artifact and declared by an admitted binding role.
 - `.link(caller, provider)` permits the provider to satisfy matching sibling imports on the caller.
-- `.allow_outbound_http(component)` permits a component that imports `wasi:http/client@0.3.0` to make outbound HTTP requests.
+- `.allow_outbound_http(component, origins)` permits a component that imports `wasi:http/client@0.3.0` to make outbound HTTP requests only to the listed origins. Origins include the scheme and effective port, so `https://api.example.com` does not authorize `http://api.example.com` or `https://api.example.com:8443`.
 - Directory grants add narrowly scoped WASI preopens.
 
 Before creating stores, runtime construction:

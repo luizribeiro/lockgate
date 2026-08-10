@@ -7,6 +7,7 @@ use crate::{
     binding::Binding,
     catalog::{ApplicationError, Catalog, ComponentId},
     grants::{DirectoryAccess, DirectoryGrant, Grants},
+    http::HttpOrigin,
     plan::{Plan, ResolvedImport, Target},
 };
 use lockgate_schema::PluginMetadata;
@@ -23,7 +24,10 @@ use wasmtime::{
     component::{Accessor, Instance, InstancePre, Linker, ResourceTable, Val},
 };
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpHooks, WasiHttpView};
+use wasmtime_wasi_http::{
+    Error as WasiHttpError, RequestOptions, WasiBody, WasiHttpCtx, WasiHttpCtxView, WasiHttpHooks,
+    WasiHttpView,
+};
 
 pub(crate) const DEFAULT_FUEL_PER_CALL: u64 = 100_000;
 const MAX_DEPTH: usize = 8;
@@ -84,9 +88,59 @@ pub struct PluginStore<S: Send + Sync + 'static = ()> {
     call_path: Vec<ComponentId>,
 }
 
-struct HttpHooks;
+struct HttpHooks {
+    origins: Vec<HttpOrigin>,
+}
 
-impl WasiHttpHooks for HttpHooks {}
+impl HttpHooks {
+    fn allows(&self, uri: &http::Uri) -> bool {
+        self.origins.iter().any(|origin| origin.matches(uri))
+    }
+}
+
+impl WasiHttpHooks for HttpHooks {
+    fn send_request(
+        &mut self,
+        request: http::Request<WasiBody>,
+        options: Option<RequestOptions>,
+        fut: Box<dyn Future<Output = Result<(), WasiHttpError>> + Send>,
+    ) -> Box<
+        dyn Future<
+                Output = Result<
+                    (
+                        http::Response<WasiBody>,
+                        Box<dyn Future<Output = Result<(), WasiHttpError>> + Send>,
+                    ),
+                    WasiHttpError,
+                >,
+            > + Send,
+    > {
+        if !self.allows(request.uri()) {
+            return Box::new(async { Err(WasiHttpError::HttpRequestDenied) });
+        }
+        let mut default = DefaultHttpHooks;
+        default.send_request(request, options, fut)
+    }
+}
+
+struct DefaultHttpHooks;
+
+impl WasiHttpHooks for DefaultHttpHooks {}
+
+#[cfg(test)]
+async fn denied_request(hooks: &mut HttpHooks, uri: &str) -> Result<(), WasiHttpError> {
+    use bytes::Bytes;
+    use http_body_util::{BodyExt, Empty};
+    use std::convert::Infallible;
+
+    let body = Empty::<Bytes>::new()
+        .map_err(|error: Infallible| match error {})
+        .boxed_unsync();
+    let request = http::Request::builder().uri(uri).body(body).unwrap();
+    Box::into_pin(hooks.send_request(request, None, Box::new(async { Ok(()) })))
+        .await
+        .map(|_| ())
+}
 
 impl<S: Send + Sync + 'static> PluginStore<S> {
     /// Returns the mutable component context projected into generated host bindings.
@@ -110,8 +164,6 @@ impl<S: Send + Sync + 'static> WasiHttpView for PluginStore<S> {
         WasiHttpCtxView {
             ctx: &mut self.http,
             table: &mut self.context.resources,
-            // TODO: Make outbound URL policies application-configurable and enforce them with
-            // per-component WASI HTTP hooks before dispatching each request.
             hooks: &mut self.http_hooks,
         }
     }
@@ -276,7 +328,7 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
         wasmtime_wasi::p3::add_to_linker(&mut linker)
             .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
-        if component_plan.outbound_http {
+        if component_plan.outbound_http.is_some() {
             wasmtime_wasi_http::p3::add_to_linker(&mut linker)
                 .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
         }
@@ -323,7 +375,9 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             context: HostContext::new(entry.metadata.clone(), Arc::clone(state)),
             wasi: wasi.build(),
             http: WasiHttpCtx::new(),
-            http_hooks: HttpHooks,
+            http_hooks: HttpHooks {
+                origins: component_plan.outbound_http.clone().unwrap_or_default(),
+            },
             call_path: Vec::new(),
         };
         let mut store = Store::new(engine, state);
@@ -612,6 +666,18 @@ mod tests {
     use crate::{Application, binding::Binding, catalog::Catalog, grants::Grants};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
+
+    #[tokio::test]
+    async fn rejects_http_requests_outside_the_granted_origins() {
+        let mut hooks = HttpHooks {
+            origins: vec![HttpOrigin::parse("https://allowed.example").unwrap()],
+        };
+
+        assert!(matches!(
+            denied_request(&mut hooks, "https://blocked.example/path").await,
+            Err(WasiHttpError::HttpRequestDenied)
+        ));
+    }
 
     fn provider_bytes(plugin_id: &str) -> Vec<u8> {
         let wit = r#"package demo:stack@0.1.0;

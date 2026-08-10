@@ -8,6 +8,7 @@ use crate::{
         DirectoryAccess, DirectoryGrant, Grants, HostImportGrant, LinkGrant, OutboundHttpGrant,
         valid_guest_path,
     },
+    http::HttpOrigin,
     runtime::{PluginStore, Runtime, RuntimeBuildError},
 };
 use lockgate_schema::PluginMetadata;
@@ -146,12 +147,17 @@ impl<S: Send + Sync + 'static> Application<S> {
         self.allow_host_import_id(component.id(), interface)
     }
 
-    /// Permits one component to make outbound requests through `wasi:http`.
-    pub fn allow_outbound_http(
+    /// Permits one component to make outbound requests through `wasi:http` to exact origins.
+    pub fn allow_outbound_http<I, O>(
         self,
         component: Component<impl Sized>,
-    ) -> Result<Self, ApplicationError> {
-        self.allow_outbound_http_id(component.id())
+        origins: I,
+    ) -> Result<Self, ApplicationError>
+    where
+        I: IntoIterator<Item = O>,
+        O: AsRef<str>,
+    {
+        self.allow_outbound_http_id(component.id(), origins)
     }
 
     /// Preopens a host directory for read-only component access.
@@ -253,20 +259,43 @@ impl<S: Send + Sync + 'static> Application<S> {
         Ok(self)
     }
 
-    pub(crate) fn allow_outbound_http_id(
+    pub(crate) fn allow_outbound_http_id<I, O>(
         mut self,
         component: ComponentId,
-    ) -> Result<Self, ApplicationError> {
+        origins: I,
+    ) -> Result<Self, ApplicationError>
+    where
+        I: IntoIterator<Item = O>,
+        O: AsRef<str>,
+    {
         let entry = self.catalog.entry(component)?;
         if !entry.wasi_imports.contains("wasi:http/client@0.3.0") {
             return Err(ApplicationError::OutboundHttpUnavailable {
                 component: entry.metadata.id().into(),
             });
         }
-        let grant = OutboundHttpGrant { component };
-        if !self.grants.outbound_http.contains(&grant) {
-            self.grants.outbound_http.push(grant);
+        let mut parsed = Vec::new();
+        for origin in origins {
+            let origin = origin.as_ref();
+            let parsed_origin = HttpOrigin::parse(origin).map_err(|()| {
+                ApplicationError::InvalidOutboundHttpOrigin {
+                    component: entry.metadata.id().into(),
+                    origin: origin.to_owned(),
+                }
+            })?;
+            if !parsed.contains(&parsed_origin) {
+                parsed.push(parsed_origin);
+            }
         }
+        if parsed.is_empty() {
+            return Err(ApplicationError::EmptyOutboundHttpOrigins {
+                component: entry.metadata.id().into(),
+            });
+        }
+        self.grants.outbound_http.push(OutboundHttpGrant {
+            component,
+            origins: parsed,
+        });
         Ok(self)
     }
 
@@ -353,7 +382,7 @@ world caller { import api; }"#;
         let mut app = Application::new(()).unwrap();
         let provider = app.add_untyped(component_bytes("provider")).unwrap();
         assert!(matches!(
-            app.allow_outbound_http_id(provider),
+            app.allow_outbound_http_id(provider, ["https://example.com"]),
             Err(ApplicationError::OutboundHttpUnavailable { .. })
         ));
 
@@ -365,11 +394,25 @@ world caller { import client; }"#;
         let caller = app
             .add_untyped(component_bytes_from(wit, "caller"))
             .unwrap();
-        let app = app.allow_outbound_http_id(caller).unwrap();
+        let app = app
+            .allow_outbound_http_id(caller, ["https://example.com", "https://example.com:443"])
+            .unwrap();
         assert_eq!(
             app.grants.outbound_http,
-            [OutboundHttpGrant { component: caller }]
+            [OutboundHttpGrant {
+                component: caller,
+                origins: vec![HttpOrigin::parse("https://example.com").unwrap()],
+            }]
         );
+
+        let mut app = Application::new(()).unwrap();
+        let caller = app
+            .add_untyped(component_bytes_from(wit, "caller"))
+            .unwrap();
+        assert!(matches!(
+            app.allow_outbound_http_id(caller, ["https://example.com/path"]),
+            Err(ApplicationError::InvalidOutboundHttpOrigin { .. })
+        ));
     }
 
     #[test]

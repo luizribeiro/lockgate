@@ -7,6 +7,7 @@ mod application;
 mod binding;
 mod catalog;
 mod grants;
+mod http;
 mod plan;
 mod plugin;
 mod runtime;

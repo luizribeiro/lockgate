@@ -4,6 +4,7 @@
 use crate::{
     catalog::{Catalog, ComponentId, ExportInfo},
     grants::{DirectoryGrant, Grants},
+    http::HttpOrigin,
     plugin::validate_cross_store_signature,
     runtime::RuntimeBuildError,
 };
@@ -27,7 +28,7 @@ pub(crate) struct ComponentPlan {
     pub(crate) direct_imports: HashMap<String, ResolvedImport>,
     pub(crate) host_imports: HashSet<String>,
     pub(crate) directories: Vec<DirectoryGrant>,
-    pub(crate) outbound_http: bool,
+    pub(crate) outbound_http: Option<Vec<HttpOrigin>>,
 }
 
 /// An application catalog and its grants compiled into deterministic provider selections.
@@ -77,10 +78,19 @@ impl Plan {
             plan.directories.push(grant.clone());
         }
         for grant in &grants.outbound_http {
-            components
+            let plan = components
                 .get_mut(&grant.component)
-                .expect("application contains every outbound HTTP grant component")
-                .outbound_http = true;
+                .expect("application contains every outbound HTTP grant component");
+            match &mut plan.outbound_http {
+                Some(origins) => {
+                    for origin in &grant.origins {
+                        if !origins.contains(origin) {
+                            origins.push(origin.clone());
+                        }
+                    }
+                }
+                None => plan.outbound_http = Some(grant.origins.clone()),
+            }
         }
         let links = grants
             .links
@@ -245,13 +255,17 @@ world other {}"#;
         let caller = catalog.add_untyped(component_bytes(wit, "caller")).unwrap();
         let other = catalog.add_untyped(component_bytes(wit, "other")).unwrap();
         let mut grants = Grants::default();
-        grants
-            .outbound_http
-            .push(OutboundHttpGrant { component: caller });
+        grants.outbound_http.push(OutboundHttpGrant {
+            component: caller,
+            origins: vec![HttpOrigin::parse("https://example.com").unwrap()],
+        });
 
         let plan = Plan::new(catalog, grants).unwrap();
 
-        assert!(plan.components[&caller].outbound_http);
-        assert!(!plan.components[&other].outbound_http);
+        assert_eq!(
+            plan.components[&caller].outbound_http,
+            Some(vec![HttpOrigin::parse("https://example.com").unwrap()])
+        );
+        assert_eq!(plan.components[&other].outbound_http, None);
     }
 }

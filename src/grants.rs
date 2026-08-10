@@ -1,6 +1,6 @@
 //! Private capability grants retained by an application until runtime construction.
 
-use crate::catalog::ComponentId;
+use crate::{catalog::ComponentId, http::HttpOrigin};
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]
@@ -23,9 +23,10 @@ pub(crate) struct HostImportGrant {
     pub(crate) interface: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OutboundHttpGrant {
     pub(crate) component: ComponentId,
+    pub(crate) origins: Vec<HttpOrigin>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

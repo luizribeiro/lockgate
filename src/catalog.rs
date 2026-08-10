@@ -94,6 +94,12 @@ pub enum ApplicationError {
     },
     #[error("component `{component}` does not import `wasi:http/client@0.3.0`")]
     OutboundHttpUnavailable { component: String },
+    #[error("component `{component}` must be granted at least one outbound HTTP origin")]
+    EmptyOutboundHttpOrigins { component: String },
+    #[error(
+        "invalid outbound HTTP origin `{origin}` for component `{component}`; expected an http(s) URL without a path, query, or fragment"
+    )]
+    InvalidOutboundHttpOrigin { component: String, origin: String },
     #[error("guest directory path must be normalized absolute POSIX: `{0}")]
     RelativeGuestPath(PathBuf),
     #[error("host directory does not exist or is not a directory: `{0}")]

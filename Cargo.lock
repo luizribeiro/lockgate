@@ -1177,10 +1177,14 @@ name = "lockgate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
+ "http",
+ "http-body-util",
  "lockgate-macros",
  "lockgate-schema",
  "thiserror 2.0.19",
  "tokio",
+ "url",
  "wasmparser 0.255.0",
  "wasmtime",
  "wasmtime-wasi",
