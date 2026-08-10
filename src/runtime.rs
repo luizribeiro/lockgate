@@ -272,6 +272,8 @@ impl<H: Send + Sync + 'static> Runtime<H> {
             .expect("runtime plan order contains only application components");
         let engine = self.plan.catalog.engine();
         let mut linker = Linker::new(engine);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
         wasmtime_wasi::p3::add_to_linker(&mut linker)
             .map_err(|error| instantiate_error(entry.metadata.id(), error.into()))?;
         if component_plan.outbound_http {
