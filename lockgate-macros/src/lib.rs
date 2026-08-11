@@ -323,6 +323,7 @@ fn expand_bindings(input: BindingsInput) -> syn::Result<TokenStream2> {
                         path: #path,
                         world: #world,
                         with: { #(#remappings),* },
+                        exports: { default: async | store },
                         require_store_data_send: true,
                     });
 
@@ -451,15 +452,34 @@ fn generate_runtime_client(
     let world = wasmtime_resolve
         .select_world(&[package], Some(&selected.world.value()))
         .map_err(|error| syn::Error::new_spanned(&selected.world, error.to_string()))?;
-    let mut options = wasmtime_wit_bindgen::Opts {
+    let mut signature_options = wasmtime_wit_bindgen::Opts {
+        with: with.clone(),
+        ..Default::default()
+    };
+    signature_options.wasmtime_crate = Some("::wasmtime".into());
+    let signature_generated = signature_options
+        .generate(&mut wasmtime_resolve, world)
+        .map_err(|error| syn::Error::new_spanned(&selected.world, error.to_string()))?;
+    let signature_generated = syn::parse_file(&signature_generated).map_err(|error| {
+        syn::Error::new_spanned(
+            &selected.world,
+            format!("failed to read generated Wasmtime signatures: {error}"),
+        )
+    })?;
+
+    let mut call_options = wasmtime_wit_bindgen::Opts {
         with,
         ..Default::default()
     };
-    options.wasmtime_crate = Some("::wasmtime".into());
-    let generated = options
+    call_options.wasmtime_crate = Some("::wasmtime".into());
+    call_options.exports.push(
+        wasmtime_wit_bindgen::FunctionFilter::Default,
+        wasmtime_wit_bindgen::FunctionFlags::ASYNC | wasmtime_wit_bindgen::FunctionFlags::STORE,
+    );
+    let call_generated = call_options
         .generate(&mut wasmtime_resolve, world)
         .map_err(|error| syn::Error::new_spanned(&selected.world, error.to_string()))?;
-    let generated = syn::parse_file(&generated).map_err(|error| {
+    let call_generated = syn::parse_file(&call_generated).map_err(|error| {
         syn::Error::new_spanned(
             &selected.world,
             format!("failed to read generated Wasmtime signatures: {error}"),
@@ -528,8 +548,8 @@ fn generate_runtime_client(
         })
         .collect::<Vec<_>>();
     let interface = exported.pop().expect("one exported interface was required");
-    let module_items =
-        nested_module_items(&generated.items, &interface.module_path).ok_or_else(|| {
+    let call_items = nested_module_items(&call_generated.items, &interface.module_path)
+        .ok_or_else(|| {
             syn::Error::new_spanned(
                 &selected.world,
                 format!(
@@ -543,8 +563,16 @@ fn generate_runtime_client(
                 ),
             )
         })?;
+    let signature_items = nested_module_items(&signature_generated.items, &interface.module_path)
+        .ok_or_else(|| {
+        syn::Error::new_spanned(
+            &selected.world,
+            "could not locate generated export module for public client signatures",
+        )
+    })?;
     let client = generate_interface_client(
-        module_items,
+        call_items,
+        signature_items,
         &interface,
         rust_name,
         &world_client,
@@ -575,13 +603,107 @@ fn nested_module_items<'a>(items: &'a [Item], path: &[Ident]) -> Option<&'a [Ite
 }
 
 fn generate_interface_client(
-    items: &[Item],
+    call_items: &[Item],
+    signature_items: &[Item],
     interface: &ExportedInterface,
     rust_name: &Ident,
     world_client: &Ident,
     host_bounds: &[TokenStream2],
     lockgate: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
+    let (mut calls, resources) = generated_interface_calls(call_items);
+    let (mut signatures, _) = generated_interface_calls(signature_items);
+    if calls.keys().ne(signatures.keys()) {
+        return Err(syn::Error::new_spanned(
+            &interface.accessor,
+            "generated concurrent calls do not match the public client signatures",
+        ));
+    }
+    if calls
+        .iter()
+        .any(|(target, functions)| functions.len() != signatures[target].len())
+    {
+        return Err(syn::Error::new_spanned(
+            &interface.accessor,
+            "generated concurrent call count does not match the public client signatures",
+        ));
+    }
+
+    let root_accessor = &interface.accessor;
+    let direct_calls = calls.remove("Guest").unwrap_or_default();
+    let direct_signatures = signatures.remove("Guest").unwrap_or_default();
+    let direct_methods = direct_calls
+        .iter()
+        .zip(&direct_signatures)
+        .map(|(call, signature)| {
+            generate_client_method(call, signature, root_accessor, None, lockgate)
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let mut resource_structs = Vec::new();
+    let mut resource_accessors = Vec::new();
+    for (guest, functions) in calls {
+        let signature_functions = signatures
+            .remove(&guest)
+            .expect("generated call and signature targets were matched");
+        let Some(accessor) = resources.get(&guest) else {
+            return Err(syn::Error::new_spanned(
+                &interface.accessor,
+                format!("could not locate generated resource accessor for `{guest}`"),
+            ));
+        };
+        let resource_name = guest.strip_prefix("Guest").unwrap_or(&guest);
+        let resource_client = format_ident!("{}Client", resource_name);
+        let methods = functions
+            .iter()
+            .zip(&signature_functions)
+            .map(|(call, signature)| {
+                generate_client_method(call, signature, root_accessor, Some(accessor), lockgate)
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        resource_accessors.push(quote! {
+            pub fn #accessor(&self) -> #resource_client<'runtime, S> {
+                #resource_client { inner: self.inner }
+            }
+        });
+        resource_structs.push(quote! {
+            pub struct #resource_client<'runtime, S: Send + Sync + 'static> {
+                inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
+            }
+
+            impl<'runtime, S: Send + Sync + 'static> #resource_client<'runtime, S>
+            where
+                #(#host_bounds)*
+            {
+                #(#methods)*
+            }
+        });
+    }
+
+    let module_path = &interface.module_path;
+    let export_path = quote!(#(#module_path)::*);
+    Ok(quote! {
+        #[allow(unused_imports)]
+        use self::#export_path::*;
+
+        impl<'runtime, S: Send + Sync + 'static> #world_client<'runtime, S>
+        where
+            #(#host_bounds)*
+        {
+            #(#direct_methods)*
+            #(#resource_accessors)*
+        }
+
+        #(#resource_structs)*
+    })
+}
+
+fn generated_interface_calls(
+    items: &[Item],
+) -> (
+    BTreeMap<String, Vec<syn::ImplItemFn>>,
+    BTreeMap<String, Ident>,
+) {
     let mut calls = BTreeMap::<String, Vec<syn::ImplItemFn>>::new();
     let mut resources = BTreeMap::<String, Ident>::new();
     for item in items {
@@ -613,66 +735,7 @@ fn generate_interface_client(
             }
         }
     }
-
-    let module_path = &interface.module_path;
-    let export_path = quote!(#(#module_path)::*);
-    let root_accessor = &interface.accessor;
-    let direct_calls = calls.remove("Guest").unwrap_or_default();
-    let direct_methods = direct_calls
-        .iter()
-        .map(|function| generate_client_method(function, root_accessor, None, lockgate))
-        .collect::<syn::Result<Vec<_>>>()?;
-
-    let mut resource_structs = Vec::new();
-    let mut resource_accessors = Vec::new();
-    for (guest, functions) in calls {
-        let Some(accessor) = resources.get(&guest) else {
-            return Err(syn::Error::new_spanned(
-                &interface.accessor,
-                format!("could not locate generated resource accessor for `{guest}`"),
-            ));
-        };
-        let resource_name = guest.strip_prefix("Guest").unwrap_or(&guest);
-        let resource_client = format_ident!("{}Client", resource_name);
-        let methods = functions
-            .iter()
-            .map(|function| {
-                generate_client_method(function, root_accessor, Some(accessor), lockgate)
-            })
-            .collect::<syn::Result<Vec<_>>>()?;
-        resource_accessors.push(quote! {
-            pub fn #accessor(&self) -> #resource_client<'runtime, S> {
-                #resource_client { inner: self.inner }
-            }
-        });
-        resource_structs.push(quote! {
-            pub struct #resource_client<'runtime, S: Send + Sync + 'static> {
-                inner: #lockgate::__private::RuntimeComponent<'runtime, S, #rust_name>,
-            }
-
-            impl<'runtime, S: Send + Sync + 'static> #resource_client<'runtime, S>
-            where
-                #(#host_bounds)*
-            {
-                #(#methods)*
-            }
-        });
-    }
-
-    Ok(quote! {
-        #[allow(unused_imports)]
-        use self::#export_path::*;
-
-        impl<'runtime, S: Send + Sync + 'static> #world_client<'runtime, S>
-        where
-            #(#host_bounds)*
-        {
-            #(#direct_methods)*
-            #(#resource_accessors)*
-        }
-
-        #(#resource_structs)*
-    })
+    (calls, resources)
 }
 
 fn impl_target(item: &ItemImpl) -> Option<String> {
@@ -692,13 +755,20 @@ fn type_path_last_ident(ty: &Type) -> Option<&Ident> {
 }
 
 fn generate_client_method(
-    function: &syn::ImplItemFn,
+    call: &syn::ImplItemFn,
+    signature: &syn::ImplItemFn,
     root_accessor: &Ident,
     resource_accessor: Option<&Ident>,
     lockgate: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
-    let async_call = function.sig.asyncness.is_some();
-    let original = &function.sig.ident;
+    let async_call = call.sig.asyncness.is_some();
+    let original = &call.sig.ident;
+    if original != &signature.sig.ident {
+        return Err(syn::Error::new_spanned(
+            &signature.sig.ident,
+            "generated concurrent call does not match the public client method",
+        ));
+    }
     let Some(name) = original
         .to_string()
         .strip_prefix("call_")
@@ -710,16 +780,16 @@ fn generate_client_method(
         ));
     };
     let name = format_ident!("{name}");
-    let mut inputs = function.sig.inputs.iter();
+    let mut inputs = signature.sig.inputs.iter();
     let Some(receiver) = inputs.next() else {
         return Err(syn::Error::new_spanned(
-            &function.sig,
+            &signature.sig,
             "generated guest call is missing its receiver",
         ));
     };
     let Some(_store) = inputs.next() else {
         return Err(syn::Error::new_spanned(
-            &function.sig,
+            &signature.sig,
             "generated guest call is missing its store parameter",
         ));
     };
@@ -750,17 +820,8 @@ fn generate_client_method(
             }
         })
     });
-    let call_args = params.iter().zip(&args).map(|(param, arg)| {
-        let FnArg::Typed(param) = param else {
-            unreachable!("generated parameters were validated as typed arguments");
-        };
-        if matches!(param.ty.as_ref(), Type::Reference(_)) {
-            quote!(&#arg)
-        } else {
-            quote!(#arg)
-        }
-    });
-    let result = generated_result_type(&function.sig.output)?;
+    let call_args = &args;
+    let result = generated_result_type(&signature.sig.output)?;
     let guest = if let Some(resource) = resource_accessor {
         quote!(binding.#root_accessor().#resource())
     } else {

@@ -31,6 +31,15 @@ mod client_bindings {
     }
 }
 
+mod sync_export_bindings {
+    crate::bindings! {
+        path: "src/testdata/sync-export-component/wit",
+        worlds: {
+            Plugin: "plugin",
+        },
+    }
+}
+
 #[allow(dead_code)]
 async fn generated_clients_preserve_wit_signatures(
     runtime: &Runtime,
@@ -45,6 +54,19 @@ async fn generated_clients_preserve_wit_signatures(
         .observe(&query, Some(phase), interest)
         .await;
     let _ = runtime.component(database).execute("select 1", &[]).await;
+}
+
+#[tokio::test]
+async fn generated_clients_invoke_synchronous_exports_on_concurrent_stores() {
+    let bytes = include_bytes!("../fixtures/sync-export-component.wasm");
+    let mut app = Application::new(()).unwrap();
+    let plugin = app.add::<sync_export_bindings::Plugin>(bytes).unwrap();
+    let runtime = app.run().await.unwrap();
+
+    assert_eq!(
+        runtime.component(plugin).answer().await.unwrap(),
+        Ok("hello world".to_owned())
+    );
 }
 
 impl typed_bindings::demo::admission::services::Host for HostContext<()> {

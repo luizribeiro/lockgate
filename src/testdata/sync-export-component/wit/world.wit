@@ -1,0 +1,9 @@
+package demo:sync-exports@0.1.0;
+
+interface values {
+  answer: func() -> result<string, string>;
+}
+
+world plugin {
+  export values;
+}
