@@ -207,6 +207,16 @@ pub(crate) enum ValidationError {
 }
 
 impl ValidationError {
+    /// Returns the stable machine-readable code assigned to this error.
+    ///
+    /// Codes are append-only: once assigned, a code is never changed or reused.
+    pub(crate) fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::UnsupportedExport { .. } => Some("admission.unsupported-export"),
+            Self::Decode { .. } | Self::NotComponent => None,
+        }
+    }
+
     fn unsupported(
         interface: impl Into<String>,
         function: impl Into<String>,
@@ -234,7 +244,7 @@ impl fmt::Display for ValidationError {
             } => {
                 write!(
                     formatter,
-                    "unsupported export `{interface}#{function}`: offending type `{offending_type}` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+                    "[admission.unsupported-export] unsupported export `{interface}#{function}`: offending type `{offending_type}` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
                 )?;
                 if matches!(offending_type.as_str(), "future" | "stream") {
                     formatter.write_str(
