@@ -9,7 +9,8 @@ mod needs;
 pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedEntry, NeedEntryError, NeedKind, NeedReasonError,
     NeedsManifest, NeedsManifestDecodeError, NeedsManifestEncodeError,
-    NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError, encode_needs_manifest,
+    NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError, decode_needs_manifest,
+    encode_needs_manifest,
 };
 
 /// Name of the WebAssembly custom section containing Lockgate plugin metadata.
