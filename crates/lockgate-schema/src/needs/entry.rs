@@ -34,20 +34,7 @@ impl NeedEntry {
 
     /// Declares a scoped operation and canonicalizes its set of references.
     pub fn scoped(atom: AtomKey, mut scopes: Vec<ScopeRef>) -> Result<Self, NeedEntryError> {
-        if scopes.len() > MAX_SCOPES_PER_ENTRY {
-            return Err(NeedEntryError::TooManyScopes {
-                found: scopes.len(),
-                max: MAX_SCOPES_PER_ENTRY,
-            });
-        }
-        if scopes.is_empty() {
-            return Err(NeedEntryError::EmptyScopes);
-        }
-        for (index, reference) in scopes.iter().enumerate() {
-            reference
-                .validate()
-                .map_err(|source| NeedEntryError::InvalidScope { index, source })?;
-        }
+        validate_scopes(&scopes)?;
         scopes.sort_by_key(ScopeRef::to_wire);
         scopes.dedup();
         Ok(Self {
@@ -82,26 +69,31 @@ impl NeedEntry {
 
     pub(crate) fn validate(&self) -> Result<(), NeedEntryError> {
         if let NeedKind::Scoped(scopes) = &self.kind {
-            if scopes.len() > MAX_SCOPES_PER_ENTRY {
-                return Err(NeedEntryError::TooManyScopes {
-                    found: scopes.len(),
-                    max: MAX_SCOPES_PER_ENTRY,
-                });
-            }
-            if scopes.is_empty() {
-                return Err(NeedEntryError::EmptyScopes);
-            }
-            for (index, reference) in scopes.iter().enumerate() {
-                reference
-                    .validate()
-                    .map_err(|source| NeedEntryError::InvalidScope { index, source })?;
-            }
+            validate_scopes(scopes)?;
         }
         if let Some(reason) = &self.reason {
             validate_reason(reason).map_err(NeedEntryError::InvalidReason)?;
         }
         Ok(())
     }
+}
+
+fn validate_scopes(scopes: &[ScopeRef]) -> Result<(), NeedEntryError> {
+    if scopes.len() > MAX_SCOPES_PER_ENTRY {
+        return Err(NeedEntryError::TooManyScopes {
+            found: scopes.len(),
+            max: MAX_SCOPES_PER_ENTRY,
+        });
+    }
+    if scopes.is_empty() {
+        return Err(NeedEntryError::EmptyScopes);
+    }
+    for (index, reference) in scopes.iter().enumerate() {
+        reference
+            .validate()
+            .map_err(|source| NeedEntryError::InvalidScope { index, source })?;
+    }
+    Ok(())
 }
 
 /// A malformed need entry.
