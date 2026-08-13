@@ -164,33 +164,27 @@ fn rejects_nested_borrowed_handles_with_guidance() {
 
 #[test]
 fn rejects_nested_futures_with_guidance() {
-    let bytes = component(include_str!(
-        "../../tests/data/export_validation/future.wit"
-    ));
+    let bytes = compound_component("future-fixture");
 
     assert_eq!(
         validate_value_only_exports(&bytes).unwrap_err().to_string(),
-        "unsupported export `test:future-export/api#run`: offending type `future` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+        "unsupported export `test:compound-wrappers/future-api#run`: offending type `future` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }
 
 #[test]
 fn rejects_nested_streams_with_guidance() {
-    let bytes = component(include_str!(
-        "../../tests/data/export_validation/stream.wit"
-    ));
+    let bytes = compound_component("stream-fixture");
 
     assert_eq!(
         validate_value_only_exports(&bytes).unwrap_err().to_string(),
-        "unsupported export `test:stream-export/api#run`: offending type `stream` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+        "unsupported export `test:compound-wrappers/stream-api#run`: offending type `stream` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }
 
 #[test]
 fn reports_nested_error_context_before_component_compilation() {
-    let bytes = component(include_str!(
-        "../../tests/data/export_validation/error_context.wit"
-    ));
+    let bytes = compound_component("error-context-fixture");
     let mut config = wasmtime::Config::new();
     config
         .wasm_component_model(true)
@@ -207,7 +201,7 @@ fn reports_nested_error_context_before_component_compilation() {
     let error = validate_value_only_exports(&bytes).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "unsupported export `test:error-context-export/api#run`: offending type `error-context` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+        "unsupported export `test:compound-wrappers/error-context-api#run`: offending type `error-context` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }
 

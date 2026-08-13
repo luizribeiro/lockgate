@@ -40,6 +40,24 @@ interface map-api {
     run: func() -> wrapper;
 }
 
+interface future-api {
+    type deferred = future<string>;
+    type nested = option<deferred>;
+    run: func() -> nested;
+}
+
+interface stream-api {
+    type values = stream<string>;
+    type nested = option<values>;
+    run: func() -> nested;
+}
+
+interface error-context-api {
+    type failure = error-context;
+    type nested = option<failure>;
+    run: func() -> nested;
+}
+
 world record-fixture { export record-api; }
 world variant-fixture { import handles; export variant-api; }
 world list-fixture { export list-api; }
@@ -47,3 +65,6 @@ world fixed-list-fixture { export fixed-list-api; }
 world tuple-fixture { export tuple-api; }
 world result-fixture { export result-api; }
 world map-fixture { export map-api; }
+world future-fixture { export future-api; }
+world stream-fixture { export stream-api; }
+world error-context-fixture { export error-context-api; }
