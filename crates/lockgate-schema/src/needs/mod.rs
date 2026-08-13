@@ -8,7 +8,7 @@ mod wire;
 pub use entry::{NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
 pub use manifest::{EntryLocation, NeedsManifest, NeedsManifestValidationError, Requirement};
 pub use scope_ref::{ScopeRef, ScopeRefError};
-pub use wire::{NeedsManifestEncodeError, encode_needs_manifest};
+pub use wire::{NeedsManifestDecodeError, NeedsManifestEncodeError, encode_needs_manifest};
 
 /// The identity of one permission operation, written `capability.operation`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

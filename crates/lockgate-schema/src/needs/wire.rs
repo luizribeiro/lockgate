@@ -4,6 +4,10 @@ use serde::Serialize;
 
 use super::{NeedKind, NeedsManifest, NeedsManifestValidationError};
 
+mod decode_error;
+
+pub use decode_error::NeedsManifestDecodeError;
+
 /// Encodes a validated manifest as canonical sorted-key JSON.
 pub fn encode_needs_manifest(
     manifest: &NeedsManifest,
