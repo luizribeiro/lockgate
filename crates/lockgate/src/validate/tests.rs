@@ -180,16 +180,20 @@ fn reports_nested_error_context_before_component_compilation() {
     let bytes = component(include_str!(
         "../../tests/data/export_validation/error_context.wit"
     ));
-    let mut compiler_was_called = false;
+    let mut config = wasmtime::Config::new();
+    config
+        .wasm_component_model(true)
+        .wasm_component_model_async(true);
+    let engine = wasmtime::Engine::new(&config).unwrap();
 
-    let error = validate_value_only_exports(&bytes)
-        .and_then(|()| {
-            compiler_was_called = true;
-            Ok(())
-        })
-        .unwrap_err();
+    let compiler_error = wasmtime::component::Component::new(&engine, &bytes).unwrap_err();
+    assert!(
+        format!("{compiler_error:#}")
+            .contains("requires the component model error-context feature"),
+        "unexpected Wasmtime error: {compiler_error:#}"
+    );
 
-    assert!(!compiler_was_called);
+    let error = validate_value_only_exports(&bytes).unwrap_err();
     assert_eq!(
         error.to_string(),
         "unsupported export `test:error-context-export/api#run`: offending type `error-context` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
