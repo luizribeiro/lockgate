@@ -67,11 +67,6 @@ impl FromStr for AtomKey {
                 value: value.into(),
             });
         };
-        if operation.contains('.') {
-            return Err(AtomKeyError::WrongSegmentCount {
-                value: value.into(),
-            });
-        }
         Self::new(capability, operation)
     }
 }
