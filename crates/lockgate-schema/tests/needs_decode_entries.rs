@@ -89,6 +89,25 @@ fn rejects_malformed_setting_and_root_references() {
 }
 
 #[test]
+fn rejects_empty_literal_scopes() {
+    let error = decode(r#"{"fs.read":[""]}"#, "{}").unwrap_err();
+
+    assert!(matches!(
+        error,
+        NeedsManifestDecodeError::InvalidScope {
+            source: ScopeRefError::EmptyLiteral,
+            ..
+        }
+    ));
+    assert!(error.to_string().contains("required entry 0"));
+    assert!(
+        error
+            .to_string()
+            .contains("literal scope must not be empty")
+    );
+}
+
+#[test]
 fn rejects_every_unsafe_root_subpath_form() {
     let cases = [
         ("$workspace//absolute", "must be relative"),

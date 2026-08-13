@@ -91,6 +91,7 @@ impl ScopeRef {
 
     pub(crate) fn validate(&self) -> Result<(), ScopeRefError> {
         match self {
+            Self::Literal(value) if value.is_empty() => Err(ScopeRefError::EmptyLiteral),
             Self::Literal(value) if value.starts_with("setting:") || value.starts_with('$') => {
                 Err(ScopeRefError::ReservedLiteralPrefix)
             }
@@ -111,6 +112,7 @@ impl ScopeRef {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ScopeRefError {
+    EmptyLiteral,
     ReservedLiteralPrefix,
     InvalidSettingPointer,
     InvalidRootName,
@@ -129,6 +131,7 @@ pub enum ScopeRefError {
 impl fmt::Display for ScopeRefError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyLiteral => formatter.write_str("literal scope must not be empty"),
             Self::ReservedLiteralPrefix => {
                 formatter.write_str("literal scope must not use `setting:` or `$` prefix")
             }
@@ -283,6 +286,14 @@ mod tests {
                 ScopeRefError::ReservedLiteralPrefix
             );
         }
+    }
+
+    #[test]
+    fn literal_scopes_cannot_be_empty() {
+        assert_eq!(
+            ScopeRef::literal("").unwrap_err(),
+            ScopeRefError::EmptyLiteral
+        );
     }
 
     #[test]
