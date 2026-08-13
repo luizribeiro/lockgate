@@ -1,30 +1,17 @@
-#[allow(
-    dead_code,
-    reason = "the concurrent-import test does not use the cancellation drop probe"
-)]
-#[path = "../src/exec/mod.rs"]
-mod exec;
-
 mod common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use exec::{ExecEngine, ExecLimits};
+use common::exec::ExecEngine;
+use common::{INVOCATION_FUEL, LIMITS, TestState};
 use tokio::sync::Barrier;
 use tokio::time::timeout;
 use wasmtime::Result;
 use wasmtime::component::Val;
 
-const LIMITS: ExecLimits = ExecLimits {
-    instantiation_fuel: 1_000_000,
-    max_memory_bytes: 16 * 1024 * 1024,
-};
-const INVOCATION_FUEL: u64 = 1_000_000;
 const REGRESSION_TIMEOUT: Duration = Duration::from_secs(10);
-
-struct TestState;
 
 #[tokio::test(flavor = "current_thread")]
 async fn guest_async_imports_run_concurrently() -> Result<()> {

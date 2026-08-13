@@ -1,23 +1,8 @@
-#[allow(
-    dead_code,
-    reason = "the typed-failure tests do not use the cancellation drop probe"
-)]
-#[path = "../src/exec/mod.rs"]
-mod exec;
-
 mod common;
 
-use exec::{ExecEngine, ExecError, ExecLimits, LoadError, StoreCtx, TrapDetail, host_import_error};
+use common::exec::{ExecEngine, ExecError, LoadError, TrapDetail, host_import_error};
+use common::{INVOCATION_FUEL, LIMITS, TestState, wire_ready_wait};
 use wasmtime::Trap;
-use wasmtime::component::Linker;
-
-const LIMITS: ExecLimits = ExecLimits {
-    instantiation_fuel: 1_000_000,
-    max_memory_bytes: 16 * 1024 * 1024,
-};
-const INVOCATION_FUEL: u64 = 1_000_000;
-
-struct TestState;
 
 #[test]
 fn load_errors_distinguish_compile_from_link() {
@@ -120,11 +105,4 @@ async fn guest_trap_after_successful_import_stays_a_trap() {
             ..
         })
     ));
-}
-
-fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmtime::Result<()> {
-    linker
-        .instance("test:exec/host")?
-        .func_wrap_concurrent("wait", |_, (): ()| Box::pin(async { Ok(()) }))?;
-    Ok(())
 }

@@ -1,27 +1,15 @@
-#[allow(
-    dead_code,
-    reason = "the deterministic-fuel test does not use the cancellation drop probe"
-)]
-#[path = "../src/exec/mod.rs"]
-mod exec;
-
 mod common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use exec::{ExecEngine, ExecError, ExecLimits, StoreCtx};
+use common::exec::{ExecEngine, ExecError, StoreCtx};
+use common::{LIMITS, TestState};
 use wasmtime::component::{Linker, Val};
 
-const LIMITS: ExecLimits = ExecLimits {
-    instantiation_fuel: 1_000_000,
-    max_memory_bytes: 16 * 1024 * 1024,
-};
 const ITERATIONS: u32 = 1_000;
 const LOW_FUEL: u64 = 100_000;
 const HIGH_FUEL: u64 = 5_000_000;
-
-struct TestState;
 
 #[tokio::test(flavor = "current_thread")]
 async fn fixed_loop_exhausts_at_a_deterministic_iteration() {

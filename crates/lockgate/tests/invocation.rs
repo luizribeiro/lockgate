@@ -1,6 +1,3 @@
-#[path = "../src/exec/mod.rs"]
-mod exec;
-
 mod common;
 
 use std::future::Future;
@@ -9,18 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 
-use exec::{ExecEngine, ExecLimits, StoreCtx};
+use common::exec::{ExecEngine, StoreCtx};
+use common::{INVOCATION_FUEL, LIMITS, TestState, wire_ready_wait};
 use tokio::sync::Notify;
 use wasmtime::Result;
 use wasmtime::component::{Linker, Val};
-
-const LIMITS: ExecLimits = ExecLimits {
-    instantiation_fuel: 1_000_000,
-    max_memory_bytes: 16 * 1024 * 1024,
-};
-const INVOCATION_FUEL: u64 = 1_000_000;
-
-struct TestState;
 
 #[tokio::test(flavor = "current_thread")]
 async fn value_export_returns_expected_value() -> Result<()> {
@@ -73,13 +63,6 @@ async fn dropping_invocation_drops_store_and_stops_guest() -> Result<()> {
     let results = loaded.invoke(export, &[], LIMITS, INVOCATION_FUEL).await?;
     assert!(matches!(results.as_slice(), [Val::U32(7)]));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
-    Ok(())
-}
-
-fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> Result<()> {
-    linker
-        .instance("test:exec/host")?
-        .func_wrap_concurrent("wait", |_, (): ()| Box::pin(async { Ok(()) }))?;
     Ok(())
 }
 

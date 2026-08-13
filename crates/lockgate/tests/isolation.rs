@@ -1,26 +1,12 @@
-#[allow(
-    dead_code,
-    reason = "the invocation-isolation tests do not use the cancellation drop probe"
-)]
-#[path = "../src/exec/mod.rs"]
-mod exec;
-
 mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use exec::{ExecEngine, ExecLimits, StoreCtx};
+use common::exec::{ExecEngine, StoreCtx};
+use common::{INVOCATION_FUEL, LIMITS, TestState, wire_ready_wait};
 use tokio::sync::Barrier;
 use wasmtime::component::{Linker, Val};
-
-const LIMITS: ExecLimits = ExecLimits {
-    instantiation_fuel: 1_000_000,
-    max_memory_bytes: 16 * 1024 * 1024,
-};
-const INVOCATION_FUEL: u64 = 1_000_000;
-
-struct TestState;
 
 #[tokio::test(flavor = "current_thread")]
 async fn same_loaded_component_accepts_overlapping_invocations() {
@@ -82,12 +68,5 @@ fn wire_barrier_wait(
                 Ok(())
             })
         })?;
-    Ok(())
-}
-
-fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmtime::Result<()> {
-    linker
-        .instance("test:exec/host")?
-        .func_wrap_concurrent("wait", |_, (): ()| Box::pin(async { Ok(()) }))?;
     Ok(())
 }

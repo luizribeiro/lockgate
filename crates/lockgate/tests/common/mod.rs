@@ -7,6 +7,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use wasmtime::component::Linker;
+
+#[path = "../../src/exec/mod.rs"]
+pub(crate) mod exec;
+
+use exec::{ExecLimits, StoreCtx};
+
+pub(crate) const LIMITS: ExecLimits = ExecLimits {
+    instantiation_fuel: 1_000_000,
+    max_memory_bytes: 16 * 1024 * 1024,
+};
+pub(crate) const INVOCATION_FUEL: u64 = 1_000_000;
+
+pub(crate) struct TestState;
+
 static EXEC_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
 static EXEC_CONCURRENT_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
 static EXEC_FUEL_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
@@ -32,6 +47,13 @@ pub(crate) fn exec_fuel_fixture() -> &'static [u8] {
     EXEC_FUEL_FIXTURE
         .get_or_init(|| build_fixture("exec-fuel-guest", "lockgate_exec_fuel_fixture.wasm"))
         .as_slice()
+}
+
+pub(crate) fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmtime::Result<()> {
+    linker
+        .instance("test:exec/host")?
+        .func_wrap_concurrent("wait", |_, (): ()| Box::pin(async { Ok(()) }))?;
+    Ok(())
 }
 
 fn build_fixture(directory: &str, artifact: &str) -> Vec<u8> {
