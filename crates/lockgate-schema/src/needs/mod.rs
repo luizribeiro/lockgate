@@ -1,5 +1,9 @@
 use std::{error::Error, fmt, str::FromStr};
 
+mod scope_ref;
+
+pub use scope_ref::{ScopeRef, ScopeRefError};
+
 /// The identity of one permission operation, written `capability.operation`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AtomKey {
