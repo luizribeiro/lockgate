@@ -1,0 +1,21 @@
+package test:alias-multi@0.1.0;
+
+interface handles {
+    resource file;
+}
+
+interface aliases {
+    use handles.{file};
+    type document = file;
+}
+
+interface api {
+    use aliases.{document};
+    run: func() -> string;
+}
+
+world fixture {
+    import handles;
+    import aliases;
+    export api;
+}

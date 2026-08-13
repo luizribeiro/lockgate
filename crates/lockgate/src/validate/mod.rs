@@ -64,15 +64,6 @@ fn validate_interface(
     interface: InterfaceId,
     interface_name: &str,
 ) -> Result<(), ValidationError> {
-    for (name, id) in &resolve.interfaces[interface].types {
-        if matches!(resolve.types[*id].kind, TypeDefKind::Resource) {
-            return Err(ValidationError::unsupported(
-                interface_name,
-                format!("<type {name}>"),
-                format!("resource {name}"),
-            ));
-        }
-    }
     for function in resolve.interfaces[interface].functions.values() {
         let types = function
             .params
@@ -89,13 +80,23 @@ fn validate_interface(
             }
         }
     }
+    for (name, id) in &resolve.interfaces[interface].types {
+        let resolved = resolve_alias(resolve, *id);
+        if matches!(resolve.types[resolved].kind, TypeDefKind::Resource) {
+            return Err(ValidationError::unsupported(
+                interface_name,
+                format!("<type {name}>"),
+                format!("resource {}", type_name(resolve, resolved)),
+            ));
+        }
+    }
     Ok(())
 }
 
 fn forbidden_type(resolve: &Resolve, ty: Type) -> Option<String> {
     let id = match ty {
         Type::ErrorContext => return Some("error-context".to_string()),
-        Type::Id(id) => id,
+        Type::Id(id) => resolve_alias(resolve, id),
         _ => return None,
     };
     let definition = &resolve.types[id];
@@ -133,6 +134,13 @@ fn forbidden_type(resolve: &Resolve, ty: Type) -> Option<String> {
         TypeDefKind::Future(_) => Some("future".to_string()),
         TypeDefKind::Stream(_) => Some("stream".to_string()),
         TypeDefKind::Flags(_) | TypeDefKind::Enum(_) | TypeDefKind::Unknown => None,
+    }
+}
+
+fn resolve_alias(resolve: &Resolve, id: TypeId) -> TypeId {
+    match resolve.types[id].kind {
+        TypeDefKind::Type(Type::Id(target)) => resolve_alias(resolve, target),
+        _ => id,
     }
 }
 

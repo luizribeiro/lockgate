@@ -104,6 +104,30 @@ fn rejects_unused_exported_resource_declarations_with_guidance() {
 }
 
 #[test]
+fn rejects_unused_use_aliased_resource_declarations() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/unused_resource_alias.wit"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `test:alias-unused/api@0.1.0#<type file>`: offending type `resource file` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_unused_multi_hop_resource_aliases() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/unused_resource_multi_alias.wit"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `test:alias-multi/api@0.1.0#<type document>`: offending type `resource file` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
 fn rejects_nested_owned_handles_with_guidance() {
     let bytes = component(include_str!(
         "../../tests/data/export_validation/owned_handle.wit"

@@ -1,0 +1,15 @@
+package test:alias-unused@0.1.0;
+
+interface handles {
+    resource file;
+}
+
+interface api {
+    use handles.{file};
+    run: func() -> string;
+}
+
+world fixture {
+    import handles;
+    export api;
+}
