@@ -1,3 +1,28 @@
+//! Static validation for the value-only export boundary.
+//!
+//! Every exported interface must avoid resources, whether or not a resource
+//! declaration is used, as well as `own<T>`, `borrow<T>`, `future`, `stream`,
+//! and `error-context`. The same restrictions apply when those shapes are
+//! hidden inside nested type aliases. World-level exported functions and
+//! types are also rejected.
+//!
+//! The concern is whether a value can escape an invocation, rather than the
+//! types in isolation. Each invocation receives a fresh Wasmtime Store, which
+//! is dropped when the call returns. A handle, stream, or future that outlived
+//! that call would either dangle or require the Store to remain alive.
+//! Value-in/value-out signatures therefore make drop-on-cancel and a separate
+//! instance per invocation safe.
+//!
+//! Execution remains asynchronous: the host calls every export asynchronously,
+//! and a guest can await asynchronous host imports during an invocation.
+//! Validation uses `wit-parser` before Wasmtime compilation so failures produce
+//! a teaching error instead of a generic feature error. It inspects every WIT
+//! export, including interfaces the embedding application has not registered,
+//! because an unknown interface can become wired in the future.
+//!
+//! Forbidden shapes are matched exhaustively, without a catch-all arm. New WIT
+//! type kinds must therefore be considered here before the crate will build.
+
 use std::{error::Error, fmt};
 
 use wit_parser::{
