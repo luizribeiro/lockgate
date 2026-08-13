@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
 
+use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
+use lockgate_schema::{NeedsManifest, PluginMetadata};
+use wasm_encoder::{ComponentSection, CustomSection};
 use wasmtime::component::Linker;
 
 #[path = "../../src/exec/mod.rs"]
@@ -38,6 +41,29 @@ pub(crate) fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmt
         .instance("test:exec/host")?
         .func_wrap_concurrent("wait", |_, (): ()| Box::pin(async { Ok(()) }))?;
     Ok(())
+}
+
+pub(crate) fn sectioned_fixture(bytes: &[u8], metadata: &PluginMetadata) -> Vec<u8> {
+    let bytes = with_custom_section(
+        bytes,
+        PLUGIN_METADATA_SECTION,
+        &metadata.to_section_bytes().unwrap(),
+    );
+    with_custom_section(
+        &bytes,
+        PLUGIN_NEEDS_SECTION,
+        &NeedsManifest::empty().to_section_bytes().unwrap(),
+    )
+}
+
+pub(crate) fn with_custom_section(bytes: &[u8], name: &str, data: &[u8]) -> Vec<u8> {
+    let mut output = bytes.to_vec();
+    CustomSection {
+        name: name.into(),
+        data: data.into(),
+    }
+    .append_to_component(&mut output);
+    output
 }
 
 fn build_fixture(directory: &str, artifact: &str) -> Vec<u8> {

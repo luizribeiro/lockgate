@@ -194,7 +194,7 @@ fn type_name(resolve: &Resolve, id: TypeId) -> String {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ValidationError {
+pub enum ValidationError {
     Decode {
         message: String,
     },
@@ -210,7 +210,7 @@ impl ValidationError {
     /// Returns the stable machine-readable code assigned to this error.
     ///
     /// Codes are append-only: once assigned, a code is never changed or reused.
-    pub(crate) fn code(&self) -> Option<&'static str> {
+    pub fn code(&self) -> Option<&'static str> {
         match self {
             Self::UnsupportedExport { .. } => Some("admission.unsupported-export"),
             Self::Decode { .. } | Self::NotComponent => None,
