@@ -2,11 +2,11 @@ use std::{collections::HashMap, fmt, marker::PhantomData, str::FromStr};
 
 use serde::{Deserialize, Deserializer, de::MapAccess, de::Visitor};
 
-use crate::sections::check_payload_size;
+use super::super::check_payload_size;
 
 use crate::needs::{
-    AtomKey, EntryLocation, NeedEntry, NeedsManifest, NeedsManifestValidationError, Requirement,
-    ScopeRef, entry::validate_reason, manifest::NEEDS_FORMAT,
+    AtomKey, EntryLocation, NEEDS_FORMAT, NeedEntry, NeedsManifest, NeedsManifestValidationError,
+    Requirement, ScopeRef, validate_reason,
 };
 
 use super::NeedsManifestDecodeError;

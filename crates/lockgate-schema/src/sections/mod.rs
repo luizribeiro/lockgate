@@ -1,6 +1,7 @@
 //! Custom-section names and wire-format encode/decode boundaries.
 
 pub mod metadata;
+pub mod needs;
 
 /// Name of the WebAssembly custom section containing Lockgate plugin metadata.
 pub const PLUGIN_METADATA_SECTION: &str = "lockgate:plugin";

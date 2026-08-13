@@ -1,4 +1,4 @@
-use lockgate_schema::{NeedsManifestDecodeError, decode_needs_manifest};
+use lockgate_schema::sections::needs::{NeedsManifestDecodeError, decode_needs_manifest};
 
 #[test]
 fn malformed_payloads_return_errors_without_panicking() {

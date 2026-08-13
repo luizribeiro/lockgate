@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::{
+use crate::needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedReasonError, NeedsManifestValidationError,
     ScopeRefError,
 };

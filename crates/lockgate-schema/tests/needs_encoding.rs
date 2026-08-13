@@ -1,8 +1,10 @@
+use lockgate_schema::sections::needs::{
+    NeedsManifestDecodeError, NeedsManifestEncodeError, decode_needs_manifest,
+    encode_needs_manifest,
+};
 use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{
-    AtomKey, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY, NeedEntry, NeedsManifest,
-    NeedsManifestDecodeError, NeedsManifestEncodeError, ScopeRef, decode_needs_manifest,
-    encode_needs_manifest,
+    AtomKey, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY, NeedEntry, NeedsManifest, ScopeRef,
 };
 
 fn atom(value: &str) -> AtomKey {

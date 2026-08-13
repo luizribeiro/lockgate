@@ -4,20 +4,17 @@ mod digest;
 mod entry;
 mod manifest;
 mod scope_ref;
-mod wire;
 
 pub use digest::NeedsDigest;
+pub(crate) use entry::validate_reason;
 pub use entry::{MAX_SCOPES_PER_ENTRY, NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
+pub(crate) use manifest::NEEDS_FORMAT;
 pub use manifest::{
     EntryLocation, MAX_ATOMS_PER_MANIFEST, NeedsManifest, NeedsManifestValidationError, Requirement,
 };
 pub use scope_ref::{
     MAX_ROOT_NAME_BYTES, MAX_ROOT_SUBPATH_BYTES, MAX_ROOT_SUBPATH_SEGMENTS, MAX_SCOPE_VALUE_BYTES,
     ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind,
-};
-pub use wire::{
-    NeedsManifestDecodeError, NeedsManifestEncodeError, decode_needs_manifest,
-    encode_needs_manifest,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

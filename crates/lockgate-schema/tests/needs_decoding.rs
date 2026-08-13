@@ -1,7 +1,7 @@
-use lockgate_schema::{
-    NeedsManifest, NeedsManifestDecodeError, NeedsManifestValidationError, decode_needs_manifest,
-    encode_needs_manifest,
+use lockgate_schema::sections::needs::{
+    NeedsManifestDecodeError, decode_needs_manifest, encode_needs_manifest,
 };
+use lockgate_schema::{NeedsManifest, NeedsManifestValidationError};
 
 #[test]
 fn canonical_empty_manifest_round_trips() {

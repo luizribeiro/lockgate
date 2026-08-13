@@ -11,9 +11,8 @@ pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, MAX_ATOMS_PER_MANIFEST, MAX_ROOT_NAME_BYTES,
     MAX_ROOT_SUBPATH_BYTES, MAX_ROOT_SUBPATH_SEGMENTS, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY,
     NeedEntry, NeedEntryError, NeedKind, NeedReasonError, NeedsDigest, NeedsManifest,
-    NeedsManifestDecodeError, NeedsManifestEncodeError, NeedsManifestValidationError, Requirement,
-    ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind, decode_needs_manifest,
-    encode_needs_manifest,
+    NeedsManifestValidationError, Requirement, ScopeCharacterKind, ScopeRef, ScopeRefError,
+    ScopeValueKind,
 };
 
 const PLUGIN_METADATA_FORMAT: u32 = 1;

@@ -1,4 +1,5 @@
-use lockgate_schema::{NeedsDigest, decode_needs_manifest, encode_needs_manifest};
+use lockgate_schema::NeedsDigest;
+use lockgate_schema::sections::needs::{decode_needs_manifest, encode_needs_manifest};
 
 const GOLDEN: &[u8] = br#"{"format":1,"optional":{"http.request":["setting:/endpoint"]},"reasons":{"http.request":"deliver notifications"},"required":{"fs.read":["$workspace/generated/html","current"],"notify.send":true}}"#;
 

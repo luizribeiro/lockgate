@@ -2,7 +2,9 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
-use super::{NeedsManifest, NeedsManifestEncodeError, encode_needs_manifest};
+use crate::sections::needs::{NeedsManifestEncodeError, encode_needs_manifest};
+
+use super::NeedsManifest;
 
 /// SHA-256 of a canonical symbolic needs manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

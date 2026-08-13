@@ -1,5 +1,6 @@
-use lockgate_schema::{
-    NeedReasonError, NeedsManifestDecodeError, decode_needs_manifest, encode_needs_manifest,
+use lockgate_schema::NeedReasonError;
+use lockgate_schema::sections::needs::{
+    NeedsManifestDecodeError, decode_needs_manifest, encode_needs_manifest,
 };
 
 fn decode_reason(reason: &str) -> Result<(), NeedsManifestDecodeError> {

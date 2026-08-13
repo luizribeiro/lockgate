@@ -2,9 +2,9 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use serde::Serialize;
 
-use crate::sections::check_payload_size;
+use crate::needs::{NeedKind, NeedsManifest, NeedsManifestValidationError};
 
-use super::{NeedKind, NeedsManifest, NeedsManifestValidationError};
+use super::check_payload_size;
 
 mod decode_error;
 mod decoder;
