@@ -335,14 +335,24 @@ mod tests {
 
     #[test]
     fn rejects_whitespace_inside_the_plugin_id() {
-        assert_eq!(
-            PluginMetadata::new("com.example\u{2003}greeter", "Greeter", "1.2.3").unwrap_err(),
-            PluginMetadataValidationError::DisallowedCharacter {
-                field: PluginMetadataField::Id,
-                byte_index: 11,
-                character: '\u{2003}',
-            }
-        );
+        for (id, byte_index, character) in [
+            ("com.example\u{2003}greeter", 11, '\u{2003}'),
+            ("plugin\u{00a0}name", 6, '\u{00a0}'),
+        ] {
+            let error = PluginMetadata::new(id, "Greeter", "1.2.3").unwrap_err();
+            assert_eq!(
+                error,
+                PluginMetadataValidationError::DisallowedCharacter {
+                    field: PluginMetadataField::Id,
+                    byte_index,
+                    character,
+                }
+            );
+            assert_eq!(
+                error.to_string(),
+                format!("plugin id contains whitespace at byte {byte_index}")
+            );
+        }
     }
 
     #[test]
@@ -458,6 +468,24 @@ mod tests {
                 PluginMetadataValidationError::FieldTooLong { field, max_bytes }
             );
         }
+    }
+
+    #[test]
+    fn metadata_field_limits_count_utf8_bytes() {
+        let exact = "é".repeat(MAX_NAME_BYTES / 2);
+        metadata_with_field(PluginMetadataField::Name, exact.clone())
+            .validate()
+            .unwrap();
+
+        assert_eq!(
+            metadata_with_field(PluginMetadataField::Name, format!("{exact}x"))
+                .validate()
+                .unwrap_err(),
+            PluginMetadataValidationError::FieldTooLong {
+                field: PluginMetadataField::Name,
+                max_bytes: MAX_NAME_BYTES,
+            }
+        );
     }
 
     #[test]
