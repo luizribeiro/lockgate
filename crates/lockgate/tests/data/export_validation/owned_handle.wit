@@ -1,0 +1,16 @@
+package test:owned-handle;
+
+interface handles {
+    resource file;
+}
+
+interface api {
+    use handles.{file};
+    type nested = option<own<file>>;
+    run: func() -> nested;
+}
+
+world fixture {
+    import handles;
+    export api;
+}

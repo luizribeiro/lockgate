@@ -94,3 +94,27 @@ fn rejects_unused_exported_resource_declarations_with_guidance() {
         "unsupported export `test:unused-resource/api#<type file>`: offending type `resource file` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }
+
+#[test]
+fn rejects_nested_owned_handles_with_guidance() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/owned_handle.wit"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `test:owned-handle/api#run`: offending type `own<file>` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_nested_borrowed_handles_with_guidance() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/borrowed_handle.wit"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `test:borrowed-handle/api#run`: offending type `borrow<file>` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}

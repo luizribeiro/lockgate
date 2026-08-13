@@ -1,7 +1,7 @@
 use std::{error::Error, fmt};
 
 use wit_parser::{
-    InterfaceId, Resolve, TypeDefKind, WorldId, WorldItem, WorldKey,
+    Handle, InterfaceId, Resolve, Type, TypeDefKind, TypeId, WorldId, WorldItem, WorldKey,
     decoding::{DecodedWasm, decode},
 };
 
@@ -73,7 +73,73 @@ fn validate_interface(
             ));
         }
     }
+    for function in resolve.interfaces[interface].functions.values() {
+        let types = function
+            .params
+            .iter()
+            .map(|param| param.ty)
+            .chain(function.result);
+        for ty in types {
+            if let Some(offending_type) = forbidden_type(resolve, ty) {
+                return Err(ValidationError::unsupported(
+                    interface_name,
+                    &function.name,
+                    offending_type,
+                ));
+            }
+        }
+    }
     Ok(())
+}
+
+fn forbidden_type(resolve: &Resolve, ty: Type) -> Option<String> {
+    let Type::Id(id) = ty else {
+        return None;
+    };
+    let definition = &resolve.types[id];
+    match &definition.kind {
+        TypeDefKind::Resource => Some(format!("resource {}", type_name(resolve, id))),
+        TypeDefKind::Handle(handle) => Some(match handle {
+            Handle::Own(resource) => format!("own<{}>", type_name(resolve, *resource)),
+            Handle::Borrow(resource) => format!("borrow<{}>", type_name(resolve, *resource)),
+        }),
+        TypeDefKind::Record(record) => record
+            .fields
+            .iter()
+            .find_map(|field| forbidden_type(resolve, field.ty)),
+        TypeDefKind::Tuple(tuple) => tuple
+            .types
+            .iter()
+            .find_map(|ty| forbidden_type(resolve, *ty)),
+        TypeDefKind::Variant(variant) => variant
+            .cases
+            .iter()
+            .filter_map(|case| case.ty)
+            .find_map(|ty| forbidden_type(resolve, ty)),
+        TypeDefKind::Option(ty)
+        | TypeDefKind::List(ty)
+        | TypeDefKind::FixedLengthList(ty, _)
+        | TypeDefKind::Type(ty) => forbidden_type(resolve, *ty),
+        TypeDefKind::Result(result) => result
+            .ok
+            .into_iter()
+            .chain(result.err)
+            .find_map(|ty| forbidden_type(resolve, ty)),
+        TypeDefKind::Map(key, value) => [*key, *value]
+            .into_iter()
+            .find_map(|ty| forbidden_type(resolve, ty)),
+        TypeDefKind::Future(ty) | TypeDefKind::Stream(ty) => {
+            ty.iter().find_map(|ty| forbidden_type(resolve, *ty))
+        }
+        TypeDefKind::Flags(_) | TypeDefKind::Enum(_) | TypeDefKind::Unknown => None,
+    }
+}
+
+fn type_name(resolve: &Resolve, id: TypeId) -> String {
+    resolve.types[id]
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("type-{}", id.index()))
 }
 
 #[derive(Debug, PartialEq, Eq)]

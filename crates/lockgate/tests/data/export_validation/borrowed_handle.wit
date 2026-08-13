@@ -1,0 +1,16 @@
+package test:borrowed-handle;
+
+interface handles {
+    resource file;
+}
+
+interface api {
+    use handles.{file};
+    type nested = option<borrow<file>>;
+    run: func(input: nested);
+}
+
+world fixture {
+    import handles;
+    export api;
+}
