@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use super::{AtomKey, ScopeRef, ScopeRefError};
+use super::{AtomKey, DisallowedCharacterKind, ScopeRef, ScopeRefError, find_disallowed_character};
 
 /// The operation kind and symbolic scope references declared by one need.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +127,7 @@ pub enum NeedReasonError {
     Empty,
     MultipleLines,
     ControlCharacter { byte_index: usize },
+    FormatCharacter { byte_index: usize },
     TooLong { max_bytes: usize },
 }
 
@@ -138,6 +139,10 @@ impl fmt::Display for NeedReasonError {
             Self::ControlCharacter { byte_index } => write!(
                 formatter,
                 "reason contains a control character at byte {byte_index}"
+            ),
+            Self::FormatCharacter { byte_index } => write!(
+                formatter,
+                "reason contains a format character at byte {byte_index}"
             ),
             Self::TooLong { max_bytes } => {
                 write!(formatter, "reason exceeds {max_bytes} UTF-8 bytes")
@@ -155,8 +160,11 @@ pub(crate) fn validate_reason(reason: &str) -> Result<(), NeedReasonError> {
     if reason.contains(['\n', '\r']) {
         return Err(NeedReasonError::MultipleLines);
     }
-    if let Some((byte_index, _)) = reason.char_indices().find(|(_, value)| value.is_control()) {
-        return Err(NeedReasonError::ControlCharacter { byte_index });
+    if let Some((byte_index, kind)) = find_disallowed_character(reason) {
+        return Err(match kind {
+            DisallowedCharacterKind::Control => NeedReasonError::ControlCharacter { byte_index },
+            DisallowedCharacterKind::Format => NeedReasonError::FormatCharacter { byte_index },
+        });
     }
     if reason.len() > 512 {
         return Err(NeedReasonError::TooLong { max_bytes: 512 });
@@ -226,6 +234,10 @@ mod tests {
             (
                 "before\u{7}after",
                 NeedReasonError::ControlCharacter { byte_index: 6 },
+            ),
+            (
+                "before\u{202e}after",
+                NeedReasonError::FormatCharacter { byte_index: 6 },
             ),
         ] {
             assert_eq!(

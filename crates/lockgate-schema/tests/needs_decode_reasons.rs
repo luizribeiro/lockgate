@@ -21,6 +21,10 @@ fn rejects_every_invalid_reason_shape() {
             "before\u{7}after".to_owned(),
             NeedReasonError::ControlCharacter { byte_index: 6 },
         ),
+        (
+            "before\u{202e}after".to_owned(),
+            NeedReasonError::FormatCharacter { byte_index: 6 },
+        ),
         ("é".repeat(257), NeedReasonError::TooLong { max_bytes: 512 }),
     ];
 
