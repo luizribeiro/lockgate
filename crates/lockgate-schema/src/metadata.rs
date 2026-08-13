@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
-use crate::needs::{DisallowedCharacterKind, find_disallowed_character};
+use crate::text::classify_disallowed_character;
 
 const PLUGIN_METADATA_FORMAT: u32 = 1;
 const MAX_VERSION_BYTES: usize = 128;
@@ -109,33 +109,13 @@ impl PluginMetadata {
         if self.format != PLUGIN_METADATA_FORMAT {
             return Err(PluginMetadataValidationError::UnsupportedFormat { found: self.format });
         }
-        validate_required(PluginMetadataField::Id, &self.id)?;
-        if self.id.chars().any(char::is_whitespace) {
-            return Err(PluginMetadataValidationError::IdContainsWhitespace);
-        }
-        validate_required(PluginMetadataField::Name, &self.name)?;
-        validate_required(PluginMetadataField::Version, &self.version)?;
-        if self.version.contains(['\n', '\r']) {
-            return Err(PluginMetadataValidationError::VersionMultipleLines);
-        }
-        if let Some((byte_index, _, kind)) = find_disallowed_character(&self.version) {
-            return Err(match kind {
-                DisallowedCharacterKind::Control => {
-                    PluginMetadataValidationError::VersionControlCharacter { byte_index }
-                }
-                DisallowedCharacterKind::Format => {
-                    PluginMetadataValidationError::VersionFormatCharacter { byte_index }
-                }
-                DisallowedCharacterKind::LineBreak | DisallowedCharacterKind::LineSeparator => {
-                    PluginMetadataValidationError::VersionMultipleLines
-                }
-            });
-        }
-        if self.version.len() > MAX_VERSION_BYTES {
-            return Err(PluginMetadataValidationError::VersionTooLong {
-                max_bytes: MAX_VERSION_BYTES,
-            });
-        }
+        validate_display_field(PluginMetadataField::Id, &self.id, usize::MAX)?;
+        validate_display_field(PluginMetadataField::Name, &self.name, usize::MAX)?;
+        validate_display_field(
+            PluginMetadataField::Version,
+            &self.version,
+            MAX_VERSION_BYTES,
+        )?;
         for (field, value) in [
             (
                 PluginMetadataField::Description,
@@ -146,7 +126,7 @@ impl PluginMetadata {
             (PluginMetadataField::Homepage, self.homepage.as_deref()),
         ] {
             if value.is_some_and(|value| value.trim().is_empty()) {
-                return Err(PluginMetadataValidationError::EmptyOptionalField { field });
+                return Err(PluginMetadataValidationError::EmptyField { field });
             }
         }
         Ok(())
@@ -159,22 +139,19 @@ impl PluginMetadata {
 pub enum PluginMetadataValidationError {
     /// The wire format version is not supported.
     UnsupportedFormat { found: u32 },
-    /// A required field is empty or consists only of whitespace.
-    EmptyRequiredField { field: PluginMetadataField },
-    /// A required field has leading or trailing whitespace.
-    SurroundingWhitespace { field: PluginMetadataField },
-    /// The plugin identifier contains whitespace.
-    IdContainsWhitespace,
-    /// The plugin version spans more than one line.
-    VersionMultipleLines,
-    /// The plugin version contains a Unicode control (Cc) character.
-    VersionControlCharacter { byte_index: usize },
-    /// The plugin version contains a Unicode format (Cf) character.
-    VersionFormatCharacter { byte_index: usize },
-    /// The plugin version exceeds the display-string byte limit.
-    VersionTooLong { max_bytes: usize },
-    /// An optional field is present but empty or consists only of whitespace.
-    EmptyOptionalField { field: PluginMetadataField },
+    /// A field is empty or consists only of whitespace.
+    EmptyField { field: PluginMetadataField },
+    /// A field contains a character that is unsafe in consent displays.
+    DisallowedCharacter {
+        field: PluginMetadataField,
+        byte_index: usize,
+        character: char,
+    },
+    /// A field exceeds its UTF-8 byte limit.
+    FieldTooLong {
+        field: PluginMetadataField,
+        max_bytes: usize,
+    },
 }
 
 impl fmt::Display for PluginMetadataValidationError {
@@ -183,36 +160,31 @@ impl fmt::Display for PluginMetadataValidationError {
             Self::UnsupportedFormat { found } => {
                 write!(formatter, "unsupported plugin metadata format {found}")
             }
-            Self::EmptyRequiredField { field } => {
+            Self::EmptyField { field } => {
                 write!(formatter, "plugin {field} must not be empty")
             }
-            Self::SurroundingWhitespace { field } => write!(
+            Self::DisallowedCharacter {
+                field,
+                byte_index,
+                character,
+            } if *field == PluginMetadataField::Id && character.is_whitespace() => {
+                write!(
+                    formatter,
+                    "plugin id contains whitespace at byte {byte_index}"
+                )
+            }
+            Self::DisallowedCharacter {
+                field,
+                byte_index,
+                character,
+            } => write!(
                 formatter,
-                "plugin {field} must not have leading or trailing whitespace"
+                "plugin {field} contains a {} at byte {byte_index}",
+                classify_disallowed_character(*character)
+                    .expect("stored metadata character must be disallowed")
             ),
-            Self::IdContainsWhitespace => {
-                formatter.write_str("plugin id must not contain whitespace")
-            }
-            Self::VersionMultipleLines => {
-                formatter.write_str("plugin version must contain exactly one line")
-            }
-            Self::VersionControlCharacter { byte_index } => {
-                write!(
-                    formatter,
-                    "plugin version contains a control character at byte {byte_index}"
-                )
-            }
-            Self::VersionFormatCharacter { byte_index } => {
-                write!(
-                    formatter,
-                    "plugin version contains a format character at byte {byte_index}"
-                )
-            }
-            Self::VersionTooLong { max_bytes } => {
-                write!(formatter, "plugin version exceeds {max_bytes} UTF-8 bytes")
-            }
-            Self::EmptyOptionalField { field } => {
-                write!(formatter, "plugin {field} must not be empty when present")
+            Self::FieldTooLong { field, max_bytes } => {
+                write!(formatter, "plugin {field} exceeds {max_bytes} UTF-8 bytes")
             }
         }
     }
@@ -247,15 +219,34 @@ impl fmt::Display for PluginMetadataField {
     }
 }
 
-fn validate_required(
+fn validate_display_field(
     field: PluginMetadataField,
     value: &str,
+    max_bytes: usize,
 ) -> Result<(), PluginMetadataValidationError> {
-    if value.trim().is_empty() {
-        return Err(PluginMetadataValidationError::EmptyRequiredField { field });
+    let mut has_non_whitespace = false;
+    let mut disallowed = None;
+    for (byte_index, character) in value.char_indices() {
+        has_non_whitespace |= !character.is_whitespace();
+        if disallowed.is_none()
+            && (classify_disallowed_character(character).is_some()
+                || field == PluginMetadataField::Id && character.is_whitespace())
+        {
+            disallowed = Some((byte_index, character));
+        }
     }
-    if value.trim() != value {
-        return Err(PluginMetadataValidationError::SurroundingWhitespace { field });
+    if !has_non_whitespace {
+        return Err(PluginMetadataValidationError::EmptyField { field });
+    }
+    if let Some((byte_index, character)) = disallowed {
+        return Err(PluginMetadataValidationError::DisallowedCharacter {
+            field,
+            byte_index,
+            character,
+        });
+    }
+    if value.len() > max_bytes {
+        return Err(PluginMetadataValidationError::FieldTooLong { field, max_bytes });
     }
     Ok(())
 }
@@ -307,48 +298,43 @@ mod tests {
         ] {
             assert_eq!(
                 result.unwrap_err(),
-                PluginMetadataValidationError::EmptyRequiredField { field }
+                PluginMetadataValidationError::EmptyField { field }
             );
         }
     }
 
     #[test]
-    fn rejects_surrounding_whitespace_in_required_fields() {
-        for (result, field) in [
-            (
-                PluginMetadata::new(" plugin", "Greeter", "1.2.3"),
-                PluginMetadataField::Id,
-            ),
-            (
-                PluginMetadata::new("plugin", "Greeter ", "1.2.3"),
-                PluginMetadataField::Name,
-            ),
-            (
-                PluginMetadata::new("plugin", "Greeter", "1.2.3\n"),
-                PluginMetadataField::Version,
-            ),
-        ] {
-            assert_eq!(
-                result.unwrap_err(),
-                PluginMetadataValidationError::SurroundingWhitespace { field }
-            );
-        }
+    fn accepts_surrounding_whitespace_in_display_fields() {
+        assert!(PluginMetadata::new("plugin", " Greeter ", " 1.2.3 ").is_ok());
     }
 
     #[test]
     fn rejects_whitespace_inside_the_plugin_id() {
         assert_eq!(
             PluginMetadata::new("com.example\u{2003}greeter", "Greeter", "1.2.3").unwrap_err(),
-            PluginMetadataValidationError::IdContainsWhitespace
+            PluginMetadataValidationError::DisallowedCharacter {
+                field: PluginMetadataField::Id,
+                byte_index: 11,
+                character: '\u{2003}',
+            }
         );
     }
 
     #[test]
     fn rejects_multiline_versions() {
+        let error = PluginMetadata::new("com.example.greeter", "Greeter", "release\ncandidate")
+            .unwrap_err();
         assert_eq!(
-            PluginMetadata::new("com.example.greeter", "Greeter", "release\ncandidate")
-                .unwrap_err(),
-            PluginMetadataValidationError::VersionMultipleLines
+            error,
+            PluginMetadataValidationError::DisallowedCharacter {
+                field: PluginMetadataField::Version,
+                byte_index: 7,
+                character: '\n',
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "plugin version contains a line break at byte 7"
         );
     }
 
@@ -357,11 +343,19 @@ mod tests {
         for (version, expected) in [
             (
                 "release\u{7}candidate",
-                PluginMetadataValidationError::VersionControlCharacter { byte_index: 7 },
+                PluginMetadataValidationError::DisallowedCharacter {
+                    field: PluginMetadataField::Version,
+                    byte_index: 7,
+                    character: '\u{7}',
+                },
             ),
             (
                 "release\u{202e}candidate",
-                PluginMetadataValidationError::VersionFormatCharacter { byte_index: 7 },
+                PluginMetadataValidationError::DisallowedCharacter {
+                    field: PluginMetadataField::Version,
+                    byte_index: 7,
+                    character: '\u{202e}',
+                },
             ),
         ] {
             assert_eq!(
@@ -376,7 +370,10 @@ mod tests {
         assert!(PluginMetadata::new("plugin", "Plugin", "x".repeat(128)).is_ok());
         assert_eq!(
             PluginMetadata::new("plugin", "Plugin", "x".repeat(129)).unwrap_err(),
-            PluginMetadataValidationError::VersionTooLong { max_bytes: 128 }
+            PluginMetadataValidationError::FieldTooLong {
+                field: PluginMetadataField::Version,
+                max_bytes: 128,
+            }
         );
     }
 
@@ -401,7 +398,7 @@ mod tests {
         for (metadata, field) in values {
             assert_eq!(
                 metadata.validate().unwrap_err(),
-                PluginMetadataValidationError::EmptyOptionalField { field }
+                PluginMetadataValidationError::EmptyField { field }
             );
         }
     }

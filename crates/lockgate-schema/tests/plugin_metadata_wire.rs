@@ -78,8 +78,10 @@ fn rejects_disallowed_version_format_characters_at_their_byte_index() {
 
     assert!(matches!(
         error,
-        DecodeError::InvalidMetadata(PluginMetadataValidationError::VersionFormatCharacter {
-            byte_index: 7
+        DecodeError::InvalidMetadata(PluginMetadataValidationError::DisallowedCharacter {
+            field: lockgate_schema::PluginMetadataField::Version,
+            byte_index: 7,
+            character: '\u{202e}',
         })
     ));
     assert!(error.to_string().contains("format character at byte 7"));
@@ -93,7 +95,10 @@ fn bounds_version_display_strings_by_utf8_bytes() {
 
     assert_eq!(
         PluginMetadata::new("plugin", "Plugin", "x".repeat(129)).unwrap_err(),
-        PluginMetadataValidationError::VersionTooLong { max_bytes: 128 }
+        PluginMetadataValidationError::FieldTooLong {
+            field: lockgate_schema::PluginMetadataField::Version,
+            max_bytes: 128,
+        }
     );
 }
 
@@ -131,7 +136,7 @@ fn rejects_invalid_field_values_with_field_specific_errors() {
         ),
         (
             br#"{"format":1,"id":"bad id","name":"Plugin","version":"1.0.0"}"#,
-            "plugin id must not contain whitespace",
+            "plugin id contains whitespace at byte 3",
         ),
         (
             br#"{"format":1,"id":"plugin","name":" ","version":"1.0.0"}"#,
@@ -143,7 +148,7 @@ fn rejects_invalid_field_values_with_field_specific_errors() {
         ),
         (
             br#"{"format":1,"id":"plugin","name":"Plugin","version":"1.0.0","homepage":" "}"#,
-            "plugin homepage must not be empty when present",
+            "plugin homepage must not be empty",
         ),
     ];
 
@@ -212,7 +217,7 @@ fn encoding_revalidates_builder_fields() {
     assert!(
         error
             .to_string()
-            .contains("plugin description must not be empty when present")
+            .contains("plugin description must not be empty")
     );
 }
 
