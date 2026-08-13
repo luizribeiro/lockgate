@@ -2,3 +2,6 @@
 name = "lockgate-schema"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+semver.workspace = true
