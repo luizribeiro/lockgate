@@ -1,10 +1,12 @@
 use std::{error::Error, fmt, str::FromStr};
 
+mod digest;
 mod entry;
 mod manifest;
 mod scope_ref;
 mod wire;
 
+pub use digest::NeedsDigest;
 pub use entry::{NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
 pub use manifest::{EntryLocation, NeedsManifest, NeedsManifestValidationError, Requirement};
 pub use scope_ref::{ScopeRef, ScopeRefError};

@@ -8,7 +8,7 @@ mod needs;
 
 pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedEntry, NeedEntryError, NeedKind, NeedReasonError,
-    NeedsManifest, NeedsManifestDecodeError, NeedsManifestEncodeError,
+    NeedsDigest, NeedsManifest, NeedsManifestDecodeError, NeedsManifestEncodeError,
     NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError, decode_needs_manifest,
     encode_needs_manifest,
 };
