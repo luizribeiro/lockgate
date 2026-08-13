@@ -1,15 +1,34 @@
+#![allow(
+    dead_code,
+    reason = "each integration-test binary uses only its own fixture helper"
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
 static EXEC_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
+static EXEC_CONCURRENT_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
 
 pub(crate) fn exec_fixture() -> &'static [u8] {
-    EXEC_FIXTURE.get_or_init(build_exec_fixture).as_slice()
+    EXEC_FIXTURE
+        .get_or_init(|| build_fixture("exec-guest", "lockgate_exec_fixture.wasm"))
+        .as_slice()
 }
 
-fn build_exec_fixture() -> Vec<u8> {
-    let fixture_dir = fixture_dir();
+pub(crate) fn exec_concurrent_fixture() -> &'static [u8] {
+    EXEC_CONCURRENT_FIXTURE
+        .get_or_init(|| {
+            build_fixture(
+                "exec-concurrent-guest",
+                "lockgate_exec_concurrent_fixture.wasm",
+            )
+        })
+        .as_slice()
+}
+
+fn build_fixture(directory: &str, artifact: &str) -> Vec<u8> {
+    let fixture_dir = fixture_dir(directory);
     let manifest = fixture_dir.join("Cargo.toml");
     let output = Command::new(env!("CARGO"))
         .args([
@@ -22,16 +41,18 @@ fn build_exec_fixture() -> Vec<u8> {
             "--locked",
         ])
         .output()
-        .expect("failed to run Cargo for the exec guest fixture");
+        .expect("failed to run Cargo for an exec guest fixture");
 
     assert!(
         output.status.success(),
-        "exec guest fixture build failed\nstdout:\n{}\nstderr:\n{}",
+        "exec guest fixture {directory} build failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let component = fixture_dir.join("target/wasm32-wasip2/release/lockgate_exec_fixture.wasm");
+    let component = fixture_dir
+        .join("target/wasm32-wasip2/release")
+        .join(artifact);
     std::fs::read(&component).unwrap_or_else(|error| {
         panic!(
             "failed to read exec guest fixture at {}: {error}",
@@ -40,8 +61,10 @@ fn build_exec_fixture() -> Vec<u8> {
     })
 }
 
-fn fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/exec-guest")
+fn fixture_dir(directory: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(directory)
 }
 
 fn path_str(path: &Path) -> &str {

@@ -1,0 +1,15 @@
+package test:exec-concurrent;
+
+interface host {
+  first: async func();
+  second: async func();
+}
+
+interface guest {
+  run: async func() -> u32;
+}
+
+world fixture {
+  import host;
+  export guest;
+}
