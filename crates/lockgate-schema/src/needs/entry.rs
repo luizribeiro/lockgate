@@ -2,6 +2,9 @@ use std::{error::Error, fmt};
 
 use super::{AtomKey, DisallowedCharacterKind, ScopeRef, ScopeRefError, find_disallowed_character};
 
+/// Maximum number of scope values in one scoped entry before deduplication.
+pub const MAX_SCOPES_PER_ENTRY: usize = 128;
+
 /// The operation kind and symbolic scope references declared by one need.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeedKind {
@@ -31,6 +34,12 @@ impl NeedEntry {
 
     /// Declares a scoped operation and canonicalizes its set of references.
     pub fn scoped(atom: AtomKey, mut scopes: Vec<ScopeRef>) -> Result<Self, NeedEntryError> {
+        if scopes.len() > MAX_SCOPES_PER_ENTRY {
+            return Err(NeedEntryError::TooManyScopes {
+                found: scopes.len(),
+                max: MAX_SCOPES_PER_ENTRY,
+            });
+        }
         if scopes.is_empty() {
             return Err(NeedEntryError::EmptyScopes);
         }
@@ -73,6 +82,12 @@ impl NeedEntry {
 
     pub(crate) fn validate(&self) -> Result<(), NeedEntryError> {
         if let NeedKind::Scoped(scopes) = &self.kind {
+            if scopes.len() > MAX_SCOPES_PER_ENTRY {
+                return Err(NeedEntryError::TooManyScopes {
+                    found: scopes.len(),
+                    max: MAX_SCOPES_PER_ENTRY,
+                });
+            }
             if scopes.is_empty() {
                 return Err(NeedEntryError::EmptyScopes);
             }
@@ -94,6 +109,7 @@ impl NeedEntry {
 #[non_exhaustive]
 pub enum NeedEntryError {
     EmptyScopes,
+    TooManyScopes { found: usize, max: usize },
     InvalidScope { index: usize, source: ScopeRefError },
     InvalidReason(NeedReasonError),
 }
@@ -102,6 +118,12 @@ impl fmt::Display for NeedEntryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyScopes => formatter.write_str("scoped need must contain at least one scope"),
+            Self::TooManyScopes { found, max } => {
+                write!(
+                    formatter,
+                    "scoped need contains {found} scopes; maximum is {max}"
+                )
+            }
             Self::InvalidScope { index, source } => {
                 write!(formatter, "scope reference {index} is invalid: {source}")
             }
@@ -113,7 +135,7 @@ impl fmt::Display for NeedEntryError {
 impl Error for NeedEntryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::EmptyScopes => None,
+            Self::EmptyScopes | Self::TooManyScopes { .. } => None,
             Self::InvalidScope { source, .. } => Some(source),
             Self::InvalidReason(source) => Some(source),
         }

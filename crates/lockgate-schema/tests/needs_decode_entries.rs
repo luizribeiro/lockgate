@@ -1,6 +1,7 @@
 use lockgate_schema::{
-    MAX_SCOPE_VALUE_BYTES, NeedEntryError, NeedsManifestDecodeError, NeedsManifestValidationError,
-    ScopeCharacterKind, ScopeRefError, ScopeValueKind, decode_needs_manifest,
+    MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY, NeedEntryError, NeedsManifestDecodeError,
+    NeedsManifestValidationError, ScopeCharacterKind, ScopeRefError, ScopeValueKind,
+    decode_needs_manifest,
 };
 
 fn decode(required: &str, optional: &str) -> Result<(), NeedsManifestDecodeError> {
@@ -236,6 +237,37 @@ fn bounds_literal_and_setting_pointer_utf8_bytes() {
                     },
                     ..
                 } if found_kind == kind
+            )),
+        }
+    }
+}
+
+#[test]
+fn bounds_scopes_before_deduplication() {
+    for (count, expected) in [
+        (MAX_SCOPES_PER_ENTRY, Ok(())),
+        (MAX_SCOPES_PER_ENTRY + 1, Err(())),
+    ] {
+        let payload = serde_json::json!({
+            "format": 1,
+            "optional": {},
+            "reasons": {},
+            "required": { "fs.read": vec!["same"; count] },
+        });
+        let result = decode_needs_manifest(&serde_json::to_vec(&payload).unwrap()).map(|_| ());
+        match expected {
+            Ok(()) => result.unwrap(),
+            Err(()) => assert!(matches!(
+                result.unwrap_err(),
+                NeedsManifestDecodeError::InvalidManifest(
+                    NeedsManifestValidationError::InvalidEntry {
+                        source: NeedEntryError::TooManyScopes {
+                            found,
+                            max: MAX_SCOPES_PER_ENTRY,
+                        },
+                        ..
+                    }
+                ) if found == MAX_SCOPES_PER_ENTRY + 1
             )),
         }
     }

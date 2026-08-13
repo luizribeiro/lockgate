@@ -7,7 +7,7 @@ mod scope_ref;
 mod wire;
 
 pub use digest::NeedsDigest;
-pub use entry::{NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
+pub use entry::{MAX_SCOPES_PER_ENTRY, NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
 pub use manifest::{EntryLocation, NeedsManifest, NeedsManifestValidationError, Requirement};
 pub use scope_ref::{
     MAX_SCOPE_VALUE_BYTES, ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind,
