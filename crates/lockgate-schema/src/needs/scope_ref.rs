@@ -1,6 +1,8 @@
 use std::{error::Error, fmt};
 
 const MAX_ROOT_NAME_BYTES: usize = 64;
+const MAX_ROOT_SUBPATH_BYTES: usize = 1024;
+const MAX_ROOT_SUBPATH_SEGMENTS: usize = 64;
 
 /// A symbolic scope in a plugin's needs declaration.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -41,12 +43,35 @@ impl ScopeRef {
         Ok(reference)
     }
 
+    /// Narrows a symbolic root to a validated relative subpath.
+    pub fn join(self, subpath: impl Into<String>) -> Result<Self, ScopeRefError> {
+        let Self::Root {
+            name,
+            subpath: current,
+        } = self
+        else {
+            return Err(ScopeRefError::JoinRequiresRoot);
+        };
+        if current.is_some() {
+            return Err(ScopeRefError::RootAlreadyJoined);
+        }
+        let reference = Self::Root {
+            name,
+            subpath: Some(subpath.into()),
+        };
+        reference.validate()?;
+        Ok(reference)
+    }
+
     /// Parses the canonical symbolic wire spelling.
     pub fn from_wire(value: &str) -> Result<Self, ScopeRefError> {
         if let Some(pointer) = value.strip_prefix("setting:") {
             Self::setting(pointer)
-        } else if let Some(name) = value.strip_prefix('$') {
-            Self::root(name)
+        } else if let Some(root) = value.strip_prefix('$') {
+            match root.split_once('/') {
+                Some((name, subpath)) => Self::root(name)?.join(subpath),
+                None => Self::root(root),
+            }
         } else {
             Self::literal(value)
         }
@@ -73,8 +98,8 @@ impl ScopeRef {
             Self::Setting(pointer) => validate_json_pointer(pointer),
             Self::Root { name, subpath } => {
                 validate_root_name(name)?;
-                if subpath.is_some() {
-                    return Err(ScopeRefError::InvalidRootSubpath);
+                if let Some(subpath) = subpath {
+                    validate_root_subpath(subpath)?;
                 }
                 Ok(())
             }
@@ -90,7 +115,15 @@ pub enum ScopeRefError {
     InvalidSettingPointer,
     InvalidRootName,
     RootNameTooLong { max_bytes: usize },
-    InvalidRootSubpath,
+    JoinRequiresRoot,
+    RootAlreadyJoined,
+    AbsoluteRootSubpath,
+    EmptyRootSubpathSegment { index: usize },
+    DotRootSubpathSegment { index: usize },
+    RootSubpathContainsBackslash,
+    RootSubpathContainsNul,
+    RootSubpathTooLong { max_bytes: usize },
+    RootSubpathTooDeep { max_segments: usize },
 }
 
 impl fmt::Display for ScopeRefError {
@@ -108,7 +141,28 @@ impl fmt::Display for ScopeRefError {
             Self::RootNameTooLong { max_bytes } => {
                 write!(formatter, "root name exceeds {max_bytes} bytes")
             }
-            Self::InvalidRootSubpath => formatter.write_str("root subpath is invalid"),
+            Self::JoinRequiresRoot => formatter.write_str("only a root reference can be joined"),
+            Self::RootAlreadyJoined => formatter.write_str("root reference is already joined"),
+            Self::AbsoluteRootSubpath => formatter.write_str("root subpath must be relative"),
+            Self::EmptyRootSubpathSegment { index } => {
+                write!(formatter, "root subpath segment {index} must not be empty")
+            }
+            Self::DotRootSubpathSegment { index } => write!(
+                formatter,
+                "root subpath segment {index} must not be `.` or `..`"
+            ),
+            Self::RootSubpathContainsBackslash => {
+                formatter.write_str("root subpath must not contain backslashes")
+            }
+            Self::RootSubpathContainsNul => {
+                formatter.write_str("root subpath must not contain NUL")
+            }
+            Self::RootSubpathTooLong { max_bytes } => {
+                write!(formatter, "root subpath exceeds {max_bytes} bytes")
+            }
+            Self::RootSubpathTooDeep { max_segments } => {
+                write!(formatter, "root subpath exceeds {max_segments} segments")
+            }
         }
     }
 }
@@ -143,6 +197,37 @@ fn validate_root_name(name: &str) -> Result<(), ScopeRefError> {
     Ok(())
 }
 
+fn validate_root_subpath(subpath: &str) -> Result<(), ScopeRefError> {
+    if subpath.starts_with('/') {
+        return Err(ScopeRefError::AbsoluteRootSubpath);
+    }
+    if subpath.contains('\\') {
+        return Err(ScopeRefError::RootSubpathContainsBackslash);
+    }
+    if subpath.contains('\0') {
+        return Err(ScopeRefError::RootSubpathContainsNul);
+    }
+    if subpath.len() > MAX_ROOT_SUBPATH_BYTES {
+        return Err(ScopeRefError::RootSubpathTooLong {
+            max_bytes: MAX_ROOT_SUBPATH_BYTES,
+        });
+    }
+    for (index, segment) in subpath.split('/').enumerate() {
+        if index >= MAX_ROOT_SUBPATH_SEGMENTS {
+            return Err(ScopeRefError::RootSubpathTooDeep {
+                max_segments: MAX_ROOT_SUBPATH_SEGMENTS,
+            });
+        }
+        if segment.is_empty() {
+            return Err(ScopeRefError::EmptyRootSubpathSegment { index });
+        }
+        if matches!(segment, "." | "..") {
+            return Err(ScopeRefError::DotRootSubpathSegment { index });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +238,10 @@ mod tests {
             ScopeRef::literal("https://example.com").unwrap(),
             ScopeRef::setting("/endpoint/~0name/~1path").unwrap(),
             ScopeRef::root("workspace").unwrap(),
+            ScopeRef::root("workspace")
+                .unwrap()
+                .join("generated/html")
+                .unwrap(),
         ] {
             assert_eq!(
                 ScopeRef::from_wire(&reference.to_wire()).unwrap(),
@@ -194,5 +283,58 @@ mod tests {
                 ScopeRefError::ReservedLiteralPrefix
             );
         }
+    }
+
+    #[test]
+    fn rejects_unsafe_root_subpaths() {
+        let cases = [
+            ("/absolute", ScopeRefError::AbsoluteRootSubpath),
+            ("", ScopeRefError::EmptyRootSubpathSegment { index: 0 }),
+            (".", ScopeRefError::DotRootSubpathSegment { index: 0 }),
+            (
+                "generated//html",
+                ScopeRefError::EmptyRootSubpathSegment { index: 1 },
+            ),
+            (
+                "generated/",
+                ScopeRefError::EmptyRootSubpathSegment { index: 1 },
+            ),
+            (
+                "generated/../html",
+                ScopeRefError::DotRootSubpathSegment { index: 1 },
+            ),
+            (
+                "generated\\html",
+                ScopeRefError::RootSubpathContainsBackslash,
+            ),
+            ("generated\0html", ScopeRefError::RootSubpathContainsNul),
+        ];
+        for (subpath, expected) in cases {
+            assert_eq!(
+                ScopeRef::root("workspace")
+                    .unwrap()
+                    .join(subpath)
+                    .unwrap_err(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_root_subpath_length_and_depth() {
+        assert_eq!(
+            ScopeRef::root("workspace")
+                .unwrap()
+                .join("a".repeat(1025))
+                .unwrap_err(),
+            ScopeRefError::RootSubpathTooLong { max_bytes: 1024 }
+        );
+        assert_eq!(
+            ScopeRef::root("workspace")
+                .unwrap()
+                .join(["a"; 65].join("/"))
+                .unwrap_err(),
+            ScopeRefError::RootSubpathTooDeep { max_segments: 64 }
+        );
     }
 }
