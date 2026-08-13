@@ -4,6 +4,9 @@ use wit_component::{
 };
 use wit_parser::{ManglingAndAbi, Resolve};
 
+#[path = "../../tests/common/mod.rs"]
+mod fixtures;
+
 fn component(wit: &str) -> Vec<u8> {
     let mut resolve = Resolve::new();
     let package = resolve.push_str("fixture.wit", wit).unwrap();
@@ -28,6 +31,11 @@ fn accepts_value_only_component_wit() {
     ));
 
     validate_value_only_exports(&bytes).unwrap();
+}
+
+#[test]
+fn accepts_existing_exec_fixture() {
+    validate_value_only_exports(fixtures::exec_fixture()).unwrap();
 }
 
 #[test]
