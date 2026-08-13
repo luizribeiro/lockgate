@@ -3,6 +3,7 @@
 pub mod metadata;
 pub mod needs;
 pub mod sections;
+mod text;
 
 pub use metadata::{PluginMetadata, PluginMetadataField, PluginMetadataValidationError};
 pub use needs::{

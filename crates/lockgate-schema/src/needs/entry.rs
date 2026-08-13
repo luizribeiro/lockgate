@@ -1,6 +1,7 @@
 use std::{error::Error, fmt};
 
-use super::{AtomKey, DisallowedCharacterKind, ScopeRef, ScopeRefError, find_disallowed_character};
+use super::{AtomKey, ScopeRef, ScopeRefError};
+use crate::text::classify_disallowed_character;
 
 /// Maximum number of scope values in one scoped entry before deduplication.
 pub const MAX_SCOPES_PER_ENTRY: usize = 128;
@@ -139,9 +140,7 @@ impl Error for NeedEntryError {
 #[non_exhaustive]
 pub enum NeedReasonError {
     Empty,
-    MultipleLines,
-    ControlCharacter { byte_index: usize },
-    FormatCharacter { byte_index: usize },
+    DisallowedCharacter { byte_index: usize, character: char },
     TooLong { max_bytes: usize },
 }
 
@@ -149,14 +148,14 @@ impl fmt::Display for NeedReasonError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => formatter.write_str("reason must not be empty"),
-            Self::MultipleLines => formatter.write_str("reason must contain exactly one line"),
-            Self::ControlCharacter { byte_index } => write!(
+            Self::DisallowedCharacter {
+                byte_index,
+                character,
+            } => write!(
                 formatter,
-                "reason contains a control character at byte {byte_index}"
-            ),
-            Self::FormatCharacter { byte_index } => write!(
-                formatter,
-                "reason contains a format character at byte {byte_index}"
+                "reason contains a {} at byte {byte_index}",
+                classify_disallowed_character(*character)
+                    .expect("stored reason character must be disallowed")
             ),
             Self::TooLong { max_bytes } => {
                 write!(formatter, "reason exceeds {max_bytes} UTF-8 bytes")
@@ -168,16 +167,21 @@ impl fmt::Display for NeedReasonError {
 impl Error for NeedReasonError {}
 
 pub(crate) fn validate_reason(reason: &str) -> Result<(), NeedReasonError> {
-    if reason.trim().is_empty() {
+    let mut has_non_whitespace = false;
+    let mut disallowed = None;
+    for (byte_index, character) in reason.char_indices() {
+        has_non_whitespace |= !character.is_whitespace();
+        if disallowed.is_none() && classify_disallowed_character(character).is_some() {
+            disallowed = Some((byte_index, character));
+        }
+    }
+    if !has_non_whitespace {
         return Err(NeedReasonError::Empty);
     }
-    if reason.contains(['\n', '\r']) {
-        return Err(NeedReasonError::MultipleLines);
-    }
-    if let Some((byte_index, kind)) = find_disallowed_character(reason) {
-        return Err(match kind {
-            DisallowedCharacterKind::Control => NeedReasonError::ControlCharacter { byte_index },
-            DisallowedCharacterKind::Format => NeedReasonError::FormatCharacter { byte_index },
+    if let Some((byte_index, character)) = disallowed {
+        return Err(NeedReasonError::DisallowedCharacter {
+            byte_index,
+            character,
         });
     }
     if reason.len() > 512 {
@@ -244,14 +248,33 @@ mod tests {
     fn reasons_are_single_non_empty_lines_without_controls() {
         for (reason, expected) in [
             (" ", NeedReasonError::Empty),
-            ("first\nsecond", NeedReasonError::MultipleLines),
+            (
+                "first\nsecond",
+                NeedReasonError::DisallowedCharacter {
+                    byte_index: 5,
+                    character: '\n',
+                },
+            ),
             (
                 "before\u{7}after",
-                NeedReasonError::ControlCharacter { byte_index: 6 },
+                NeedReasonError::DisallowedCharacter {
+                    byte_index: 6,
+                    character: '\u{7}',
+                },
             ),
             (
                 "before\u{202e}after",
-                NeedReasonError::FormatCharacter { byte_index: 6 },
+                NeedReasonError::DisallowedCharacter {
+                    byte_index: 6,
+                    character: '\u{202e}',
+                },
+            ),
+            (
+                "before\u{2028}after",
+                NeedReasonError::DisallowedCharacter {
+                    byte_index: 6,
+                    character: '\u{2028}',
+                },
             ),
         ] {
             assert_eq!(

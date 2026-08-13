@@ -118,13 +118,16 @@ impl PluginMetadata {
         if self.version.contains(['\n', '\r']) {
             return Err(PluginMetadataValidationError::VersionMultipleLines);
         }
-        if let Some((byte_index, kind)) = find_disallowed_character(&self.version) {
+        if let Some((byte_index, _, kind)) = find_disallowed_character(&self.version) {
             return Err(match kind {
                 DisallowedCharacterKind::Control => {
                     PluginMetadataValidationError::VersionControlCharacter { byte_index }
                 }
                 DisallowedCharacterKind::Format => {
                     PluginMetadataValidationError::VersionFormatCharacter { byte_index }
+                }
+                DisallowedCharacterKind::LineBreak | DisallowedCharacterKind::LineSeparator => {
+                    PluginMetadataValidationError::VersionMultipleLines
                 }
             });
         }

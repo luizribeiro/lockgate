@@ -15,14 +15,33 @@ fn decode_reason(reason: &str) -> Result<(), DecodeError> {
 fn rejects_every_invalid_reason_shape() {
     let cases = [
         (" ".to_owned(), NeedReasonError::Empty),
-        ("first\nsecond".to_owned(), NeedReasonError::MultipleLines),
+        (
+            "first\nsecond".to_owned(),
+            NeedReasonError::DisallowedCharacter {
+                byte_index: 5,
+                character: '\n',
+            },
+        ),
         (
             "before\u{7}after".to_owned(),
-            NeedReasonError::ControlCharacter { byte_index: 6 },
+            NeedReasonError::DisallowedCharacter {
+                byte_index: 6,
+                character: '\u{7}',
+            },
         ),
         (
             "before\u{202e}after".to_owned(),
-            NeedReasonError::FormatCharacter { byte_index: 6 },
+            NeedReasonError::DisallowedCharacter {
+                byte_index: 6,
+                character: '\u{202e}',
+            },
+        ),
+        (
+            "before\u{2028}after".to_owned(),
+            NeedReasonError::DisallowedCharacter {
+                byte_index: 6,
+                character: '\u{2028}',
+            },
         ),
         ("é".repeat(257), NeedReasonError::TooLong { max_bytes: 512 }),
     ];
@@ -38,6 +57,9 @@ fn rejects_every_invalid_reason_shape() {
             } if *source == expected
         ));
         assert!(error.to_string().contains("required entry 0"));
+        if reason.contains('\u{2028}') {
+            assert!(error.to_string().contains("line separator at byte 6"));
+        }
     }
 }
 

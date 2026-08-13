@@ -227,26 +227,32 @@ impl fmt::Display for ScopeValueKind {
 /// The rejected Unicode general category.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScopeCharacterKind {
+    LineBreak,
     Control,
     Format,
+    LineSeparator,
 }
 
 impl fmt::Display for ScopeCharacterKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::LineBreak => "line break",
             Self::Control => "control (Cc)",
             Self::Format => "format (Cf)",
+            Self::LineSeparator => "line separator",
         })
     }
 }
 
 fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {
-    if let Some((byte_index, character_kind)) = find_disallowed_character(value) {
+    if let Some((byte_index, _, character_kind)) = find_disallowed_character(value) {
         return Err(ScopeRefError::DisallowedCharacter {
             kind,
             character_kind: match character_kind {
                 DisallowedCharacterKind::Control => ScopeCharacterKind::Control,
                 DisallowedCharacterKind::Format => ScopeCharacterKind::Format,
+                DisallowedCharacterKind::LineBreak => ScopeCharacterKind::LineBreak,
+                DisallowedCharacterKind::LineSeparator => ScopeCharacterKind::LineSeparator,
             },
             byte_index,
         });
