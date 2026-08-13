@@ -70,6 +70,23 @@ impl NeedEntry {
     pub fn reason(&self) -> Option<&str> {
         self.reason.as_deref()
     }
+
+    pub(crate) fn validate(&self) -> Result<(), NeedEntryError> {
+        if let NeedKind::Scoped(scopes) = &self.kind {
+            if scopes.is_empty() {
+                return Err(NeedEntryError::EmptyScopes);
+            }
+            for (index, reference) in scopes.iter().enumerate() {
+                reference
+                    .validate()
+                    .map_err(|source| NeedEntryError::InvalidScope { index, source })?;
+            }
+        }
+        if let Some(reason) = &self.reason {
+            validate_reason(reason).map_err(NeedEntryError::InvalidReason)?;
+        }
+        Ok(())
+    }
 }
 
 /// A malformed need entry.

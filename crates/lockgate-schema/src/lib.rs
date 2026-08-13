@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 mod needs;
 
 pub use needs::{
-    AtomKey, AtomKeyError, NeedEntry, NeedEntryError, NeedKind, NeedReasonError, ScopeRef,
-    ScopeRefError,
+    AtomKey, AtomKeyError, EntryLocation, NeedEntry, NeedEntryError, NeedKind, NeedReasonError,
+    NeedsManifest, NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError,
 };
 
 /// Name of the WebAssembly custom section containing Lockgate plugin metadata.

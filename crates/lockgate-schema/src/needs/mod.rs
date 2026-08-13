@@ -1,9 +1,11 @@
 use std::{error::Error, fmt, str::FromStr};
 
 mod entry;
+mod manifest;
 mod scope_ref;
 
 pub use entry::{NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
+pub use manifest::{EntryLocation, NeedsManifest, NeedsManifestValidationError, Requirement};
 pub use scope_ref::{ScopeRef, ScopeRefError};
 
 /// The identity of one permission operation, written `capability.operation`.
