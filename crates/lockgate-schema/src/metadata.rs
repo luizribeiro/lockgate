@@ -5,7 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::text::classify_disallowed_character;
 
 const PLUGIN_METADATA_FORMAT: u32 = 1;
+const MAX_ID_BYTES: usize = 128;
+const MAX_NAME_BYTES: usize = 128;
 const MAX_VERSION_BYTES: usize = 128;
+const MAX_LICENSE_BYTES: usize = 512;
+const MAX_LONG_DISPLAY_FIELD_BYTES: usize = 2048;
 
 /// Language-neutral identity and display metadata embedded in a plugin artifact.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,24 +113,37 @@ impl PluginMetadata {
         if self.format != PLUGIN_METADATA_FORMAT {
             return Err(PluginMetadataValidationError::UnsupportedFormat { found: self.format });
         }
-        validate_display_field(PluginMetadataField::Id, &self.id, usize::MAX)?;
-        validate_display_field(PluginMetadataField::Name, &self.name, usize::MAX)?;
+        validate_display_field(PluginMetadataField::Id, &self.id, MAX_ID_BYTES)?;
+        validate_display_field(PluginMetadataField::Name, &self.name, MAX_NAME_BYTES)?;
         validate_display_field(
             PluginMetadataField::Version,
             &self.version,
             MAX_VERSION_BYTES,
         )?;
-        for (field, value) in [
+        for (field, value, max_bytes) in [
             (
                 PluginMetadataField::Description,
                 self.description.as_deref(),
+                MAX_LONG_DISPLAY_FIELD_BYTES,
             ),
-            (PluginMetadataField::License, self.license.as_deref()),
-            (PluginMetadataField::Repository, self.repository.as_deref()),
-            (PluginMetadataField::Homepage, self.homepage.as_deref()),
+            (
+                PluginMetadataField::License,
+                self.license.as_deref(),
+                MAX_LICENSE_BYTES,
+            ),
+            (
+                PluginMetadataField::Repository,
+                self.repository.as_deref(),
+                MAX_LONG_DISPLAY_FIELD_BYTES,
+            ),
+            (
+                PluginMetadataField::Homepage,
+                self.homepage.as_deref(),
+                MAX_LONG_DISPLAY_FIELD_BYTES,
+            ),
         ] {
-            if value.is_some_and(|value| value.trim().is_empty()) {
-                return Err(PluginMetadataValidationError::EmptyField { field });
+            if let Some(value) = value {
+                validate_display_field(field, value, max_bytes)?;
             }
         }
         Ok(())
@@ -259,6 +276,20 @@ mod tests {
         PluginMetadata::new("com.example.greeter", "Greeter", "1.2.3").unwrap()
     }
 
+    fn metadata_with_field(field: PluginMetadataField, value: String) -> PluginMetadata {
+        let mut metadata = metadata();
+        match field {
+            PluginMetadataField::Id => metadata.id = value,
+            PluginMetadataField::Name => metadata.name = value,
+            PluginMetadataField::Version => metadata.version = value,
+            PluginMetadataField::Description => metadata.description = Some(value),
+            PluginMetadataField::License => metadata.license = Some(value),
+            PluginMetadataField::Repository => metadata.repository = Some(value),
+            PluginMetadataField::Homepage => metadata.homepage = Some(value),
+        }
+        metadata
+    }
+
     #[test]
     fn constructs_metadata_with_every_wire_field() {
         let metadata = metadata()
@@ -278,6 +309,7 @@ mod tests {
         );
         assert_eq!(metadata.homepage(), Some("https://example.com"));
         assert_eq!(metadata.format, PLUGIN_METADATA_FORMAT);
+        metadata.validate().unwrap();
     }
 
     #[test]
@@ -306,6 +338,7 @@ mod tests {
     #[test]
     fn accepts_surrounding_whitespace_in_display_fields() {
         assert!(PluginMetadata::new("plugin", " Greeter ", " 1.2.3 ").is_ok());
+        assert!(PluginMetadata::new("plugin", " postgres", "1.2.3").is_ok());
     }
 
     #[test]
@@ -375,6 +408,64 @@ mod tests {
                 max_bytes: 128,
             }
         );
+    }
+
+    #[test]
+    fn rejects_format_characters_in_every_display_field() {
+        for field in [
+            PluginMetadataField::Id,
+            PluginMetadataField::Name,
+            PluginMetadataField::Version,
+            PluginMetadataField::Description,
+            PluginMetadataField::License,
+            PluginMetadataField::Repository,
+            PluginMetadataField::Homepage,
+        ] {
+            let error = metadata_with_field(field, "pre\u{202e}post".to_string())
+                .validate()
+                .unwrap_err();
+            assert_eq!(
+                error,
+                PluginMetadataValidationError::DisallowedCharacter {
+                    field,
+                    byte_index: 3,
+                    character: '\u{202e}',
+                }
+            );
+            assert_eq!(
+                error.to_string(),
+                format!("plugin {field} contains a format character at byte 3")
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_every_display_field_by_utf8_bytes() {
+        for (field, max_bytes) in [
+            (PluginMetadataField::Id, MAX_ID_BYTES),
+            (PluginMetadataField::Name, MAX_NAME_BYTES),
+            (PluginMetadataField::Version, MAX_VERSION_BYTES),
+            (
+                PluginMetadataField::Description,
+                MAX_LONG_DISPLAY_FIELD_BYTES,
+            ),
+            (PluginMetadataField::License, MAX_LICENSE_BYTES),
+            (
+                PluginMetadataField::Repository,
+                MAX_LONG_DISPLAY_FIELD_BYTES,
+            ),
+            (PluginMetadataField::Homepage, MAX_LONG_DISPLAY_FIELD_BYTES),
+        ] {
+            metadata_with_field(field, "x".repeat(max_bytes))
+                .validate()
+                .unwrap();
+            assert_eq!(
+                metadata_with_field(field, "x".repeat(max_bytes + 1))
+                    .validate()
+                    .unwrap_err(),
+                PluginMetadataValidationError::FieldTooLong { field, max_bytes }
+            );
+        }
     }
 
     #[test]

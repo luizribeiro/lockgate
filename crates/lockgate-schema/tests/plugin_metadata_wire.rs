@@ -222,32 +222,16 @@ fn encoding_revalidates_builder_fields() {
 }
 
 #[test]
-fn enforces_plugin_section_payload_ceiling_on_encode_and_decode() {
-    let seed = PluginMetadata::new("plugin", "Plugin", "1.0.0")
-        .unwrap()
-        .with_description("x");
-    let seed_size = seed.to_section_bytes().unwrap().len();
-    let exact_description_size = 1 + MAX_SECTION_PAYLOAD_BYTES - seed_size;
-    let exact = PluginMetadata::new("plugin", "Plugin", "1.0.0")
-        .unwrap()
-        .with_description("x".repeat(exact_description_size));
-    let exact_payload = exact.to_section_bytes().unwrap();
-
-    assert_eq!(exact_payload.len(), MAX_SECTION_PAYLOAD_BYTES);
-    assert_eq!(
-        PluginMetadata::from_section_bytes(&exact_payload).unwrap(),
-        exact
-    );
-
+fn validates_fields_before_encoding_and_enforces_decode_ceiling() {
     let over = PluginMetadata::new("plugin", "Plugin", "1.0.0")
         .unwrap()
-        .with_description("x".repeat(exact_description_size + 1));
+        .with_description("x".repeat(2049));
     assert!(matches!(
         over.to_section_bytes().unwrap_err(),
-        EncodeError::PayloadTooLarge {
-            actual_bytes,
-            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
-        } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1
+        EncodeError::InvalidMetadata(PluginMetadataValidationError::FieldTooLong {
+            field: lockgate_schema::PluginMetadataField::Description,
+            max_bytes: 2048,
+        })
     ));
 
     let oversized_garbage = vec![0; MAX_SECTION_PAYLOAD_BYTES + 1];
