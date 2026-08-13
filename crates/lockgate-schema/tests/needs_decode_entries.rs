@@ -2,7 +2,7 @@ use lockgate_schema::NeedsManifest;
 use lockgate_schema::needs::{MAX_ATOMS_PER_MANIFEST, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
 use lockgate_schema::sections::needs::DecodeError;
 use lockgate_schema::{
-    NeedEntryError, NeedsManifestValidationError, ScopeCharacterKind, ScopeRefError, ScopeValueKind,
+    NeedEntryError, NeedsManifestValidationError, ScopeRefError, ScopeValueKind,
 };
 
 fn decode(required: &str, optional: &str) -> Result<(), DecodeError> {
@@ -130,51 +130,36 @@ fn rejects_every_unsafe_root_subpath_form() {
 #[test]
 fn rejects_control_and_format_characters_in_every_scope_value_kind() {
     let cases = [
-        (
-            "setting:/a\0b",
-            ScopeValueKind::SettingPointer,
-            ScopeCharacterKind::Control,
-            2,
-        ),
-        (
-            "setting:/a\nb",
-            ScopeValueKind::SettingPointer,
-            ScopeCharacterKind::LineBreak,
-            2,
-        ),
-        (
-            "literal\0value",
-            ScopeValueKind::Literal,
-            ScopeCharacterKind::Control,
-            7,
-        ),
+        ("setting:/a\0b", ScopeValueKind::SettingPointer, '\0', 2),
+        ("setting:/a\nb", ScopeValueKind::SettingPointer, '\n', 2),
+        ("literal\0value", ScopeValueKind::Literal, '\0', 7),
         (
             "literal\u{2029}value",
             ScopeValueKind::Literal,
-            ScopeCharacterKind::LineSeparator,
+            '\u{2029}',
             7,
         ),
         (
             "$workspace/a\u{202e}b",
             ScopeValueKind::RootSubpathSegment,
-            ScopeCharacterKind::Format,
+            '\u{202e}',
             1,
         ),
         (
             "$workspace/a\u{7}b",
             ScopeValueKind::RootSubpathSegment,
-            ScopeCharacterKind::Control,
+            '\u{7}',
             1,
         ),
         (
             "$workspace/a\u{200b}b",
             ScopeValueKind::RootSubpathSegment,
-            ScopeCharacterKind::Format,
+            '\u{200b}',
             1,
         ),
     ];
 
-    for (scope, kind, character_kind, byte_index) in cases {
+    for (scope, kind, character, byte_index) in cases {
         let payload = serde_json::json!({
             "format": 1,
             "optional": {},
@@ -188,12 +173,12 @@ fn rejects_control_and_format_characters_in_every_scope_value_kind() {
             DecodeError::InvalidScope {
                 source: ScopeRefError::DisallowedCharacter {
                     kind: found_kind,
-                    character_kind: found_character_kind,
                     byte_index: found_byte_index,
+                    character: found_character,
                 },
                 ..
             } if found_kind == kind
-                && found_character_kind == character_kind
+                && found_character == character
                 && found_byte_index == byte_index
         ));
         if scope.contains('\u{2029}') {

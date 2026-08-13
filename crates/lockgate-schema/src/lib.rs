@@ -8,6 +8,6 @@ mod text;
 pub use metadata::{PluginMetadata, PluginMetadataField, PluginMetadataValidationError};
 pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedEntry, NeedEntryError, NeedKind, NeedReasonError,
-    NeedsDigest, NeedsManifest, NeedsManifestValidationError, Requirement, ScopeCharacterKind,
-    ScopeRef, ScopeRefError, ScopeValueKind,
+    NeedsDigest, NeedsManifest, NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError,
+    ScopeValueKind,
 };

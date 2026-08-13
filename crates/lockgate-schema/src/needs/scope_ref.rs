@@ -1,6 +1,8 @@
 use std::{error::Error, fmt};
 
-use super::{DisallowedCharacterKind, find_disallowed_character};
+use crate::text::{
+    DisallowedCharacterKind, classify_disallowed_character, find_disallowed_character,
+};
 
 /// Maximum UTF-8 size of a symbolic root name.
 pub const MAX_ROOT_NAME_BYTES: usize = 64;
@@ -125,8 +127,8 @@ pub enum ScopeRefError {
     InvalidSettingPointer,
     DisallowedCharacter {
         kind: ScopeValueKind,
-        character_kind: ScopeCharacterKind,
         byte_index: usize,
+        character: char,
     },
     ScopeValueTooLong {
         kind: ScopeValueKind,
@@ -166,11 +168,12 @@ impl fmt::Display for ScopeRefError {
             ),
             Self::DisallowedCharacter {
                 kind,
-                character_kind,
                 byte_index,
+                character,
             } => write!(
                 formatter,
-                "{kind} contains a Unicode {character_kind} character at byte {byte_index}"
+                "{kind} contains a Unicode {} at byte {byte_index}",
+                scope_character_description(*character)
             ),
             Self::ScopeValueTooLong { kind, max_bytes } => {
                 write!(formatter, "{kind} exceeds {max_bytes} UTF-8 bytes")
@@ -224,40 +227,26 @@ impl fmt::Display for ScopeValueKind {
     }
 }
 
-/// The rejected Unicode general category.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScopeCharacterKind {
-    LineBreak,
-    Control,
-    Format,
-    LineSeparator,
-}
-
-impl fmt::Display for ScopeCharacterKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::LineBreak => "line break",
-            Self::Control => "control (Cc)",
-            Self::Format => "format (Cf)",
-            Self::LineSeparator => "line separator",
-        })
-    }
-}
-
 fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {
-    if let Some((byte_index, _, character_kind)) = find_disallowed_character(value) {
+    if let Some((byte_index, character, _)) = find_disallowed_character(value) {
         return Err(ScopeRefError::DisallowedCharacter {
             kind,
-            character_kind: match character_kind {
-                DisallowedCharacterKind::Control => ScopeCharacterKind::Control,
-                DisallowedCharacterKind::Format => ScopeCharacterKind::Format,
-                DisallowedCharacterKind::LineBreak => ScopeCharacterKind::LineBreak,
-                DisallowedCharacterKind::LineSeparator => ScopeCharacterKind::LineSeparator,
-            },
             byte_index,
+            character,
         });
     }
     Ok(())
+}
+
+fn scope_character_description(character: char) -> &'static str {
+    match classify_disallowed_character(character)
+        .expect("stored scope character must be disallowed")
+    {
+        DisallowedCharacterKind::LineBreak => "line break character",
+        DisallowedCharacterKind::Control => "control (Cc) character",
+        DisallowedCharacterKind::Format => "format (Cf) character",
+        DisallowedCharacterKind::LineSeparator => "line separator character",
+    }
 }
 
 fn validate_bounded_scope_value(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {
@@ -421,8 +410,8 @@ mod tests {
                 "generated\0html",
                 ScopeRefError::DisallowedCharacter {
                     kind: ScopeValueKind::RootSubpathSegment,
-                    character_kind: ScopeCharacterKind::Control,
                     byte_index: 9,
+                    character: '\0',
                 },
             ),
         ];

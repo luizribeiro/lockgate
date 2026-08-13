@@ -5,7 +5,6 @@ mod entry;
 mod manifest;
 mod scope_ref;
 
-pub(crate) use crate::text::{DisallowedCharacterKind, find_disallowed_character};
 pub use digest::NeedsDigest;
 pub(crate) use entry::validate_reason;
 pub use entry::{MAX_SCOPES_PER_ENTRY, NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
@@ -15,7 +14,7 @@ pub use manifest::{
 };
 pub use scope_ref::{
     MAX_ROOT_NAME_BYTES, MAX_ROOT_SUBPATH_BYTES, MAX_ROOT_SUBPATH_SEGMENTS, MAX_SCOPE_VALUE_BYTES,
-    ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind,
+    ScopeRef, ScopeRefError, ScopeValueKind,
 };
 
 /// The identity of one permission operation, written `capability.operation`.
