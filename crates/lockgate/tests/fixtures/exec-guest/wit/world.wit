@@ -1,0 +1,15 @@
+package test:exec;
+
+interface host {
+  wait: async func();
+}
+
+interface guest {
+  value: func() -> u32;
+  suspend: async func() -> u32;
+}
+
+world fixture {
+  import host;
+  export guest;
+}
