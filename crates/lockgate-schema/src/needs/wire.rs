@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use serde::Serialize;
 
-use crate::MAX_SECTION_PAYLOAD_BYTES;
+use crate::sections::check_payload_size;
 
 use super::{NeedKind, NeedsManifest, NeedsManifestValidationError};
 
@@ -46,12 +46,12 @@ pub fn encode_needs_manifest(
         required,
     })
     .map_err(NeedsManifestEncodeError::Serialization)?;
-    if payload.len() > MAX_SECTION_PAYLOAD_BYTES {
-        return Err(NeedsManifestEncodeError::PayloadTooLarge {
-            actual_bytes: payload.len(),
-            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
-        });
-    }
+    check_payload_size(payload.len()).map_err(|error| {
+        NeedsManifestEncodeError::PayloadTooLarge {
+            actual_bytes: error.actual_bytes,
+            max_bytes: error.max_bytes,
+        }
+    })?;
     Ok(payload)
 }
 

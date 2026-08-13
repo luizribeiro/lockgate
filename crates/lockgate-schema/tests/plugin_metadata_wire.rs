@@ -1,11 +1,12 @@
 #[path = "data/donor_vectors.rs"]
 mod donor_vectors;
 
-use lockgate_schema::{
-    MAX_SECTION_PAYLOAD_BYTES, PLUGIN_METADATA_SECTION, PluginMetadata, PluginMetadataDecodeError,
-    PluginMetadataEncodeError, PluginMetadataValidationError, decode_plugin_metadata,
+use lockgate_schema::sections::metadata::{
+    PluginMetadataDecodeError, PluginMetadataEncodeError, decode_plugin_metadata,
     encode_plugin_metadata,
 };
+use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_METADATA_SECTION};
+use lockgate_schema::{PluginMetadata, PluginMetadataValidationError};
 
 #[test]
 fn uses_the_normative_custom_section_name() {

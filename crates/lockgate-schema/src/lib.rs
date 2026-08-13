@@ -5,6 +5,7 @@ use std::{error::Error, fmt};
 use serde::{Deserialize, Serialize};
 
 mod needs;
+pub mod sections;
 
 pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, MAX_ATOMS_PER_MANIFEST, MAX_ROOT_NAME_BYTES,
@@ -14,15 +15,6 @@ pub use needs::{
     ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind, decode_needs_manifest,
     encode_needs_manifest,
 };
-
-/// Name of the WebAssembly custom section containing Lockgate plugin metadata.
-pub const PLUGIN_METADATA_SECTION: &str = "lockgate:plugin";
-
-/// Name of the WebAssembly custom section containing symbolic permission needs.
-pub const PLUGIN_NEEDS_SECTION: &str = "lockgate:needs";
-
-/// Maximum JSON payload size for either Lockgate custom section.
-pub const MAX_SECTION_PAYLOAD_BYTES: usize = 1_048_576;
 
 const PLUGIN_METADATA_FORMAT: u32 = 1;
 
@@ -124,7 +116,7 @@ impl PluginMetadata {
         self.homepage.as_deref()
     }
 
-    fn validate(&self) -> Result<(), PluginMetadataValidationError> {
+    pub(crate) fn validate(&self) -> Result<(), PluginMetadataValidationError> {
         if self.format != PLUGIN_METADATA_FORMAT {
             return Err(PluginMetadataValidationError::UnsupportedFormat { found: self.format });
         }
@@ -202,102 +194,6 @@ impl fmt::Display for PluginMetadataValidationError {
 
 impl Error for PluginMetadataValidationError {}
 
-/// A failure while encoding plugin metadata for its custom section.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum PluginMetadataEncodeError {
-    /// The metadata does not satisfy the wire schema's semantic rules.
-    InvalidMetadata(PluginMetadataValidationError),
-    /// The validated metadata could not be serialized as JSON.
-    Serialization(serde_json::Error),
-    /// The encoded custom-section payload exceeds the wire ceiling.
-    PayloadTooLarge {
-        actual_bytes: usize,
-        max_bytes: usize,
-    },
-}
-
-impl fmt::Display for PluginMetadataEncodeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidMetadata(error) => {
-                write!(formatter, "plugin metadata failed validation: {error}")
-            }
-            Self::Serialization(error) => {
-                write!(
-                    formatter,
-                    "plugin metadata could not be encoded as JSON: {error}"
-                )
-            }
-            Self::PayloadTooLarge {
-                actual_bytes,
-                max_bytes,
-            } => write!(
-                formatter,
-                "plugin metadata payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
-            ),
-        }
-    }
-}
-
-impl Error for PluginMetadataEncodeError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::InvalidMetadata(error) => Some(error),
-            Self::Serialization(error) => Some(error),
-            Self::PayloadTooLarge { .. } => None,
-        }
-    }
-}
-
-/// A failure while decoding plugin metadata from its custom section.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum PluginMetadataDecodeError {
-    /// The custom-section payload exceeds the wire ceiling.
-    PayloadTooLarge {
-        actual_bytes: usize,
-        max_bytes: usize,
-    },
-    /// The section payload is not valid JSON for the metadata wire schema.
-    InvalidJson(serde_json::Error),
-    /// The decoded fields do not satisfy the wire schema's semantic rules.
-    InvalidMetadata(PluginMetadataValidationError),
-}
-
-impl fmt::Display for PluginMetadataDecodeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PayloadTooLarge {
-                actual_bytes,
-                max_bytes,
-            } => write!(
-                formatter,
-                "plugin metadata payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
-            ),
-            Self::InvalidJson(error) => {
-                write!(
-                    formatter,
-                    "plugin metadata is not valid schema JSON: {error}"
-                )
-            }
-            Self::InvalidMetadata(error) => {
-                write!(formatter, "plugin metadata failed validation: {error}")
-            }
-        }
-    }
-}
-
-impl Error for PluginMetadataDecodeError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::PayloadTooLarge { .. } => None,
-            Self::InvalidJson(error) => Some(error),
-            Self::InvalidMetadata(error) => Some(error),
-        }
-    }
-}
-
 /// A field in the plugin metadata wire schema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -323,39 +219,6 @@ impl fmt::Display for PluginMetadataField {
             Self::Homepage => "homepage",
         })
     }
-}
-
-/// Encodes validated metadata as the JSON payload of `lockgate:plugin`.
-pub fn encode_plugin_metadata(
-    metadata: &PluginMetadata,
-) -> Result<Vec<u8>, PluginMetadataEncodeError> {
-    metadata
-        .validate()
-        .map_err(PluginMetadataEncodeError::InvalidMetadata)?;
-    let payload = serde_json::to_vec(metadata).map_err(PluginMetadataEncodeError::Serialization)?;
-    if payload.len() > MAX_SECTION_PAYLOAD_BYTES {
-        return Err(PluginMetadataEncodeError::PayloadTooLarge {
-            actual_bytes: payload.len(),
-            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
-        });
-    }
-    Ok(payload)
-}
-
-/// Decodes and validates the JSON payload of `lockgate:plugin`.
-pub fn decode_plugin_metadata(bytes: &[u8]) -> Result<PluginMetadata, PluginMetadataDecodeError> {
-    if bytes.len() > MAX_SECTION_PAYLOAD_BYTES {
-        return Err(PluginMetadataDecodeError::PayloadTooLarge {
-            actual_bytes: bytes.len(),
-            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
-        });
-    }
-    let metadata: PluginMetadata =
-        serde_json::from_slice(bytes).map_err(PluginMetadataDecodeError::InvalidJson)?;
-    metadata
-        .validate()
-        .map_err(PluginMetadataDecodeError::InvalidMetadata)?;
-    Ok(metadata)
 }
 
 fn validate_required(

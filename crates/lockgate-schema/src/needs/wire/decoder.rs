@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt, marker::PhantomData, str::FromStr};
 
 use serde::{Deserialize, Deserializer, de::MapAccess, de::Visitor};
 
-use crate::MAX_SECTION_PAYLOAD_BYTES;
+use crate::sections::check_payload_size;
 
 use crate::needs::{
     AtomKey, EntryLocation, NeedEntry, NeedsManifest, NeedsManifestValidationError, Requirement,
@@ -13,12 +13,10 @@ use super::NeedsManifestDecodeError;
 
 /// Decodes and validates a `lockgate:needs` custom-section payload.
 pub fn decode_needs_manifest(bytes: &[u8]) -> Result<NeedsManifest, NeedsManifestDecodeError> {
-    if bytes.len() > MAX_SECTION_PAYLOAD_BYTES {
-        return Err(NeedsManifestDecodeError::PayloadTooLarge {
-            actual_bytes: bytes.len(),
-            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
-        });
-    }
+    check_payload_size(bytes.len()).map_err(|error| NeedsManifestDecodeError::PayloadTooLarge {
+        actual_bytes: error.actual_bytes,
+        max_bytes: error.max_bytes,
+    })?;
     let raw: RawManifest =
         serde_json::from_slice(bytes).map_err(NeedsManifestDecodeError::InvalidJson)?;
     if raw.format != NEEDS_FORMAT {
