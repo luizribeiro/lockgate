@@ -1,0 +1,14 @@
+package test:exec-fuel;
+
+interface host {
+  report: func(iteration: u32, checksum: u32);
+}
+
+interface guest {
+  run: func(iterations: u32) -> u32;
+}
+
+world fixture {
+  import host;
+  export guest;
+}

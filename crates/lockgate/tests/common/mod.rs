@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 
 static EXEC_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
 static EXEC_CONCURRENT_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
+static EXEC_FUEL_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
 
 pub(crate) fn exec_fixture() -> &'static [u8] {
     EXEC_FIXTURE
@@ -24,6 +25,12 @@ pub(crate) fn exec_concurrent_fixture() -> &'static [u8] {
                 "lockgate_exec_concurrent_fixture.wasm",
             )
         })
+        .as_slice()
+}
+
+pub(crate) fn exec_fuel_fixture() -> &'static [u8] {
+    EXEC_FUEL_FIXTURE
+        .get_or_init(|| build_fixture("exec-fuel-guest", "lockgate_exec_fuel_fixture.wasm"))
         .as_slice()
 }
 

@@ -1,0 +1,13 @@
+[package]
+name = "lockgate-exec-fuel-fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dlmalloc = { version = "0.2", features = ["global"] }
+wit-bindgen = { version = "0.57", default-features = false, features = ["macros"] }
+
+[workspace]

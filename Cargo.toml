@@ -2,6 +2,7 @@
 resolver = "3"
 exclude = [
     "crates/lockgate/tests/fixtures/exec-concurrent-guest",
+    "crates/lockgate/tests/fixtures/exec-fuel-guest",
     "crates/lockgate/tests/fixtures/exec-guest",
 ]
 members = [
