@@ -1,7 +1,9 @@
 use std::{error::Error, fmt, str::FromStr};
 
+mod entry;
 mod scope_ref;
 
+pub use entry::{NeedEntry, NeedEntryError, NeedKind};
 pub use scope_ref::{ScopeRef, ScopeRefError};
 
 /// The identity of one permission operation, written `capability.operation`.
