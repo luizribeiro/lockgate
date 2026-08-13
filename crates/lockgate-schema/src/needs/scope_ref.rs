@@ -6,6 +6,9 @@ const MAX_ROOT_NAME_BYTES: usize = 64;
 const MAX_ROOT_SUBPATH_BYTES: usize = 1024;
 const MAX_ROOT_SUBPATH_SEGMENTS: usize = 64;
 
+/// Maximum UTF-8 size of one literal scope or setting pointer value.
+pub const MAX_SCOPE_VALUE_BYTES: usize = 2048;
+
 /// A symbolic scope in a plugin's needs declaration.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScopeRef {
@@ -97,7 +100,7 @@ impl ScopeRef {
             Self::Literal(value) if value.starts_with("setting:") || value.starts_with('$') => {
                 Err(ScopeRefError::ReservedLiteralPrefix)
             }
-            Self::Literal(value) => validate_scope_characters(value, ScopeValueKind::Literal),
+            Self::Literal(value) => validate_bounded_scope_value(value, ScopeValueKind::Literal),
             Self::Setting(pointer) => validate_json_pointer(pointer),
             Self::Root { name, subpath } => {
                 validate_root_name(name)?;
@@ -121,6 +124,10 @@ pub enum ScopeRefError {
         kind: ScopeValueKind,
         character_kind: ScopeCharacterKind,
         byte_index: usize,
+    },
+    ScopeValueTooLong {
+        kind: ScopeValueKind,
+        max_bytes: usize,
     },
     InvalidRootName,
     RootNameTooLong {
@@ -162,6 +169,9 @@ impl fmt::Display for ScopeRefError {
                 formatter,
                 "{kind} contains a Unicode {character_kind} character at byte {byte_index}"
             ),
+            Self::ScopeValueTooLong { kind, max_bytes } => {
+                write!(formatter, "{kind} exceeds {max_bytes} UTF-8 bytes")
+            }
             Self::InvalidRootName => formatter.write_str(
                 "root name must start with a lowercase letter and contain only lowercase letters, digits, or `-`",
             ),
@@ -241,8 +251,19 @@ fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), Sc
     Ok(())
 }
 
+fn validate_bounded_scope_value(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {
+    validate_scope_characters(value, kind)?;
+    if value.len() > MAX_SCOPE_VALUE_BYTES {
+        return Err(ScopeRefError::ScopeValueTooLong {
+            kind,
+            max_bytes: MAX_SCOPE_VALUE_BYTES,
+        });
+    }
+    Ok(())
+}
+
 fn validate_json_pointer(pointer: &str) -> Result<(), ScopeRefError> {
-    validate_scope_characters(pointer, ScopeValueKind::SettingPointer)?;
+    validate_bounded_scope_value(pointer, ScopeValueKind::SettingPointer)?;
     if !pointer.is_empty() && !pointer.starts_with('/') {
         return Err(ScopeRefError::InvalidSettingPointer);
     }

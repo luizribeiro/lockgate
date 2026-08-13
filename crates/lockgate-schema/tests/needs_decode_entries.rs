@@ -1,6 +1,6 @@
 use lockgate_schema::{
-    NeedEntryError, NeedsManifestDecodeError, NeedsManifestValidationError, ScopeCharacterKind,
-    ScopeRefError, ScopeValueKind, decode_needs_manifest,
+    MAX_SCOPE_VALUE_BYTES, NeedEntryError, NeedsManifestDecodeError, NeedsManifestValidationError,
+    ScopeCharacterKind, ScopeRefError, ScopeValueKind, decode_needs_manifest,
 };
 
 fn decode(required: &str, optional: &str) -> Result<(), NeedsManifestDecodeError> {
@@ -198,6 +198,46 @@ fn rejects_control_and_format_characters_in_every_scope_value_kind() {
                 && found_character_kind == character_kind
                 && found_byte_index == byte_index
         ));
+    }
+}
+
+#[test]
+fn bounds_literal_and_setting_pointer_utf8_bytes() {
+    for (scope, expected) in [
+        ("é".repeat(MAX_SCOPE_VALUE_BYTES / 2), Ok(())),
+        (
+            "é".repeat(MAX_SCOPE_VALUE_BYTES / 2 + 1),
+            Err(ScopeValueKind::Literal),
+        ),
+        (
+            format!("setting:/{}", "a".repeat(MAX_SCOPE_VALUE_BYTES - 1)),
+            Ok(()),
+        ),
+        (
+            format!("setting:/{}", "a".repeat(MAX_SCOPE_VALUE_BYTES)),
+            Err(ScopeValueKind::SettingPointer),
+        ),
+    ] {
+        let payload = serde_json::json!({
+            "format": 1,
+            "optional": {},
+            "reasons": {},
+            "required": { "fs.read": [scope] },
+        });
+        let result = decode_needs_manifest(&serde_json::to_vec(&payload).unwrap()).map(|_| ());
+        match expected {
+            Ok(()) => result.unwrap(),
+            Err(kind) => assert!(matches!(
+                result.unwrap_err(),
+                NeedsManifestDecodeError::InvalidScope {
+                    source: ScopeRefError::ScopeValueTooLong {
+                        kind: found_kind,
+                        max_bytes: MAX_SCOPE_VALUE_BYTES,
+                    },
+                    ..
+                } if found_kind == kind
+            )),
+        }
     }
 }
 

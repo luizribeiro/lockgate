@@ -9,7 +9,9 @@ mod wire;
 pub use digest::NeedsDigest;
 pub use entry::{NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
 pub use manifest::{EntryLocation, NeedsManifest, NeedsManifestValidationError, Requirement};
-pub use scope_ref::{ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind};
+pub use scope_ref::{
+    MAX_SCOPE_VALUE_BYTES, ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind,
+};
 pub use wire::{
     NeedsManifestDecodeError, NeedsManifestEncodeError, decode_needs_manifest,
     encode_needs_manifest,
