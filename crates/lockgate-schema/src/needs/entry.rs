@@ -1,7 +1,7 @@
 use std::{error::Error, fmt};
 
 use super::{AtomKey, ScopeRef, ScopeRefError};
-use crate::text::classify_disallowed_character;
+use crate::text::{DisplayStringViolation, classify_disallowed_character, validate_display_string};
 
 /// Maximum number of scope values in one scoped entry before deduplication.
 pub const MAX_SCOPES_PER_ENTRY: usize = 128;
@@ -167,27 +167,17 @@ impl fmt::Display for NeedReasonError {
 impl Error for NeedReasonError {}
 
 pub(crate) fn validate_reason(reason: &str) -> Result<(), NeedReasonError> {
-    let mut has_non_whitespace = false;
-    let mut disallowed = None;
-    for (byte_index, character) in reason.char_indices() {
-        has_non_whitespace |= !character.is_whitespace();
-        if disallowed.is_none() && classify_disallowed_character(character).is_some() {
-            disallowed = Some((byte_index, character));
-        }
-    }
-    if !has_non_whitespace {
-        return Err(NeedReasonError::Empty);
-    }
-    if let Some((byte_index, character)) = disallowed {
-        return Err(NeedReasonError::DisallowedCharacter {
+    validate_display_string(reason, 512, |_| false).map_err(|violation| match violation {
+        DisplayStringViolation::Empty => NeedReasonError::Empty,
+        DisplayStringViolation::DisallowedCharacter {
             byte_index,
             character,
-        });
-    }
-    if reason.len() > 512 {
-        return Err(NeedReasonError::TooLong { max_bytes: 512 });
-    }
-    Ok(())
+        } => NeedReasonError::DisallowedCharacter {
+            byte_index,
+            character,
+        },
+        DisplayStringViolation::TooLong { max_bytes } => NeedReasonError::TooLong { max_bytes },
+    })
 }
 
 #[cfg(test)]

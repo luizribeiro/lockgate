@@ -1,8 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::text::{
-    DisallowedCharacterKind, classify_disallowed_character, find_disallowed_character,
-};
+use crate::text::{classify_disallowed_character, find_disallowed_character};
 
 /// Maximum UTF-8 size of a symbolic root name.
 pub const MAX_ROOT_NAME_BYTES: usize = 64;
@@ -170,11 +168,14 @@ impl fmt::Display for ScopeRefError {
                 kind,
                 byte_index,
                 character,
-            } => write!(
-                formatter,
-                "{kind} contains a Unicode {} at byte {byte_index}",
-                scope_character_description(*character)
-            ),
+            } => {
+                let character_kind = classify_disallowed_character(*character)
+                    .expect("stored scope character must be disallowed");
+                write!(
+                    formatter,
+                    "{kind} contains a Unicode {character_kind} at byte {byte_index}"
+                )
+            }
             Self::ScopeValueTooLong { kind, max_bytes } => {
                 write!(formatter, "{kind} exceeds {max_bytes} UTF-8 bytes")
             }
@@ -236,17 +237,6 @@ fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), Sc
         });
     }
     Ok(())
-}
-
-fn scope_character_description(character: char) -> &'static str {
-    match classify_disallowed_character(character)
-        .expect("stored scope character must be disallowed")
-    {
-        DisallowedCharacterKind::LineBreak => "line break character",
-        DisallowedCharacterKind::Control => "control (Cc) character",
-        DisallowedCharacterKind::Format => "format (Cf) character",
-        DisallowedCharacterKind::LineSeparator => "line separator character",
-    }
 }
 
 fn validate_bounded_scope_value(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {

@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
-use crate::text::classify_disallowed_character;
+use crate::text::{DisplayStringViolation, classify_disallowed_character, validate_display_string};
 
 const PLUGIN_METADATA_FORMAT: u32 = 1;
 const MAX_ID_BYTES: usize = 128;
@@ -241,31 +241,23 @@ fn validate_display_field(
     value: &str,
     max_bytes: usize,
 ) -> Result<(), PluginMetadataValidationError> {
-    let mut has_non_whitespace = false;
-    let mut disallowed = None;
-    for (byte_index, character) in value.char_indices() {
-        has_non_whitespace |= !character.is_whitespace();
-        if disallowed.is_none()
-            && (classify_disallowed_character(character).is_some()
-                || field == PluginMetadataField::Id && character.is_whitespace())
-        {
-            disallowed = Some((byte_index, character));
-        }
-    }
-    if !has_non_whitespace {
-        return Err(PluginMetadataValidationError::EmptyField { field });
-    }
-    if let Some((byte_index, character)) = disallowed {
-        return Err(PluginMetadataValidationError::DisallowedCharacter {
+    validate_display_string(value, max_bytes, |character| {
+        field == PluginMetadataField::Id && character.is_whitespace()
+    })
+    .map_err(|violation| match violation {
+        DisplayStringViolation::Empty => PluginMetadataValidationError::EmptyField { field },
+        DisplayStringViolation::DisallowedCharacter {
+            byte_index,
+            character,
+        } => PluginMetadataValidationError::DisallowedCharacter {
             field,
             byte_index,
             character,
-        });
-    }
-    if value.len() > max_bytes {
-        return Err(PluginMetadataValidationError::FieldTooLong { field, max_bytes });
-    }
-    Ok(())
+        },
+        DisplayStringViolation::TooLong { max_bytes } => {
+            PluginMetadataValidationError::FieldTooLong { field, max_bytes }
+        }
+    })
 }
 
 #[cfg(test)]

@@ -8,6 +8,13 @@ pub(crate) enum DisallowedCharacterKind {
     LineSeparator,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DisplayStringViolation {
+    Empty,
+    DisallowedCharacter { byte_index: usize, character: char },
+    TooLong { max_bytes: usize },
+}
+
 impl fmt::Display for DisallowedCharacterKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -39,6 +46,36 @@ pub(crate) fn find_disallowed_character(
     value.char_indices().find_map(|(byte_index, character)| {
         classify_disallowed_character(character).map(|kind| (byte_index, character, kind))
     })
+}
+
+pub(crate) fn validate_display_string(
+    value: &str,
+    max_bytes: usize,
+    extra_disallowed: impl Fn(char) -> bool,
+) -> Result<(), DisplayStringViolation> {
+    let mut has_non_whitespace = false;
+    let mut disallowed = None;
+    for (byte_index, character) in value.char_indices() {
+        has_non_whitespace |= !character.is_whitespace();
+        if disallowed.is_none()
+            && (classify_disallowed_character(character).is_some() || extra_disallowed(character))
+        {
+            disallowed = Some((byte_index, character));
+        }
+    }
+    if !has_non_whitespace {
+        return Err(DisplayStringViolation::Empty);
+    }
+    if let Some((byte_index, character)) = disallowed {
+        return Err(DisplayStringViolation::DisallowedCharacter {
+            byte_index,
+            character,
+        });
+    }
+    if value.len() > max_bytes {
+        return Err(DisplayStringViolation::TooLong { max_bytes });
+    }
+    Ok(())
 }
 
 // Rust exposes Unicode Cc through `is_control`, but not Cf. Keep this explicit

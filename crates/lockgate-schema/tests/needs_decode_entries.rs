@@ -116,7 +116,7 @@ fn rejects_every_unsafe_root_subpath_form() {
         ),
         (
             "$workspace/generated\\u0000html",
-            "control (Cc) character at byte 9",
+            "control character at byte 9",
         ),
     ];
 
@@ -182,11 +182,7 @@ fn rejects_control_and_format_characters_in_every_scope_value_kind() {
                 && found_byte_index == byte_index
         ));
         if scope.contains('\u{2029}') {
-            assert!(
-                error
-                    .to_string()
-                    .contains("line separator character at byte 7")
-            );
+            assert!(error.to_string().contains("line separator at byte 7"));
         }
     }
 }
