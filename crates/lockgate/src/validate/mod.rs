@@ -16,6 +16,10 @@ pub(crate) fn validate_value_only_exports(bytes: &[u8]) -> Result<(), Validation
 
 fn classify_decode_error(error: anyhow::Error) -> ValidationError {
     let message = error.to_string();
+    // This is private wording from wit-parser's `decode_component_export`.
+    // A dependency wording change will fail the world-export golden test; the
+    // same branch covers rare module/value exports, so all are deliberately
+    // reported under the honest world-level non-interface export label.
     if let Some(name) = message
         .strip_prefix("component export `")
         .and_then(|message| message.strip_suffix("` was not a function or instance"))
@@ -23,7 +27,7 @@ fn classify_decode_error(error: anyhow::Error) -> ValidationError {
         return ValidationError::unsupported(
             "root",
             format!("<type {name}>"),
-            "world-level exported type",
+            "world-level non-interface export",
         );
     }
     ValidationError::Decode { message }
@@ -48,6 +52,7 @@ fn validate_world(resolve: &Resolve, world: WorldId) -> Result<(), ValidationErr
                 ));
             }
             WorldItem::Type { .. } => {
+                // Kept as forward-compat insurance; decoded component exports do not reach this.
                 return Err(ValidationError::unsupported(
                     &world.name,
                     format!("<type {export_name}>"),

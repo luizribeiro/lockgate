@@ -98,7 +98,7 @@ fn rejects_world_level_exported_types_with_guidance() {
 
     assert_eq!(
         validate_value_only_exports(&bytes).unwrap_err().to_string(),
-        "unsupported export `root#<type payload>`: offending type `world-level exported type` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+        "unsupported export `root#<type payload>`: offending type `world-level non-interface export` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }
 
