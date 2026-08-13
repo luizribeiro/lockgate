@@ -1,5 +1,7 @@
 use std::{error::Error, fmt};
 
+use super::{DisallowedCharacterKind, find_disallowed_character};
+
 const MAX_ROOT_NAME_BYTES: usize = 64;
 const MAX_ROOT_SUBPATH_BYTES: usize = 1024;
 const MAX_ROOT_SUBPATH_SEGMENTS: usize = 64;
@@ -95,7 +97,7 @@ impl ScopeRef {
             Self::Literal(value) if value.starts_with("setting:") || value.starts_with('$') => {
                 Err(ScopeRefError::ReservedLiteralPrefix)
             }
-            Self::Literal(_) => Ok(()),
+            Self::Literal(value) => validate_scope_characters(value, ScopeValueKind::Literal),
             Self::Setting(pointer) => validate_json_pointer(pointer),
             Self::Root { name, subpath } => {
                 validate_root_name(name)?;
@@ -115,17 +117,31 @@ pub enum ScopeRefError {
     EmptyLiteral,
     ReservedLiteralPrefix,
     InvalidSettingPointer,
+    DisallowedCharacter {
+        kind: ScopeValueKind,
+        character_kind: ScopeCharacterKind,
+        byte_index: usize,
+    },
     InvalidRootName,
-    RootNameTooLong { max_bytes: usize },
+    RootNameTooLong {
+        max_bytes: usize,
+    },
     JoinRequiresRoot,
     RootAlreadyJoined,
     AbsoluteRootSubpath,
-    EmptyRootSubpathSegment { index: usize },
-    DotRootSubpathSegment { index: usize },
+    EmptyRootSubpathSegment {
+        index: usize,
+    },
+    DotRootSubpathSegment {
+        index: usize,
+    },
     RootSubpathContainsBackslash,
-    RootSubpathContainsNul,
-    RootSubpathTooLong { max_bytes: usize },
-    RootSubpathTooDeep { max_segments: usize },
+    RootSubpathTooLong {
+        max_bytes: usize,
+    },
+    RootSubpathTooDeep {
+        max_segments: usize,
+    },
 }
 
 impl fmt::Display for ScopeRefError {
@@ -137,6 +153,14 @@ impl fmt::Display for ScopeRefError {
             }
             Self::InvalidSettingPointer => formatter.write_str(
                 "setting reference must be an RFC 6901 JSON Pointer with valid `~0`/`~1` escapes",
+            ),
+            Self::DisallowedCharacter {
+                kind,
+                character_kind,
+                byte_index,
+            } => write!(
+                formatter,
+                "{kind} contains a Unicode {character_kind} character at byte {byte_index}"
             ),
             Self::InvalidRootName => formatter.write_str(
                 "root name must start with a lowercase letter and contain only lowercase letters, digits, or `-`",
@@ -157,9 +181,6 @@ impl fmt::Display for ScopeRefError {
             Self::RootSubpathContainsBackslash => {
                 formatter.write_str("root subpath must not contain backslashes")
             }
-            Self::RootSubpathContainsNul => {
-                formatter.write_str("root subpath must not contain NUL")
-            }
             Self::RootSubpathTooLong { max_bytes } => {
                 write!(formatter, "root subpath exceeds {max_bytes} bytes")
             }
@@ -172,7 +193,56 @@ impl fmt::Display for ScopeRefError {
 
 impl Error for ScopeRefError {}
 
+/// The scope value whose characters failed validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScopeValueKind {
+    Literal,
+    SettingPointer,
+    RootSubpathSegment,
+}
+
+impl fmt::Display for ScopeValueKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Literal => "literal scope",
+            Self::SettingPointer => "setting pointer",
+            Self::RootSubpathSegment => "root subpath segment",
+        })
+    }
+}
+
+/// The rejected Unicode general category.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScopeCharacterKind {
+    Control,
+    Format,
+}
+
+impl fmt::Display for ScopeCharacterKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Control => "control (Cc)",
+            Self::Format => "format (Cf)",
+        })
+    }
+}
+
+fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {
+    if let Some((byte_index, character_kind)) = find_disallowed_character(value) {
+        return Err(ScopeRefError::DisallowedCharacter {
+            kind,
+            character_kind: match character_kind {
+                DisallowedCharacterKind::Control => ScopeCharacterKind::Control,
+                DisallowedCharacterKind::Format => ScopeCharacterKind::Format,
+            },
+            byte_index,
+        });
+    }
+    Ok(())
+}
+
 fn validate_json_pointer(pointer: &str) -> Result<(), ScopeRefError> {
+    validate_scope_characters(pointer, ScopeValueKind::SettingPointer)?;
     if !pointer.is_empty() && !pointer.starts_with('/') {
         return Err(ScopeRefError::InvalidSettingPointer);
     }
@@ -201,14 +271,12 @@ fn validate_root_name(name: &str) -> Result<(), ScopeRefError> {
 }
 
 fn validate_root_subpath(subpath: &str) -> Result<(), ScopeRefError> {
+    validate_scope_characters(subpath, ScopeValueKind::RootSubpathSegment)?;
     if subpath.starts_with('/') {
         return Err(ScopeRefError::AbsoluteRootSubpath);
     }
     if subpath.contains('\\') {
         return Err(ScopeRefError::RootSubpathContainsBackslash);
-    }
-    if subpath.contains('\0') {
-        return Err(ScopeRefError::RootSubpathContainsNul);
     }
     if subpath.len() > MAX_ROOT_SUBPATH_BYTES {
         return Err(ScopeRefError::RootSubpathTooLong {
@@ -318,7 +386,14 @@ mod tests {
                 "generated\\html",
                 ScopeRefError::RootSubpathContainsBackslash,
             ),
-            ("generated\0html", ScopeRefError::RootSubpathContainsNul),
+            (
+                "generated\0html",
+                ScopeRefError::DisallowedCharacter {
+                    kind: ScopeValueKind::RootSubpathSegment,
+                    character_kind: ScopeCharacterKind::Control,
+                    byte_index: 9,
+                },
+            ),
         ];
         for (subpath, expected) in cases {
             assert_eq!(

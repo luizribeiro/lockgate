@@ -9,11 +9,58 @@ mod wire;
 pub use digest::NeedsDigest;
 pub use entry::{NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
 pub use manifest::{EntryLocation, NeedsManifest, NeedsManifestValidationError, Requirement};
-pub use scope_ref::{ScopeRef, ScopeRefError};
+pub use scope_ref::{ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind};
 pub use wire::{
     NeedsManifestDecodeError, NeedsManifestEncodeError, decode_needs_manifest,
     encode_needs_manifest,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DisallowedCharacterKind {
+    Control,
+    Format,
+}
+
+pub(crate) fn find_disallowed_character(value: &str) -> Option<(usize, DisallowedCharacterKind)> {
+    value.char_indices().find_map(|(byte_index, character)| {
+        if character.is_control() {
+            Some((byte_index, DisallowedCharacterKind::Control))
+        } else if is_format_character(character) {
+            Some((byte_index, DisallowedCharacterKind::Format))
+        } else {
+            None
+        }
+    })
+}
+
+// Rust exposes Unicode Cc through `is_control`, but not Cf. Keep this explicit
+// table synchronized with Unicode's format-character assignments.
+fn is_format_character(character: char) -> bool {
+    matches!(
+        character,
+        '\u{00ad}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061c}'
+            | '\u{06dd}'
+            | '\u{070f}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08e2}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
+}
 
 /// The identity of one permission operation, written `capability.operation`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

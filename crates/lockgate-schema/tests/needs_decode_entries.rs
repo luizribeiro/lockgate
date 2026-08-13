@@ -1,6 +1,6 @@
 use lockgate_schema::{
-    NeedEntryError, NeedsManifestDecodeError, NeedsManifestValidationError, ScopeRefError,
-    decode_needs_manifest,
+    NeedEntryError, NeedsManifestDecodeError, NeedsManifestValidationError, ScopeCharacterKind,
+    ScopeRefError, ScopeValueKind, decode_needs_manifest,
 };
 
 fn decode(required: &str, optional: &str) -> Result<(), NeedsManifestDecodeError> {
@@ -120,7 +120,10 @@ fn rejects_every_unsafe_root_subpath_form() {
             "$workspace/generated\\\\html",
             "must not contain backslashes",
         ),
-        ("$workspace/generated\\u0000html", "must not contain NUL"),
+        (
+            "$workspace/generated\\u0000html",
+            "control (Cc) character at byte 9",
+        ),
     ];
 
     for (scope, expected) in cases {
@@ -130,6 +133,71 @@ fn rejects_every_unsafe_root_subpath_form() {
             NeedsManifestDecodeError::InvalidScope { .. }
         ));
         assert!(error.to_string().contains(expected), "{scope}: {error}");
+    }
+}
+
+#[test]
+fn rejects_control_and_format_characters_in_every_scope_value_kind() {
+    let cases = [
+        (
+            "setting:/a\0b",
+            ScopeValueKind::SettingPointer,
+            ScopeCharacterKind::Control,
+            2,
+        ),
+        (
+            "setting:/a\nb",
+            ScopeValueKind::SettingPointer,
+            ScopeCharacterKind::Control,
+            2,
+        ),
+        (
+            "literal\0value",
+            ScopeValueKind::Literal,
+            ScopeCharacterKind::Control,
+            7,
+        ),
+        (
+            "$workspace/a\u{202e}b",
+            ScopeValueKind::RootSubpathSegment,
+            ScopeCharacterKind::Format,
+            1,
+        ),
+        (
+            "$workspace/a\u{7}b",
+            ScopeValueKind::RootSubpathSegment,
+            ScopeCharacterKind::Control,
+            1,
+        ),
+        (
+            "$workspace/a\u{200b}b",
+            ScopeValueKind::RootSubpathSegment,
+            ScopeCharacterKind::Format,
+            1,
+        ),
+    ];
+
+    for (scope, kind, character_kind, byte_index) in cases {
+        let payload = serde_json::json!({
+            "format": 1,
+            "optional": {},
+            "reasons": {},
+            "required": { "fs.read": [scope] },
+        });
+        let error = decode_needs_manifest(&serde_json::to_vec(&payload).unwrap()).unwrap_err();
+        assert!(matches!(
+            error,
+            NeedsManifestDecodeError::InvalidScope {
+                source: ScopeRefError::DisallowedCharacter {
+                    kind: found_kind,
+                    character_kind: found_character_kind,
+                    byte_index: found_byte_index,
+                },
+                ..
+            } if found_kind == kind
+                && found_character_kind == character_kind
+                && found_byte_index == byte_index
+        ));
     }
 }
 
