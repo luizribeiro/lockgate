@@ -61,25 +61,14 @@ pub(crate) enum TrapDetail {
         #[allow(dead_code, reason = "retained as the causal error for diagnostics")]
         error: AnyError,
     },
-    MemoryLimit {
-        current: usize,
-        desired: usize,
-        limit: usize,
-    },
+    MemoryLimit(MemoryLimitExceeded),
 }
 
 impl fmt::Display for TrapDetail {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Wasm { trap, .. } => write!(f, "{trap}"),
-            Self::MemoryLimit {
-                current,
-                desired,
-                limit,
-            } => write!(
-                f,
-                "linear memory growth from {current} to {desired} bytes exceeds the {limit}-byte limit"
-            ),
+            Self::MemoryLimit(error) => error.fmt(f),
         }
     }
 }
@@ -104,7 +93,7 @@ pub(crate) fn host_import_error(error: AnyError) -> WasmtimeError {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct MemoryLimitExceeded {
+pub(crate) struct MemoryLimitExceeded {
     pub(super) current: usize,
     pub(super) desired: usize,
     pub(super) limit: usize,
@@ -156,12 +145,9 @@ pub(super) fn map_call_error(error: WasmtimeError) -> ExecError {
 }
 
 fn memory_limit_detail(error: WasmtimeError) -> TrapDetail {
-    let exceeded = error
-        .downcast::<MemoryLimitExceeded>()
-        .expect("memory-limit marker type was checked before downcast");
-    TrapDetail::MemoryLimit {
-        current: exceeded.current,
-        desired: exceeded.desired,
-        limit: exceeded.limit,
-    }
+    TrapDetail::MemoryLimit(
+        error
+            .downcast::<MemoryLimitExceeded>()
+            .expect("memory-limit marker type was checked before downcast"),
+    )
 }
