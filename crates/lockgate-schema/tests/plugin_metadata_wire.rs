@@ -58,6 +58,46 @@ fn round_trip_is_stable_with_every_optional_field() {
 }
 
 #[test]
+fn opaque_display_versions_round_trip() {
+    for version in ["2024.08", "a1b2c3d"] {
+        let metadata = PluginMetadata::new("plugin", "Plugin", version).unwrap();
+        let encoded = metadata.to_section_bytes().unwrap();
+        let decoded = PluginMetadata::from_section_bytes(&encoded).unwrap();
+
+        assert_eq!(decoded.version(), version);
+        assert_eq!(decoded, metadata);
+    }
+}
+
+#[test]
+fn rejects_disallowed_version_format_characters_at_their_byte_index() {
+    let error = PluginMetadata::from_section_bytes(
+        br#"{"format":1,"id":"plugin","name":"Plugin","version":"release\u202ecandidate"}"#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        DecodeError::InvalidMetadata(PluginMetadataValidationError::VersionFormatCharacter {
+            byte_index: 7
+        })
+    ));
+    assert!(error.to_string().contains("format character at byte 7"));
+}
+
+#[test]
+fn bounds_version_display_strings_by_utf8_bytes() {
+    let exact = PluginMetadata::new("plugin", "Plugin", "x".repeat(128)).unwrap();
+    let encoded = exact.to_section_bytes().unwrap();
+    assert_eq!(PluginMetadata::from_section_bytes(&encoded).unwrap(), exact);
+
+    assert_eq!(
+        PluginMetadata::new("plugin", "Plugin", "x".repeat(129)).unwrap_err(),
+        PluginMetadataValidationError::VersionTooLong { max_bytes: 128 }
+    );
+}
+
+#[test]
 fn rejects_truncated_payloads_without_panicking() {
     let error = PluginMetadata::from_section_bytes(br#"{"format":1,"id":"plugin""#).unwrap_err();
 
@@ -98,8 +138,8 @@ fn rejects_invalid_field_values_with_field_specific_errors() {
             "plugin name must not be empty",
         ),
         (
-            br#"{"format":1,"id":"plugin","name":"Plugin","version":"latest"}"#,
-            "plugin version is not valid SemVer",
+            br#"{"format":1,"id":"plugin","name":"Plugin","version":"release\u202ecandidate"}"#,
+            "plugin version contains a format character at byte 7",
         ),
         (
             br#"{"format":1,"id":"plugin","name":"Plugin","version":"1.0.0","homepage":" "}"#,

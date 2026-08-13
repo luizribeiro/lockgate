@@ -2,7 +2,10 @@ use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
+use crate::needs::{DisallowedCharacterKind, find_disallowed_character};
+
 const PLUGIN_METADATA_FORMAT: u32 = 1;
+const MAX_VERSION_BYTES: usize = 128;
 
 /// Language-neutral identity and display metadata embedded in a plugin artifact.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +80,7 @@ impl PluginMetadata {
         &self.name
     }
 
-    /// Returns the plugin implementation's SemVer version.
+    /// Returns the plugin implementation's opaque display version.
     pub fn version(&self) -> &str {
         &self.version
     }
@@ -112,11 +115,24 @@ impl PluginMetadata {
         }
         validate_required(PluginMetadataField::Name, &self.name)?;
         validate_required(PluginMetadataField::Version, &self.version)?;
-        semver::Version::parse(&self.version).map_err(|error| {
-            PluginMetadataValidationError::InvalidVersion {
-                reason: error.to_string(),
-            }
-        })?;
+        if self.version.contains(['\n', '\r']) {
+            return Err(PluginMetadataValidationError::VersionMultipleLines);
+        }
+        if let Some((byte_index, kind)) = find_disallowed_character(&self.version) {
+            return Err(match kind {
+                DisallowedCharacterKind::Control => {
+                    PluginMetadataValidationError::VersionControlCharacter { byte_index }
+                }
+                DisallowedCharacterKind::Format => {
+                    PluginMetadataValidationError::VersionFormatCharacter { byte_index }
+                }
+            });
+        }
+        if self.version.len() > MAX_VERSION_BYTES {
+            return Err(PluginMetadataValidationError::VersionTooLong {
+                max_bytes: MAX_VERSION_BYTES,
+            });
+        }
         for (field, value) in [
             (
                 PluginMetadataField::Description,
@@ -146,8 +162,14 @@ pub enum PluginMetadataValidationError {
     SurroundingWhitespace { field: PluginMetadataField },
     /// The plugin identifier contains whitespace.
     IdContainsWhitespace,
-    /// The plugin version is not valid semantic version syntax.
-    InvalidVersion { reason: String },
+    /// The plugin version spans more than one line.
+    VersionMultipleLines,
+    /// The plugin version contains a Unicode control (Cc) character.
+    VersionControlCharacter { byte_index: usize },
+    /// The plugin version contains a Unicode format (Cf) character.
+    VersionFormatCharacter { byte_index: usize },
+    /// The plugin version exceeds the display-string byte limit.
+    VersionTooLong { max_bytes: usize },
     /// An optional field is present but empty or consists only of whitespace.
     EmptyOptionalField { field: PluginMetadataField },
 }
@@ -168,8 +190,23 @@ impl fmt::Display for PluginMetadataValidationError {
             Self::IdContainsWhitespace => {
                 formatter.write_str("plugin id must not contain whitespace")
             }
-            Self::InvalidVersion { reason } => {
-                write!(formatter, "plugin version is not valid SemVer: {reason}")
+            Self::VersionMultipleLines => {
+                formatter.write_str("plugin version must contain exactly one line")
+            }
+            Self::VersionControlCharacter { byte_index } => {
+                write!(
+                    formatter,
+                    "plugin version contains a control character at byte {byte_index}"
+                )
+            }
+            Self::VersionFormatCharacter { byte_index } => {
+                write!(
+                    formatter,
+                    "plugin version contains a format character at byte {byte_index}"
+                )
+            }
+            Self::VersionTooLong { max_bytes } => {
+                write!(formatter, "plugin version exceeds {max_bytes} UTF-8 bytes")
             }
             Self::EmptyOptionalField { field } => {
                 write!(formatter, "plugin {field} must not be empty when present")
@@ -304,14 +341,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_versions_that_are_not_semver() {
-        let error = PluginMetadata::new("com.example.greeter", "Greeter", "latest").unwrap_err();
+    fn rejects_multiline_versions() {
+        assert_eq!(
+            PluginMetadata::new("com.example.greeter", "Greeter", "release\ncandidate")
+                .unwrap_err(),
+            PluginMetadataValidationError::VersionMultipleLines
+        );
+    }
 
-        assert!(matches!(
-            error,
-            PluginMetadataValidationError::InvalidVersion { .. }
-        ));
-        assert!(error.to_string().contains("valid SemVer"));
+    #[test]
+    fn rejects_disallowed_characters_in_versions() {
+        for (version, expected) in [
+            (
+                "release\u{7}candidate",
+                PluginMetadataValidationError::VersionControlCharacter { byte_index: 7 },
+            ),
+            (
+                "release\u{202e}candidate",
+                PluginMetadataValidationError::VersionFormatCharacter { byte_index: 7 },
+            ),
+        ] {
+            assert_eq!(
+                PluginMetadata::new("com.example.greeter", "Greeter", version).unwrap_err(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_version_utf8_bytes() {
+        assert!(PluginMetadata::new("plugin", "Plugin", "x".repeat(128)).is_ok());
+        assert_eq!(
+            PluginMetadata::new("plugin", "Plugin", "x".repeat(129)).unwrap_err(),
+            PluginMetadataValidationError::VersionTooLong { max_bytes: 128 }
+        );
     }
 
     #[test]

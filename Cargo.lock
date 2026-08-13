@@ -685,7 +685,6 @@ version = "0.1.0"
 name = "lockgate-schema"
 version = "0.1.0"
 dependencies = [
- "semver",
  "serde",
  "serde_json",
  "sha2",
