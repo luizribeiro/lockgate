@@ -1,0 +1,93 @@
+#[allow(
+    dead_code,
+    reason = "the invocation-isolation tests do not use the cancellation drop probe"
+)]
+#[path = "../src/exec/mod.rs"]
+mod exec;
+
+mod common;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use exec::{ExecEngine, ExecLimits, StoreCtx};
+use tokio::sync::Barrier;
+use wasmtime::component::{Linker, Val};
+
+const LIMITS: ExecLimits = ExecLimits {
+    instantiation_fuel: 1_000_000,
+    max_memory_bytes: 16 * 1024 * 1024,
+};
+const INVOCATION_FUEL: u64 = 1_000_000;
+
+struct TestState;
+
+#[tokio::test(flavor = "current_thread")]
+async fn same_loaded_component_accepts_overlapping_invocations() {
+    let engine = ExecEngine::new().unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+    let loaded = engine
+        .load::<TestState>(common::exec_fixture(), {
+            let barrier = Arc::clone(&barrier);
+            move |linker| wire_barrier_wait(linker, barrier)
+        })
+        .unwrap();
+    let suspend = loaded
+        .export("test:exec/guest", "suspend")
+        .expect("suspend export should resolve structurally");
+
+    let pair = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            loaded.invoke(suspend, &[], LIMITS, INVOCATION_FUEL),
+            loaded.invoke(suspend, &[], LIMITS, INVOCATION_FUEL),
+        )
+    })
+    .await
+    .expect("invocations did not overlap at the host barrier");
+
+    for result in [pair.0.unwrap(), pair.1.unwrap()] {
+        assert!(matches!(result.as_slice(), [Val::U32(7)]));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn every_root_invocation_gets_fresh_guest_globals() {
+    let engine = ExecEngine::new().unwrap();
+    let loaded = engine
+        .load::<TestState>(common::exec_fixture(), wire_ready_wait)
+        .unwrap();
+    let pin = loaded
+        .export("test:exec/guest", "pin")
+        .expect("pin export should resolve structurally");
+
+    for _ in 0..2 {
+        let result = loaded
+            .invoke(pin, &[], LIMITS, INVOCATION_FUEL)
+            .await
+            .unwrap();
+        assert!(matches!(result.as_slice(), [Val::U32(1)]));
+    }
+}
+
+fn wire_barrier_wait(
+    linker: &mut Linker<StoreCtx<TestState>>,
+    barrier: Arc<Barrier>,
+) -> wasmtime::Result<()> {
+    linker
+        .instance("test:exec/host")?
+        .func_wrap_concurrent("wait", move |_, (): ()| {
+            let barrier = Arc::clone(&barrier);
+            Box::pin(async move {
+                barrier.wait().await;
+                Ok(())
+            })
+        })?;
+    Ok(())
+}
+
+fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmtime::Result<()> {
+    linker
+        .instance("test:exec/host")?
+        .func_wrap_concurrent("wait", |_, (): ()| Box::pin(async { Ok(()) }))?;
+    Ok(())
+}

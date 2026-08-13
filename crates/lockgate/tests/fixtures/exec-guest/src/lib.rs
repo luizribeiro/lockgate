@@ -12,9 +12,20 @@ wit_bindgen::generate!({
 
 struct Fixture;
 
+static mut PIN_COUNT: u32 = 0;
+
 impl exports::test::exec::guest::Guest for Fixture {
     fn value() -> u32 {
         42
+    }
+
+    fn pin() -> u32 {
+        unsafe {
+            let pin = &raw mut PIN_COUNT;
+            let next = pin.read().wrapping_add(1);
+            pin.write(next);
+            next
+        }
     }
 
     async fn suspend() -> u32 {
