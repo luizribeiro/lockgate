@@ -8,9 +8,13 @@ use wit_parser::{ManglingAndAbi, Resolve};
 mod fixtures;
 
 fn component(wit: &str) -> Vec<u8> {
+    component_world(wit, None)
+}
+
+fn component_world(wit: &str, world: Option<&str>) -> Vec<u8> {
     let mut resolve = Resolve::new();
     let package = resolve.push_str("fixture.wit", wit).unwrap();
-    let world = resolve.select_world(&[package], None).unwrap();
+    let world = resolve.select_world(&[package], world).unwrap();
     let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
     embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
     ComponentEncoder::default()
@@ -18,6 +22,13 @@ fn component(wit: &str) -> Vec<u8> {
         .unwrap()
         .encode()
         .unwrap()
+}
+
+fn compound_component(world: &str) -> Vec<u8> {
+    component_world(
+        include_str!("../../tests/data/export_validation/compound_wrappers.wit"),
+        Some(world),
+    )
 }
 
 fn component_wat(wat: &str) -> Vec<u8> {
@@ -197,5 +208,68 @@ fn reports_nested_error_context_before_component_compilation() {
     assert_eq!(
         error.to_string(),
         "unsupported export `test:error-context-export/api#run`: offending type `error-context` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_streams_nested_in_records() {
+    let error = validate_value_only_exports(&compound_component("record-fixture")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:compound-wrappers/record-api#run`: offending type `stream` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_owned_handles_nested_in_variants() {
+    let error = validate_value_only_exports(&compound_component("variant-fixture")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:compound-wrappers/variant-api#run`: offending type `own<file>` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_futures_nested_in_lists() {
+    let error = validate_value_only_exports(&compound_component("list-fixture")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:compound-wrappers/list-api#run`: offending type `future` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_futures_nested_in_fixed_length_lists() {
+    let error = validate_value_only_exports(&compound_component("fixed-list-fixture")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:compound-wrappers/fixed-list-api#run`: offending type `future` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_error_contexts_nested_in_tuples() {
+    let error = validate_value_only_exports(&compound_component("tuple-fixture")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:compound-wrappers/tuple-api#run`: offending type `error-context` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_streams_nested_in_results() {
+    let error = validate_value_only_exports(&compound_component("result-fixture")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:compound-wrappers/result-api#run`: offending type `stream` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_futures_nested_in_maps() {
+    let error = validate_value_only_exports(&compound_component("map-fixture")).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:compound-wrappers/map-api#run`: offending type `future` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }

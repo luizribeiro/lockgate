@@ -1,0 +1,49 @@
+package test:compound-wrappers;
+
+interface handles {
+    resource file;
+}
+
+interface record-api {
+    record wrapper { value: stream<string> }
+    run: func() -> wrapper;
+}
+
+interface variant-api {
+    use handles.{file};
+    variant wrapper { value(own<file>), empty }
+    run: func() -> wrapper;
+}
+
+interface list-api {
+    type wrapper = list<future<string>>;
+    run: func() -> wrapper;
+}
+
+interface fixed-list-api {
+    type wrapper = list<future<string>, 2>;
+    run: func() -> wrapper;
+}
+
+interface tuple-api {
+    type wrapper = tuple<string, error-context>;
+    run: func() -> wrapper;
+}
+
+interface result-api {
+    type wrapper = result<string, stream<string>>;
+    run: func() -> wrapper;
+}
+
+interface map-api {
+    type wrapper = map<string, future<string>>;
+    run: func() -> wrapper;
+}
+
+world record-fixture { export record-api; }
+world variant-fixture { import handles; export variant-api; }
+world list-fixture { export list-api; }
+world fixed-list-fixture { export fixed-list-api; }
+world tuple-fixture { export tuple-api; }
+world result-fixture { export result-api; }
+world map-fixture { export map-api; }
