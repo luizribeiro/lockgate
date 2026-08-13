@@ -4,6 +4,10 @@ use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
+mod needs;
+
+pub use needs::{AtomKey, AtomKeyError};
+
 /// Name of the WebAssembly custom section containing Lockgate plugin metadata.
 pub const PLUGIN_METADATA_SECTION: &str = "lockgate:plugin";
 
