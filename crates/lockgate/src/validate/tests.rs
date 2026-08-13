@@ -142,3 +142,24 @@ fn rejects_nested_streams_with_guidance() {
         "unsupported export `test:stream-export/api#run`: offending type `stream` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }
+
+#[test]
+fn reports_nested_error_context_before_component_compilation() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/error_context.wit"
+    ));
+    let mut compiler_was_called = false;
+
+    let error = validate_value_only_exports(&bytes)
+        .and_then(|()| {
+            compiler_was_called = true;
+            Ok(())
+        })
+        .unwrap_err();
+
+    assert!(!compiler_was_called);
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:error-context-export/api#run`: offending type `error-context` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}

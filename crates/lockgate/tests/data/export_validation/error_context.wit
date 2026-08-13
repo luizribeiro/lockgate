@@ -1,0 +1,11 @@
+package test:error-context-export;
+
+interface api {
+    type failure = error-context;
+    type nested = option<failure>;
+    run: func() -> nested;
+}
+
+world fixture {
+    export api;
+}

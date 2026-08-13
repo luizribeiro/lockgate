@@ -93,8 +93,10 @@ fn validate_interface(
 }
 
 fn forbidden_type(resolve: &Resolve, ty: Type) -> Option<String> {
-    let Type::Id(id) = ty else {
-        return None;
+    let id = match ty {
+        Type::ErrorContext => return Some("error-context".to_string()),
+        Type::Id(id) => id,
+        _ => return None,
     };
     let definition = &resolve.types[id];
     match &definition.kind {
