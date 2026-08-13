@@ -1,7 +1,7 @@
 use std::{error::Error, fmt};
 
 use wit_parser::{
-    Resolve, WorldId, WorldItem, WorldKey,
+    InterfaceId, Resolve, TypeDefKind, WorldId, WorldItem, WorldKey,
     decoding::{DecodedWasm, decode},
 };
 
@@ -39,7 +39,7 @@ fn validate_world(resolve: &Resolve, world: WorldId) -> Result<(), ValidationErr
                 .unwrap_or_else(|| format!("interface-{}", id.index())),
         };
         match item {
-            WorldItem::Interface { .. } => {}
+            WorldItem::Interface { id, .. } => validate_interface(resolve, *id, &export_name)?,
             WorldItem::Function(_) => {
                 return Err(ValidationError::unsupported(
                     &world.name,
@@ -54,6 +54,23 @@ fn validate_world(resolve: &Resolve, world: WorldId) -> Result<(), ValidationErr
                     "world-level exported type",
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_interface(
+    resolve: &Resolve,
+    interface: InterfaceId,
+    interface_name: &str,
+) -> Result<(), ValidationError> {
+    for (name, id) in &resolve.interfaces[interface].types {
+        if matches!(resolve.types[*id].kind, TypeDefKind::Resource) {
+            return Err(ValidationError::unsupported(
+                interface_name,
+                format!("<type {name}>"),
+                format!("resource {name}"),
+            ));
         }
     }
     Ok(())

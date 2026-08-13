@@ -1,0 +1,10 @@
+package test:unused-resource;
+
+interface api {
+    resource file;
+    run: func() -> string;
+}
+
+world fixture {
+    export api;
+}
