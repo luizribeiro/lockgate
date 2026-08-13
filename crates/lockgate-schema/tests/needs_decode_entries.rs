@@ -1,7 +1,7 @@
+use lockgate_schema::needs::{MAX_ATOMS_PER_MANIFEST, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
 use lockgate_schema::sections::needs::{NeedsManifestDecodeError, decode_needs_manifest};
 use lockgate_schema::{
-    MAX_ATOMS_PER_MANIFEST, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY, NeedEntryError,
-    NeedsManifestValidationError, ScopeCharacterKind, ScopeRefError, ScopeValueKind,
+    NeedEntryError, NeedsManifestValidationError, ScopeCharacterKind, ScopeRefError, ScopeValueKind,
 };
 
 fn decode(required: &str, optional: &str) -> Result<(), NeedsManifestDecodeError> {

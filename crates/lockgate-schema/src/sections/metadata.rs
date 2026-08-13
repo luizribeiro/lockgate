@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::{PluginMetadata, PluginMetadataValidationError};
+use crate::metadata::{PluginMetadata, PluginMetadataValidationError};
 
 use super::check_payload_size;
 
