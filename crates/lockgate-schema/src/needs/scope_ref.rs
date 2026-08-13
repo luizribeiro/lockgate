@@ -2,9 +2,12 @@ use std::{error::Error, fmt};
 
 use super::{DisallowedCharacterKind, find_disallowed_character};
 
-const MAX_ROOT_NAME_BYTES: usize = 64;
-const MAX_ROOT_SUBPATH_BYTES: usize = 1024;
-const MAX_ROOT_SUBPATH_SEGMENTS: usize = 64;
+/// Maximum UTF-8 size of a symbolic root name.
+pub const MAX_ROOT_NAME_BYTES: usize = 64;
+/// Maximum UTF-8 size of a root subpath.
+pub const MAX_ROOT_SUBPATH_BYTES: usize = 1024;
+/// Maximum number of slash-delimited segments in a root subpath.
+pub const MAX_ROOT_SUBPATH_SEGMENTS: usize = 64;
 
 /// Maximum UTF-8 size of one literal scope or setting pointer value.
 pub const MAX_SCOPE_VALUE_BYTES: usize = 2048;
@@ -355,6 +358,7 @@ mod tests {
 
     #[test]
     fn roots_use_bounded_lowercase_names() {
+        assert!(ScopeRef::root("a".repeat(MAX_ROOT_NAME_BYTES)).is_ok());
         for name in ["", "Workspace", "two_words", "9root"] {
             assert_eq!(
                 ScopeRef::root(name).unwrap_err(),
@@ -429,6 +433,18 @@ mod tests {
 
     #[test]
     fn bounds_root_subpath_length_and_depth() {
+        assert!(
+            ScopeRef::root("workspace")
+                .unwrap()
+                .join("a".repeat(MAX_ROOT_SUBPATH_BYTES))
+                .is_ok()
+        );
+        assert!(
+            ScopeRef::root("workspace")
+                .unwrap()
+                .join(["a"; MAX_ROOT_SUBPATH_SEGMENTS].join("/"))
+                .is_ok()
+        );
         assert_eq!(
             ScopeRef::root("workspace")
                 .unwrap()

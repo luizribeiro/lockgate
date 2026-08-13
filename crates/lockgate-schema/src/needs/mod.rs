@@ -12,7 +12,8 @@ pub use manifest::{
     EntryLocation, MAX_ATOMS_PER_MANIFEST, NeedsManifest, NeedsManifestValidationError, Requirement,
 };
 pub use scope_ref::{
-    MAX_SCOPE_VALUE_BYTES, ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind,
+    MAX_ROOT_NAME_BYTES, MAX_ROOT_SUBPATH_BYTES, MAX_ROOT_SUBPATH_SEGMENTS, MAX_SCOPE_VALUE_BYTES,
+    ScopeCharacterKind, ScopeRef, ScopeRefError, ScopeValueKind,
 };
 pub use wire::{
     NeedsManifestDecodeError, NeedsManifestEncodeError, decode_needs_manifest,
