@@ -102,7 +102,19 @@ fn forbidden_type(resolve: &Resolve, ty: Type) -> Option<String> {
     let id = match ty {
         Type::ErrorContext => return Some("error-context".to_string()),
         Type::Id(id) => resolve_alias(resolve, id),
-        _ => return None,
+        Type::Bool
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::S8
+        | Type::S16
+        | Type::S32
+        | Type::S64
+        | Type::F32
+        | Type::F64
+        | Type::Char
+        | Type::String => return None,
     };
     let definition = &resolve.types[id];
     match &definition.kind {
