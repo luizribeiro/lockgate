@@ -2,21 +2,28 @@
 
 use std::{error::Error, fmt};
 
+use serde::{Deserialize, Serialize};
+
 /// Name of the WebAssembly custom section containing Lockgate plugin metadata.
 pub const PLUGIN_METADATA_SECTION: &str = "lockgate:plugin";
 
 const PLUGIN_METADATA_FORMAT: u32 = 1;
 
 /// Language-neutral identity and display metadata embedded in a plugin artifact.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginMetadata {
     format: u32,
     id: String,
     name: String,
     version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     homepage: Option<String>,
 }
 
@@ -178,6 +185,76 @@ impl fmt::Display for PluginMetadataValidationError {
 
 impl Error for PluginMetadataValidationError {}
 
+/// A failure while encoding plugin metadata for its custom section.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum PluginMetadataEncodeError {
+    /// The metadata does not satisfy the wire schema's semantic rules.
+    InvalidMetadata(PluginMetadataValidationError),
+    /// The validated metadata could not be serialized as JSON.
+    Serialization(serde_json::Error),
+}
+
+impl fmt::Display for PluginMetadataEncodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidMetadata(error) => {
+                write!(formatter, "plugin metadata failed validation: {error}")
+            }
+            Self::Serialization(error) => {
+                write!(
+                    formatter,
+                    "plugin metadata could not be encoded as JSON: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for PluginMetadataEncodeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidMetadata(error) => Some(error),
+            Self::Serialization(error) => Some(error),
+        }
+    }
+}
+
+/// A failure while decoding plugin metadata from its custom section.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum PluginMetadataDecodeError {
+    /// The section payload is not valid JSON for the metadata wire schema.
+    InvalidJson(serde_json::Error),
+    /// The decoded fields do not satisfy the wire schema's semantic rules.
+    InvalidMetadata(PluginMetadataValidationError),
+}
+
+impl fmt::Display for PluginMetadataDecodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidJson(error) => {
+                write!(
+                    formatter,
+                    "plugin metadata is not valid schema JSON: {error}"
+                )
+            }
+            Self::InvalidMetadata(error) => {
+                write!(formatter, "plugin metadata failed validation: {error}")
+            }
+        }
+    }
+}
+
+impl Error for PluginMetadataDecodeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidJson(error) => Some(error),
+            Self::InvalidMetadata(error) => Some(error),
+        }
+    }
+}
+
 /// A field in the plugin metadata wire schema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -203,6 +280,26 @@ impl fmt::Display for PluginMetadataField {
             Self::Homepage => "homepage",
         })
     }
+}
+
+/// Encodes validated metadata as the JSON payload of `lockgate:plugin`.
+pub fn encode_plugin_metadata(
+    metadata: &PluginMetadata,
+) -> Result<Vec<u8>, PluginMetadataEncodeError> {
+    metadata
+        .validate()
+        .map_err(PluginMetadataEncodeError::InvalidMetadata)?;
+    serde_json::to_vec(metadata).map_err(PluginMetadataEncodeError::Serialization)
+}
+
+/// Decodes and validates the JSON payload of `lockgate:plugin`.
+pub fn decode_plugin_metadata(bytes: &[u8]) -> Result<PluginMetadata, PluginMetadataDecodeError> {
+    let metadata: PluginMetadata =
+        serde_json::from_slice(bytes).map_err(PluginMetadataDecodeError::InvalidJson)?;
+    metadata
+        .validate()
+        .map_err(PluginMetadataDecodeError::InvalidMetadata)?;
+    Ok(metadata)
 }
 
 fn validate_required(

@@ -683,6 +683,8 @@ name = "lockgate-schema"
 version = "0.1.0"
 dependencies = [
  "semver",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
