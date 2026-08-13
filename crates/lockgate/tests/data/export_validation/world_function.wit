@@ -1,0 +1,5 @@
+package test:world-function;
+
+world fixture {
+    export run: func(input: string) -> string;
+}

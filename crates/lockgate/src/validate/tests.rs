@@ -17,6 +17,10 @@ fn component(wit: &str) -> Vec<u8> {
         .unwrap()
 }
 
+fn component_wat(wat: &str) -> Vec<u8> {
+    wat::parse_str(wat).unwrap()
+}
+
 #[test]
 fn accepts_value_only_component_wit() {
     let bytes = component(include_str!(
@@ -52,5 +56,29 @@ fn rejects_encoded_wit_packages() {
     assert_eq!(
         validate_value_only_exports(&bytes).unwrap_err(),
         ValidationError::NotComponent
+    );
+}
+
+#[test]
+fn rejects_world_level_exported_functions_with_guidance() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/world_function.wit"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `root#run`: offending type `world-level exported function` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_world_level_exported_types_with_guidance() {
+    let bytes = component_wat(include_str!(
+        "../../tests/data/export_validation/world_type.wat"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `root#<type payload>`: offending type `world-level exported type` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }

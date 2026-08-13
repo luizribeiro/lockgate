@@ -27,3 +27,4 @@ wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25
 wit-bindgen = "0.57"
 wit-component = "0.254.0"
 wit-parser = "0.254.0"
+wat = "1.256.0"

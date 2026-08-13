@@ -664,6 +664,7 @@ dependencies = [
  "anyhow",
  "tokio",
  "wasmtime",
+ "wat",
  "wit-component",
  "wit-parser",
 ]
