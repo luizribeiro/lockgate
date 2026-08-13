@@ -2,7 +2,7 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
-use crate::sections::needs::{NeedsManifestEncodeError, encode_needs_manifest};
+use crate::sections::needs::EncodeError;
 
 use super::NeedsManifest;
 
@@ -12,8 +12,8 @@ pub struct NeedsDigest([u8; 32]);
 
 impl NeedsDigest {
     /// Computes the digest over the manifest's canonical wire encoding.
-    pub fn compute(manifest: &NeedsManifest) -> Result<Self, NeedsManifestEncodeError> {
-        let bytes = encode_needs_manifest(manifest)?;
+    pub fn compute(manifest: &NeedsManifest) -> Result<Self, EncodeError> {
+        let bytes = manifest.to_section_bytes()?;
         Ok(Self(Sha256::digest(bytes).into()))
     }
 

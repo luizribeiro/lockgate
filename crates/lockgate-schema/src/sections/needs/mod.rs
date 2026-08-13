@@ -9,16 +9,11 @@ use super::check_payload_size;
 mod decode_error;
 mod decoder;
 
-pub use decode_error::NeedsManifestDecodeError;
-pub use decoder::decode_needs_manifest;
+pub use decode_error::DecodeError;
 
 /// Encodes a validated manifest as canonical sorted-key JSON.
-pub fn encode_needs_manifest(
-    manifest: &NeedsManifest,
-) -> Result<Vec<u8>, NeedsManifestEncodeError> {
-    manifest
-        .validate()
-        .map_err(NeedsManifestEncodeError::InvalidManifest)?;
+fn encode(manifest: &NeedsManifest) -> Result<Vec<u8>, EncodeError> {
+    manifest.validate().map_err(EncodeError::InvalidManifest)?;
     let mut required = BTreeMap::new();
     let mut optional = BTreeMap::new();
     let mut reasons = BTreeMap::new();
@@ -45,12 +40,10 @@ pub fn encode_needs_manifest(
         reasons,
         required,
     })
-    .map_err(NeedsManifestEncodeError::Serialization)?;
-    check_payload_size(payload.len()).map_err(|error| {
-        NeedsManifestEncodeError::PayloadTooLarge {
-            actual_bytes: error.actual_bytes,
-            max_bytes: error.max_bytes,
-        }
+    .map_err(EncodeError::Serialization)?;
+    check_payload_size(payload.len()).map_err(|error| EncodeError::PayloadTooLarge {
+        actual_bytes: error.actual_bytes,
+        max_bytes: error.max_bytes,
     })?;
     Ok(payload)
 }
@@ -74,7 +67,7 @@ enum WireNeed {
 /// A failure while encoding a needs manifest custom-section payload.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum NeedsManifestEncodeError {
+pub enum EncodeError {
     InvalidManifest(NeedsManifestValidationError),
     Serialization(serde_json::Error),
     PayloadTooLarge {
@@ -83,7 +76,7 @@ pub enum NeedsManifestEncodeError {
     },
 }
 
-impl fmt::Display for NeedsManifestEncodeError {
+impl fmt::Display for EncodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidManifest(error) => {
@@ -106,12 +99,24 @@ impl fmt::Display for NeedsManifestEncodeError {
     }
 }
 
-impl Error for NeedsManifestEncodeError {
+impl Error for EncodeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::InvalidManifest(error) => Some(error),
             Self::Serialization(error) => Some(error),
             Self::PayloadTooLarge { .. } => None,
         }
+    }
+}
+
+impl NeedsManifest {
+    /// Encodes this manifest as canonical sorted-key section JSON.
+    pub fn to_section_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        encode(self)
+    }
+
+    /// Decodes and validates a `lockgate:needs` custom-section payload.
+    pub fn from_section_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        decoder::decode(bytes)
     }
 }

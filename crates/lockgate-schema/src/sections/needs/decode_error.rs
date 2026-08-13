@@ -8,7 +8,7 @@ use crate::needs::{
 /// A failure while decoding a needs manifest custom-section payload.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum NeedsManifestDecodeError {
+pub enum DecodeError {
     PayloadTooLarge {
         actual_bytes: usize,
         max_bytes: usize,
@@ -53,7 +53,7 @@ pub enum NeedsManifestDecodeError {
     InvalidManifest(NeedsManifestValidationError),
 }
 
-impl fmt::Display for NeedsManifestDecodeError {
+impl fmt::Display for DecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PayloadTooLarge {
@@ -131,7 +131,7 @@ impl fmt::Display for NeedsManifestDecodeError {
     }
 }
 
-impl Error for NeedsManifestDecodeError {
+impl Error for DecodeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::PayloadTooLarge { .. } => None,

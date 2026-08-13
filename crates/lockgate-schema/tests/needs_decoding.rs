@@ -1,40 +1,38 @@
-use lockgate_schema::sections::needs::{
-    NeedsManifestDecodeError, decode_needs_manifest, encode_needs_manifest,
-};
+use lockgate_schema::sections::needs::DecodeError;
 use lockgate_schema::{NeedsManifest, NeedsManifestValidationError};
 
 #[test]
 fn canonical_empty_manifest_round_trips() {
-    let bytes = encode_needs_manifest(&NeedsManifest::empty()).unwrap();
-    let decoded = decode_needs_manifest(&bytes).unwrap();
+    let bytes = NeedsManifest::empty().to_section_bytes().unwrap();
+    let decoded = NeedsManifest::from_section_bytes(&bytes).unwrap();
 
     assert_eq!(decoded, NeedsManifest::empty());
-    assert_eq!(encode_needs_manifest(&decoded).unwrap(), bytes);
+    assert_eq!(decoded.to_section_bytes().unwrap(), bytes);
 }
 
 #[test]
 fn decoding_normalizes_map_and_scope_set_order() {
-    let decoded = decode_needs_manifest(
+    let decoded = NeedsManifest::from_section_bytes(
         br#"{"required":{"notify.send":true,"fs.read":["current","$workspace","current"]},"reasons":{},"optional":{},"format":1}"#,
     )
     .unwrap();
 
     assert_eq!(
-        encode_needs_manifest(&decoded).unwrap(),
+        decoded.to_section_bytes().unwrap(),
         br#"{"format":1,"optional":{},"reasons":{},"required":{"fs.read":["$workspace","current"],"notify.send":true}}"#
     );
 }
 
 #[test]
 fn decoding_rejects_unknown_format_versions() {
-    let error = decode_needs_manifest(br#"{"format":2,"optional":{},"reasons":{},"required":{}}"#)
-        .unwrap_err();
+    let error = NeedsManifest::from_section_bytes(
+        br#"{"format":2,"optional":{},"reasons":{},"required":{}}"#,
+    )
+    .unwrap_err();
 
     assert!(matches!(
         error,
-        NeedsManifestDecodeError::InvalidManifest(
-            NeedsManifestValidationError::UnsupportedFormat { found: 2 }
-        )
+        DecodeError::InvalidManifest(NeedsManifestValidationError::UnsupportedFormat { found: 2 })
     ));
     assert!(
         error

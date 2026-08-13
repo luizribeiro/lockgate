@@ -1,8 +1,5 @@
 use lockgate_schema::needs::{MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
-use lockgate_schema::sections::needs::{
-    NeedsManifestDecodeError, NeedsManifestEncodeError, decode_needs_manifest,
-    encode_needs_manifest,
-};
+use lockgate_schema::sections::needs::{DecodeError, EncodeError};
 use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, ScopeRef};
 
@@ -14,7 +11,7 @@ fn atom(value: &str) -> AtomKey {
 fn empty_manifest_has_a_canonical_section_payload() {
     assert_eq!(PLUGIN_NEEDS_SECTION, "lockgate:needs");
     assert_eq!(
-        encode_needs_manifest(&NeedsManifest::empty()).unwrap(),
+        NeedsManifest::empty().to_section_bytes().unwrap(),
         br#"{"format":1,"optional":{},"reasons":{},"required":{}}"#
     );
 }
@@ -48,14 +45,14 @@ fn encoding_sorts_maps_and_uses_symbolic_scope_strings() {
     )
     .unwrap();
 
-    let encoded = encode_needs_manifest(&manifest).unwrap();
+    let encoded = manifest.to_section_bytes().unwrap();
     assert_eq!(
         encoded,
         br#"{"format":1,"optional":{"http.request":["setting:/endpoint"]},"reasons":{"http.request":"deliver notifications"},"required":{"fs.read":["$workspace/generated/html","current"],"notify.send":true}}"#
     );
-    let decoded = decode_needs_manifest(&encoded).unwrap();
+    let decoded = NeedsManifest::from_section_bytes(&encoded).unwrap();
     assert_eq!(decoded, manifest);
-    assert_eq!(encode_needs_manifest(&decoded).unwrap(), encoded);
+    assert_eq!(decoded.to_section_bytes().unwrap(), encoded);
 }
 
 fn large_manifest(scope_lengths: &[usize]) -> NeedsManifest {
@@ -80,17 +77,17 @@ fn large_manifest(scope_lengths: &[usize]) -> NeedsManifest {
 
 #[test]
 fn enforces_needs_section_payload_ceiling_on_encode_and_decode() {
-    let canonical = encode_needs_manifest(&NeedsManifest::empty()).unwrap();
+    let canonical = NeedsManifest::empty().to_section_bytes().unwrap();
     let mut exact_decode = canonical.clone();
     exact_decode.resize(MAX_SECTION_PAYLOAD_BYTES, b' ');
     assert_eq!(
-        decode_needs_manifest(&exact_decode).unwrap(),
+        NeedsManifest::from_section_bytes(&exact_decode).unwrap(),
         NeedsManifest::empty()
     );
     exact_decode.push(b' ');
     assert!(matches!(
-        decode_needs_manifest(&exact_decode).unwrap_err(),
-        NeedsManifestDecodeError::PayloadTooLarge {
+        NeedsManifest::from_section_bytes(&exact_decode).unwrap_err(),
+        DecodeError::PayloadTooLarge {
             actual_bytes,
             max_bytes: MAX_SECTION_PAYLOAD_BYTES,
         } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1
@@ -98,7 +95,7 @@ fn enforces_needs_section_payload_ceiling_on_encode_and_decode() {
 
     let scope_count = 4 * MAX_SCOPES_PER_ENTRY;
     let mut lengths = vec![2000; scope_count];
-    let baseline = encode_needs_manifest(&large_manifest(&lengths)).unwrap();
+    let baseline = large_manifest(&lengths).to_section_bytes().unwrap();
     let mut remaining = MAX_SECTION_PAYLOAD_BYTES - baseline.len();
     for length in &mut lengths {
         let increase = remaining.min(MAX_SCOPE_VALUE_BYTES - *length);
@@ -106,7 +103,7 @@ fn enforces_needs_section_payload_ceiling_on_encode_and_decode() {
         remaining -= increase;
     }
     assert_eq!(remaining, 0);
-    let exact_encode = encode_needs_manifest(&large_manifest(&lengths)).unwrap();
+    let exact_encode = large_manifest(&lengths).to_section_bytes().unwrap();
     assert_eq!(exact_encode.len(), MAX_SECTION_PAYLOAD_BYTES);
 
     let adjustable = lengths
@@ -115,8 +112,8 @@ fn enforces_needs_section_payload_ceiling_on_encode_and_decode() {
         .unwrap();
     *adjustable += 1;
     assert!(matches!(
-        encode_needs_manifest(&large_manifest(&lengths)).unwrap_err(),
-        NeedsManifestEncodeError::PayloadTooLarge {
+        large_manifest(&lengths).to_section_bytes().unwrap_err(),
+        EncodeError::PayloadTooLarge {
             actual_bytes,
             max_bytes: MAX_SECTION_PAYLOAD_BYTES,
         } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1

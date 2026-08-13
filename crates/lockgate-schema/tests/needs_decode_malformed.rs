@@ -1,15 +1,16 @@
-use lockgate_schema::sections::needs::{NeedsManifestDecodeError, decode_needs_manifest};
+use lockgate_schema::NeedsManifest;
+use lockgate_schema::sections::needs::DecodeError;
 
 #[test]
 fn malformed_payloads_return_errors_without_panicking() {
     let payloads: &[&[u8]] = &[br#"{"format":1,"optional":{}"#, b"not JSON", &[0xff, 0xfe]];
 
     for payload in payloads {
-        let result = std::panic::catch_unwind(|| decode_needs_manifest(payload));
+        let result = std::panic::catch_unwind(|| NeedsManifest::from_section_bytes(payload));
 
         assert!(result.is_ok(), "decoder panicked for {payload:?}");
         let error = result.unwrap().unwrap_err();
-        assert!(matches!(error, NeedsManifestDecodeError::InvalidJson(_)));
+        assert!(matches!(error, DecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("not valid schema JSON"));
     }
 }
@@ -27,9 +28,9 @@ fn rejects_wrong_typed_manifest_fields() {
     ];
 
     for payload in payloads {
-        let error = decode_needs_manifest(payload).unwrap_err();
+        let error = NeedsManifest::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, NeedsManifestDecodeError::InvalidJson(_)));
+        assert!(matches!(error, DecodeError::InvalidJson(_)));
     }
 }
 
@@ -43,9 +44,9 @@ fn rejects_missing_top_level_fields() {
     ];
 
     for payload in payloads {
-        let error = decode_needs_manifest(payload).unwrap_err();
+        let error = NeedsManifest::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, NeedsManifestDecodeError::InvalidJson(_)));
+        assert!(matches!(error, DecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("missing field"));
     }
 }
@@ -58,8 +59,8 @@ fn rejects_unknown_and_duplicate_top_level_fields() {
     ];
 
     for payload in payloads {
-        let error = decode_needs_manifest(payload).unwrap_err();
+        let error = NeedsManifest::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, NeedsManifestDecodeError::InvalidJson(_)));
+        assert!(matches!(error, DecodeError::InvalidJson(_)));
     }
 }

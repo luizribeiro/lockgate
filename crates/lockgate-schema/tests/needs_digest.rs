@@ -1,18 +1,17 @@
-use lockgate_schema::NeedsDigest;
-use lockgate_schema::sections::needs::{decode_needs_manifest, encode_needs_manifest};
+use lockgate_schema::{NeedsDigest, NeedsManifest};
 
 const GOLDEN: &[u8] = br#"{"format":1,"optional":{"http.request":["setting:/endpoint"]},"reasons":{"http.request":"deliver notifications"},"required":{"fs.read":["$workspace/generated/html","current"],"notify.send":true}}"#;
 
 fn digest(bytes: &[u8]) -> NeedsDigest {
-    NeedsDigest::compute(&decode_needs_manifest(bytes).unwrap()).unwrap()
+    NeedsDigest::compute(&NeedsManifest::from_section_bytes(bytes).unwrap()).unwrap()
 }
 
 #[test]
 fn representative_manifest_has_stable_bytes_and_digest() {
-    let manifest = decode_needs_manifest(GOLDEN).unwrap();
+    let manifest = NeedsManifest::from_section_bytes(GOLDEN).unwrap();
     let digest = NeedsDigest::compute(&manifest).unwrap();
 
-    assert_eq!(encode_needs_manifest(&manifest).unwrap(), GOLDEN);
+    assert_eq!(manifest.to_section_bytes().unwrap(), GOLDEN);
     assert_eq!(
         digest.to_hex(),
         "d5d165650de64ce4839f097b60d2a681d2e51d828bf72e0db6c02883454ef794"
