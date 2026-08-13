@@ -48,6 +48,14 @@ impl NeedEntry {
         })
     }
 
+    /// Attaches one line of plugin-authored consent prose.
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Result<Self, NeedEntryError> {
+        let reason = reason.into();
+        validate_reason(&reason).map_err(NeedEntryError::InvalidReason)?;
+        self.reason = Some(reason);
+        Ok(self)
+    }
+
     /// Returns the permission atom.
     pub fn atom(&self) -> &AtomKey {
         &self.atom
@@ -57,6 +65,11 @@ impl NeedEntry {
     pub fn kind(&self) -> &NeedKind {
         &self.kind
     }
+
+    /// Returns the optional plugin-authored reason.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
 }
 
 /// A malformed need entry.
@@ -65,6 +78,7 @@ impl NeedEntry {
 pub enum NeedEntryError {
     EmptyScopes,
     InvalidScope { index: usize, source: ScopeRefError },
+    InvalidReason(NeedReasonError),
 }
 
 impl fmt::Display for NeedEntryError {
@@ -74,6 +88,7 @@ impl fmt::Display for NeedEntryError {
             Self::InvalidScope { index, source } => {
                 write!(formatter, "scope reference {index} is invalid: {source}")
             }
+            Self::InvalidReason(source) => write!(formatter, "reason is invalid: {source}"),
         }
     }
 }
@@ -83,8 +98,53 @@ impl Error for NeedEntryError {
         match self {
             Self::EmptyScopes => None,
             Self::InvalidScope { source, .. } => Some(source),
+            Self::InvalidReason(source) => Some(source),
         }
     }
+}
+
+/// A malformed need reason.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NeedReasonError {
+    Empty,
+    MultipleLines,
+    ControlCharacter { byte_index: usize },
+    TooLong { max_bytes: usize },
+}
+
+impl fmt::Display for NeedReasonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("reason must not be empty"),
+            Self::MultipleLines => formatter.write_str("reason must contain exactly one line"),
+            Self::ControlCharacter { byte_index } => write!(
+                formatter,
+                "reason contains a control character at byte {byte_index}"
+            ),
+            Self::TooLong { max_bytes } => {
+                write!(formatter, "reason exceeds {max_bytes} UTF-8 bytes")
+            }
+        }
+    }
+}
+
+impl Error for NeedReasonError {}
+
+pub(crate) fn validate_reason(reason: &str) -> Result<(), NeedReasonError> {
+    if reason.trim().is_empty() {
+        return Err(NeedReasonError::Empty);
+    }
+    if reason.contains(['\n', '\r']) {
+        return Err(NeedReasonError::MultipleLines);
+    }
+    if let Some((byte_index, _)) = reason.char_indices().find(|(_, value)| value.is_control()) {
+        return Err(NeedReasonError::ControlCharacter { byte_index });
+    }
+    if reason.len() > 512 {
+        return Err(NeedReasonError::TooLong { max_bytes: 512 });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -139,5 +199,33 @@ mod tests {
             error,
             NeedEntryError::InvalidScope { index: 0, .. }
         ));
+    }
+
+    #[test]
+    fn reasons_are_single_non_empty_lines_without_controls() {
+        for (reason, expected) in [
+            (" ", NeedReasonError::Empty),
+            ("first\nsecond", NeedReasonError::MultipleLines),
+            (
+                "before\u{7}after",
+                NeedReasonError::ControlCharacter { byte_index: 6 },
+            ),
+        ] {
+            assert_eq!(
+                NeedEntry::flag(atom()).with_reason(reason).unwrap_err(),
+                NeedEntryError::InvalidReason(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn reason_limit_counts_utf8_bytes() {
+        assert!(NeedEntry::flag(atom()).with_reason("é".repeat(256)).is_ok());
+        assert_eq!(
+            NeedEntry::flag(atom())
+                .with_reason("é".repeat(257))
+                .unwrap_err(),
+            NeedEntryError::InvalidReason(NeedReasonError::TooLong { max_bytes: 512 })
+        );
     }
 }
