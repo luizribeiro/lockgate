@@ -1,7 +1,7 @@
 use lockgate_schema::{
-    MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY, NeedEntryError, NeedsManifestDecodeError,
-    NeedsManifestValidationError, ScopeCharacterKind, ScopeRefError, ScopeValueKind,
-    decode_needs_manifest,
+    MAX_ATOMS_PER_MANIFEST, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY, NeedEntryError,
+    NeedsManifestDecodeError, NeedsManifestValidationError, ScopeCharacterKind, ScopeRefError,
+    ScopeValueKind, decode_needs_manifest,
 };
 
 fn decode(required: &str, optional: &str) -> Result<(), NeedsManifestDecodeError> {
@@ -271,6 +271,34 @@ fn bounds_scopes_before_deduplication() {
             )),
         }
     }
+}
+
+#[test]
+fn bounds_combined_atoms_before_deduplication() {
+    let entries = |prefix: &str, count: usize| {
+        (0..count)
+            .map(|index| format!(r#""{prefix}{index}.op":true"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let half = MAX_ATOMS_PER_MANIFEST / 2;
+    decode(
+        &format!("{{{}}}", entries("required", half)),
+        &format!("{{{}}}", entries("optional", half)),
+    )
+    .unwrap();
+
+    let duplicate_entries = vec![r#""same.op":true"#; MAX_ATOMS_PER_MANIFEST + 1].join(",");
+    let error = decode(&format!("{{{duplicate_entries}}}"), "{}").unwrap_err();
+    assert!(matches!(
+        error,
+        NeedsManifestDecodeError::InvalidManifest(
+            NeedsManifestValidationError::TooManyAtoms {
+                found,
+                max: MAX_ATOMS_PER_MANIFEST,
+            }
+        ) if found == MAX_ATOMS_PER_MANIFEST + 1
+    ));
 }
 
 #[test]

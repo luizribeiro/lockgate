@@ -4,6 +4,9 @@ use super::{AtomKey, NeedEntry, NeedEntryError};
 
 pub(crate) const NEEDS_FORMAT: u32 = 1;
 
+/// Maximum atoms across required and optional lists before deduplication.
+pub const MAX_ATOMS_PER_MANIFEST: usize = 256;
+
 /// A plugin's symbolic required and optional permission needs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NeedsManifest {
@@ -55,6 +58,13 @@ impl NeedsManifest {
     pub(crate) fn validate(&self) -> Result<(), NeedsManifestValidationError> {
         if self.format != NEEDS_FORMAT {
             return Err(NeedsManifestValidationError::UnsupportedFormat { found: self.format });
+        }
+        let atom_count = self.required.len().saturating_add(self.optional.len());
+        if atom_count > MAX_ATOMS_PER_MANIFEST {
+            return Err(NeedsManifestValidationError::TooManyAtoms {
+                found: atom_count,
+                max: MAX_ATOMS_PER_MANIFEST,
+            });
         }
         let mut atoms = HashMap::new();
         for (requirement, entries) in [
@@ -125,6 +135,10 @@ pub enum NeedsManifestValidationError {
     UnsupportedFormat {
         found: u32,
     },
+    TooManyAtoms {
+        found: usize,
+        max: usize,
+    },
     InvalidEntry {
         location: EntryLocation,
         atom: AtomKey,
@@ -142,6 +156,12 @@ impl fmt::Display for NeedsManifestValidationError {
         match self {
             Self::UnsupportedFormat { found } => {
                 write!(formatter, "unsupported needs manifest format {found}")
+            }
+            Self::TooManyAtoms { found, max } => {
+                write!(
+                    formatter,
+                    "needs manifest contains {found} atoms; maximum is {max}"
+                )
             }
             Self::InvalidEntry {
                 location,
