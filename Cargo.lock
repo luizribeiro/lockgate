@@ -662,7 +662,11 @@ name = "lockgate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "lockgate-schema",
+ "serde_json",
  "tokio",
+ "wasm-encoder 0.254.0",
+ "wasmparser 0.254.0",
  "wasmtime",
  "wat",
  "wit-component",

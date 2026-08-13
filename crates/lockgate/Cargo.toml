@@ -5,11 +5,15 @@ edition.workspace = true
 
 [dependencies]
 anyhow = "1"
+lockgate-schema = { path = "../lockgate-schema" }
+serde_json.workspace = true
 tokio.workspace = true
+wasmparser.workspace = true
 wasmtime.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+wasm-encoder.workspace = true
 wit-component = { workspace = true, features = ["dummy-module"] }
 wat.workspace = true

@@ -23,6 +23,8 @@ serde_json = "1.0.151"
 sha2 = "0.10.9"
 tokio = "1.51.1"
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", features = ["component-model", "component-model-async"] }
+wasm-encoder = "0.254.0"
+wasmparser = "0.254.0"
 wit-bindgen = "0.57"
 wit-component = "0.254.0"
 wit-parser = "0.254.0"
