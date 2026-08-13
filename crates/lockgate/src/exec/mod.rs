@@ -41,6 +41,19 @@ impl ExecEngine {
         })
     }
 
+    /// Compiles a component and prepares its host imports for later invocations.
+    ///
+    /// `S` is the application's per-invocation data type: embedders will attach
+    /// a value of this type to each call for host-import implementations to
+    /// read. No `S` value exists yet because invocation data is not carried at
+    /// this stage. Keeping the type parameter here ensures that `Store`,
+    /// `Linker`, and `InstancePre` agree on the data type without retrofitting
+    /// every signature when that value is introduced.
+    ///
+    /// `imports` is called exactly once to register host-import implementations
+    /// in the `Linker` before the component is baked into an `InstancePre`.
+    /// Tests are currently its only authors, and registration failures surface
+    /// as [`LoadError::Link`].
     pub(crate) fn load<S: Send + 'static>(
         &self,
         bytes: &[u8],
@@ -133,6 +146,11 @@ pub(crate) struct ExecLimits {
     pub(crate) max_memory_bytes: usize,
 }
 
+/// Data owned by every `Store` this module creates.
+///
+/// Production stores currently carry only the memory limiter and the
+/// type-level link to `S`. This context will grow as the host side gains
+/// per-invocation data and other services for import implementations.
 pub(crate) struct StoreCtx<S> {
     limiter: MemoryLimiter,
     marker: PhantomData<fn() -> S>,
