@@ -80,6 +80,8 @@ fn build_fixture(directory: &str, artifact: &str) -> Vec<u8> {
     );
 
     let component = fixture_dir
+        .parent()
+        .expect("fixture crate must belong to the fixture workspace")
         .join("target/wasm32-wasip2/release")
         .join(artifact);
     std::fs::read(&component).unwrap_or_else(|error| {

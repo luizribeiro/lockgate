@@ -7,8 +7,6 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-dlmalloc = { version = "0.2", features = ["global"] }
-futures = { version = "0.3", default-features = false, features = ["async-await"] }
-wit-bindgen = { version = "0.57", default-features = false, features = ["async", "macros"] }
-
-[workspace]
+dlmalloc.workspace = true
+futures = { workspace = true, features = ["async-await"] }
+wit-bindgen = { workspace = true, features = ["async", "macros"] }
