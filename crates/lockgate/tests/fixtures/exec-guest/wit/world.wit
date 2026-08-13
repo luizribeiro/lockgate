@@ -7,6 +7,8 @@ interface host {
 interface guest {
   value: func() -> u32;
   suspend: async func() -> u32;
+  trap: func();
+  import-then-trap: async func();
 }
 
 world fixture {

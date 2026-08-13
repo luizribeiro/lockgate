@@ -21,6 +21,15 @@ impl exports::test::exec::guest::Guest for Fixture {
         test::exec::host::wait().await;
         7
     }
+
+    fn trap() {
+        core::arch::wasm32::unreachable()
+    }
+
+    async fn import_then_trap() {
+        test::exec::host::wait().await;
+        core::arch::wasm32::unreachable()
+    }
 }
 
 export!(Fixture);

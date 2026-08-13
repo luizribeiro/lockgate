@@ -1,0 +1,167 @@
+use std::error::Error;
+use std::fmt;
+
+use anyhow::Error as AnyError;
+use wasmtime::{Error as WasmtimeError, Trap};
+
+#[derive(Debug)]
+pub(crate) enum LoadError {
+    Compile(AnyError),
+    Link(AnyError),
+}
+
+impl LoadError {
+    pub(super) fn compile(error: WasmtimeError) -> Self {
+        Self::Compile(error.into())
+    }
+
+    pub(super) fn link(error: WasmtimeError) -> Self {
+        Self::Link(error.into())
+    }
+}
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Compile(error) => write!(f, "component compilation failed: {error}"),
+            Self::Link(error) => write!(f, "component linking failed: {error}"),
+        }
+    }
+}
+
+impl Error for LoadError {}
+
+#[derive(Debug)]
+pub(crate) enum ExecError {
+    Instantiate(AnyError),
+    Trap(TrapDetail),
+    OutOfBudget,
+    HostImport(AnyError),
+    Dispatch(AnyError),
+}
+
+impl fmt::Display for ExecError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Instantiate(error) => write!(f, "component instantiation failed: {error}"),
+            Self::Trap(detail) => write!(f, "component trapped: {detail}"),
+            Self::OutOfBudget => f.write_str("component exhausted its invocation fuel"),
+            Self::HostImport(error) => write!(f, "host import failed: {error}"),
+            Self::Dispatch(error) => write!(f, "component dispatch failed: {error}"),
+        }
+    }
+}
+
+impl Error for ExecError {}
+
+#[derive(Debug)]
+pub(crate) enum TrapDetail {
+    Wasm {
+        trap: Trap,
+        #[allow(dead_code, reason = "retained as the causal error for diagnostics")]
+        error: AnyError,
+    },
+    MemoryLimit {
+        current: usize,
+        desired: usize,
+        limit: usize,
+    },
+}
+
+impl fmt::Display for TrapDetail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Wasm { trap, .. } => write!(f, "{trap}"),
+            Self::MemoryLimit {
+                current,
+                desired,
+                limit,
+            } => write!(
+                f,
+                "linear memory growth from {current} to {desired} bytes exceeds the {limit}-byte limit"
+            ),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct HostImportMarker(AnyError);
+
+impl fmt::Display for HostImportMarker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Error for HostImportMarker {}
+
+#[allow(
+    dead_code,
+    reason = "used by generated host-import adapters and integration tests"
+)]
+pub(crate) fn host_import_error(error: AnyError) -> WasmtimeError {
+    WasmtimeError::new(HostImportMarker(error))
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct MemoryLimitExceeded {
+    pub(super) current: usize,
+    pub(super) desired: usize,
+    pub(super) limit: usize,
+}
+
+impl fmt::Display for MemoryLimitExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "linear memory growth from {} to {} bytes exceeds the {}-byte limit",
+            self.current, self.desired, self.limit
+        )
+    }
+}
+
+impl Error for MemoryLimitExceeded {}
+
+pub(super) fn map_instantiate_error(error: WasmtimeError) -> ExecError {
+    if error.is::<MemoryLimitExceeded>() {
+        return ExecError::Trap(memory_limit_detail(error));
+    }
+    ExecError::Instantiate(error.into())
+}
+
+pub(super) fn map_dispatch_error(error: WasmtimeError) -> ExecError {
+    ExecError::Dispatch(error.into())
+}
+
+pub(super) fn map_call_error(error: WasmtimeError) -> ExecError {
+    if error.is::<HostImportMarker>() {
+        let marker = error
+            .downcast::<HostImportMarker>()
+            .expect("host-import marker type was checked before downcast");
+        return ExecError::HostImport(marker.0);
+    }
+    if error.is::<MemoryLimitExceeded>() {
+        return ExecError::Trap(memory_limit_detail(error));
+    }
+    if let Some(trap) = error.downcast_ref::<Trap>().copied() {
+        if trap == Trap::OutOfFuel {
+            return ExecError::OutOfBudget;
+        }
+        return ExecError::Trap(TrapDetail::Wasm {
+            trap,
+            error: error.into(),
+        });
+    }
+    ExecError::Dispatch(error.into())
+}
+
+fn memory_limit_detail(error: WasmtimeError) -> TrapDetail {
+    let exceeded = error
+        .downcast::<MemoryLimitExceeded>()
+        .expect("memory-limit marker type was checked before downcast");
+    TrapDetail::MemoryLimit {
+        current: exceeded.current,
+        desired: exceeded.desired,
+        limit: exceeded.limit,
+    }
+}

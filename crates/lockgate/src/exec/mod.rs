@@ -6,19 +6,28 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use wasmtime::Result;
 use wasmtime::component::{
     Component, ComponentExportIndex, InstancePre, Linker, Val, types::ComponentItem,
 };
-use wasmtime::error::Context as _;
 use wasmtime::{Config, Engine, ResourceLimiter, Store};
+use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
+
+mod errors;
+
+pub(crate) use errors::{ExecError, LoadError};
+use errors::{MemoryLimitExceeded, map_call_error, map_dispatch_error, map_instantiate_error};
+#[allow(
+    unused_imports,
+    reason = "later host adapters consume the marker helper and trap detail"
+)]
+pub(crate) use errors::{TrapDetail, host_import_error};
 
 pub(crate) struct ExecEngine {
     engine: Engine,
 }
 
 impl ExecEngine {
-    pub(crate) fn new() -> Result<Self> {
+    pub(crate) fn new() -> WasmtimeResult<Self> {
         let mut config = Config::new();
         config
             .wasm_component_model(true)
@@ -35,15 +44,14 @@ impl ExecEngine {
     pub(crate) fn load<S: Send + 'static>(
         &self,
         bytes: &[u8],
-        imports: impl FnOnce(&mut Linker<StoreCtx<S>>) -> Result<()>,
-    ) -> Result<LoadedComponent<S>> {
-        let component = Component::new(&self.engine, bytes)
-            .context("failed to compile trusted component bytes")?;
+        imports: impl FnOnce(&mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>,
+    ) -> Result<LoadedComponent<S>, LoadError> {
+        let component = Component::new(&self.engine, bytes).map_err(LoadError::compile)?;
         let mut linker = Linker::new(&self.engine);
-        imports(&mut linker).context("failed to configure component imports")?;
+        imports(&mut linker).map_err(LoadError::link)?;
         let instance_pre = linker
             .instantiate_pre(&component)
-            .context("failed to prelink component imports")?;
+            .map_err(LoadError::link)?;
 
         Ok(LoadedComponent { instance_pre })
     }
@@ -74,7 +82,7 @@ impl<S: Send + 'static> LoadedComponent<S> {
         args: &[Val],
         limits: ExecLimits,
         invocation_fuel: u64,
-    ) -> Result<Vec<Val>> {
+    ) -> Result<Vec<Val>, ExecError> {
         let mut store = Store::new(
             self.instance_pre.engine(),
             StoreCtx::new(limits.max_memory_bytes),
@@ -83,28 +91,31 @@ impl<S: Send + 'static> LoadedComponent<S> {
         store.set_epoch_deadline(u64::MAX);
         store
             .set_fuel(limits.instantiation_fuel)
-            .context("failed to set instantiation fuel")?;
+            .map_err(map_instantiate_error)?;
 
         let instance = self
             .instance_pre
             .instantiate_async(&mut store)
             .await
-            .context("failed to instantiate component")?;
+            .map_err(map_instantiate_error)?;
 
         store
             .set_fuel(invocation_fuel)
-            .context("failed to set invocation fuel")?;
-        let func = instance
-            .get_func(&mut store, &export.func)
-            .context("resolved component export was not a function")?;
+            .map_err(map_dispatch_error)?;
+        let Some(func) = instance.get_func(&mut store, &export.func) else {
+            return Err(ExecError::Dispatch(anyhow::anyhow!(
+                "resolved component export was not a function"
+            )));
+        };
         let mut results = vec![Val::Bool(false); export.result_count];
 
-        store
+        let call_result = store
             .run_concurrent(async |accessor| {
                 func.call_concurrent(accessor, args, &mut results).await
             })
             .await
-            .context("concurrent dispatch failed")??;
+            .map_err(map_call_error)?;
+        call_result.map_err(map_call_error)?;
 
         Ok(results)
     }
@@ -152,11 +163,18 @@ struct MemoryLimiter {
 impl ResourceLimiter for MemoryLimiter {
     fn memory_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> wasmtime::Result<bool> {
-        Ok(desired <= self.max_memory_bytes)
+    ) -> WasmtimeResult<bool> {
+        if desired > self.max_memory_bytes {
+            return Err(WasmtimeError::new(MemoryLimitExceeded {
+                current,
+                desired,
+                limit: self.max_memory_bytes,
+            }));
+        }
+        Ok(true)
     }
 
     fn table_growing(
@@ -164,7 +182,7 @@ impl ResourceLimiter for MemoryLimiter {
         _current: usize,
         _desired: usize,
         _maximum: Option<usize>,
-    ) -> wasmtime::Result<bool> {
+    ) -> WasmtimeResult<bool> {
         Ok(true)
     }
 }
