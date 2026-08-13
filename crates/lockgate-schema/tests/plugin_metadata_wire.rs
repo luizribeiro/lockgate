@@ -2,8 +2,9 @@
 mod donor_vectors;
 
 use lockgate_schema::{
-    PLUGIN_METADATA_SECTION, PluginMetadata, PluginMetadataDecodeError,
-    PluginMetadataValidationError, decode_plugin_metadata, encode_plugin_metadata,
+    MAX_SECTION_PAYLOAD_BYTES, PLUGIN_METADATA_SECTION, PluginMetadata, PluginMetadataDecodeError,
+    PluginMetadataEncodeError, PluginMetadataValidationError, decode_plugin_metadata,
+    encode_plugin_metadata,
 };
 
 #[test]
@@ -175,4 +176,40 @@ fn encoding_revalidates_builder_fields() {
             .to_string()
             .contains("plugin description must not be empty when present")
     );
+}
+
+#[test]
+fn enforces_plugin_section_payload_ceiling_on_encode_and_decode() {
+    let seed = PluginMetadata::new("plugin", "Plugin", "1.0.0")
+        .unwrap()
+        .with_description("x");
+    let seed_size = encode_plugin_metadata(&seed).unwrap().len();
+    let exact_description_size = 1 + MAX_SECTION_PAYLOAD_BYTES - seed_size;
+    let exact = PluginMetadata::new("plugin", "Plugin", "1.0.0")
+        .unwrap()
+        .with_description("x".repeat(exact_description_size));
+    let exact_payload = encode_plugin_metadata(&exact).unwrap();
+
+    assert_eq!(exact_payload.len(), MAX_SECTION_PAYLOAD_BYTES);
+    assert_eq!(decode_plugin_metadata(&exact_payload).unwrap(), exact);
+
+    let over = PluginMetadata::new("plugin", "Plugin", "1.0.0")
+        .unwrap()
+        .with_description("x".repeat(exact_description_size + 1));
+    assert!(matches!(
+        encode_plugin_metadata(&over).unwrap_err(),
+        PluginMetadataEncodeError::PayloadTooLarge {
+            actual_bytes,
+            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
+        } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1
+    ));
+
+    let oversized_garbage = vec![0; MAX_SECTION_PAYLOAD_BYTES + 1];
+    assert!(matches!(
+        decode_plugin_metadata(&oversized_garbage).unwrap_err(),
+        PluginMetadataDecodeError::PayloadTooLarge {
+            actual_bytes,
+            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
+        } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1
+    ));
 }

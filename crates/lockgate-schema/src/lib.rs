@@ -20,6 +20,9 @@ pub const PLUGIN_METADATA_SECTION: &str = "lockgate:plugin";
 /// Name of the WebAssembly custom section containing symbolic permission needs.
 pub const PLUGIN_NEEDS_SECTION: &str = "lockgate:needs";
 
+/// Maximum JSON payload size for either Lockgate custom section.
+pub const MAX_SECTION_PAYLOAD_BYTES: usize = 1_048_576;
+
 const PLUGIN_METADATA_FORMAT: u32 = 1;
 
 /// Language-neutral identity and display metadata embedded in a plugin artifact.
@@ -206,6 +209,11 @@ pub enum PluginMetadataEncodeError {
     InvalidMetadata(PluginMetadataValidationError),
     /// The validated metadata could not be serialized as JSON.
     Serialization(serde_json::Error),
+    /// The encoded custom-section payload exceeds the wire ceiling.
+    PayloadTooLarge {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
 }
 
 impl fmt::Display for PluginMetadataEncodeError {
@@ -220,6 +228,13 @@ impl fmt::Display for PluginMetadataEncodeError {
                     "plugin metadata could not be encoded as JSON: {error}"
                 )
             }
+            Self::PayloadTooLarge {
+                actual_bytes,
+                max_bytes,
+            } => write!(
+                formatter,
+                "plugin metadata payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
+            ),
         }
     }
 }
@@ -229,6 +244,7 @@ impl Error for PluginMetadataEncodeError {
         match self {
             Self::InvalidMetadata(error) => Some(error),
             Self::Serialization(error) => Some(error),
+            Self::PayloadTooLarge { .. } => None,
         }
     }
 }
@@ -237,6 +253,11 @@ impl Error for PluginMetadataEncodeError {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PluginMetadataDecodeError {
+    /// The custom-section payload exceeds the wire ceiling.
+    PayloadTooLarge {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
     /// The section payload is not valid JSON for the metadata wire schema.
     InvalidJson(serde_json::Error),
     /// The decoded fields do not satisfy the wire schema's semantic rules.
@@ -246,6 +267,13 @@ pub enum PluginMetadataDecodeError {
 impl fmt::Display for PluginMetadataDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::PayloadTooLarge {
+                actual_bytes,
+                max_bytes,
+            } => write!(
+                formatter,
+                "plugin metadata payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
+            ),
             Self::InvalidJson(error) => {
                 write!(
                     formatter,
@@ -262,6 +290,7 @@ impl fmt::Display for PluginMetadataDecodeError {
 impl Error for PluginMetadataDecodeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::PayloadTooLarge { .. } => None,
             Self::InvalidJson(error) => Some(error),
             Self::InvalidMetadata(error) => Some(error),
         }
@@ -302,11 +331,24 @@ pub fn encode_plugin_metadata(
     metadata
         .validate()
         .map_err(PluginMetadataEncodeError::InvalidMetadata)?;
-    serde_json::to_vec(metadata).map_err(PluginMetadataEncodeError::Serialization)
+    let payload = serde_json::to_vec(metadata).map_err(PluginMetadataEncodeError::Serialization)?;
+    if payload.len() > MAX_SECTION_PAYLOAD_BYTES {
+        return Err(PluginMetadataEncodeError::PayloadTooLarge {
+            actual_bytes: payload.len(),
+            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
+        });
+    }
+    Ok(payload)
 }
 
 /// Decodes and validates the JSON payload of `lockgate:plugin`.
 pub fn decode_plugin_metadata(bytes: &[u8]) -> Result<PluginMetadata, PluginMetadataDecodeError> {
+    if bytes.len() > MAX_SECTION_PAYLOAD_BYTES {
+        return Err(PluginMetadataDecodeError::PayloadTooLarge {
+            actual_bytes: bytes.len(),
+            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
+        });
+    }
     let metadata: PluginMetadata =
         serde_json::from_slice(bytes).map_err(PluginMetadataDecodeError::InvalidJson)?;
     metadata

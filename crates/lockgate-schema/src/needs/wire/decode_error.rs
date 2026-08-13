@@ -9,6 +9,10 @@ use crate::{
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum NeedsManifestDecodeError {
+    PayloadTooLarge {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
     InvalidJson(serde_json::Error),
     InvalidAtom {
         location: EntryLocation,
@@ -52,6 +56,13 @@ pub enum NeedsManifestDecodeError {
 impl fmt::Display for NeedsManifestDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::PayloadTooLarge {
+                actual_bytes,
+                max_bytes,
+            } => write!(
+                formatter,
+                "needs manifest payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
+            ),
             Self::InvalidJson(error) => {
                 write!(
                     formatter,
@@ -123,6 +134,7 @@ impl fmt::Display for NeedsManifestDecodeError {
 impl Error for NeedsManifestDecodeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::PayloadTooLarge { .. } => None,
             Self::InvalidJson(error) => Some(error),
             Self::InvalidAtom { source, .. } | Self::InvalidReasonAtom { source, .. } => {
                 Some(source)

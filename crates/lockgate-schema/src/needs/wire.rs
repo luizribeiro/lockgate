@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use serde::Serialize;
 
+use crate::MAX_SECTION_PAYLOAD_BYTES;
+
 use super::{NeedKind, NeedsManifest, NeedsManifestValidationError};
 
 mod decode_error;
@@ -37,13 +39,20 @@ pub fn encode_needs_manifest(
             }
         }
     }
-    serde_json::to_vec(&WireManifest {
+    let payload = serde_json::to_vec(&WireManifest {
         format: manifest.format,
         optional,
         reasons,
         required,
     })
-    .map_err(NeedsManifestEncodeError::Serialization)
+    .map_err(NeedsManifestEncodeError::Serialization)?;
+    if payload.len() > MAX_SECTION_PAYLOAD_BYTES {
+        return Err(NeedsManifestEncodeError::PayloadTooLarge {
+            actual_bytes: payload.len(),
+            max_bytes: MAX_SECTION_PAYLOAD_BYTES,
+        });
+    }
+    Ok(payload)
 }
 
 #[derive(Serialize)]
@@ -68,6 +77,10 @@ enum WireNeed {
 pub enum NeedsManifestEncodeError {
     InvalidManifest(NeedsManifestValidationError),
     Serialization(serde_json::Error),
+    PayloadTooLarge {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
 }
 
 impl fmt::Display for NeedsManifestEncodeError {
@@ -82,6 +95,13 @@ impl fmt::Display for NeedsManifestEncodeError {
                     "needs manifest could not be encoded as JSON: {error}"
                 )
             }
+            Self::PayloadTooLarge {
+                actual_bytes,
+                max_bytes,
+            } => write!(
+                formatter,
+                "needs manifest payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
+            ),
         }
     }
 }
@@ -91,6 +111,7 @@ impl Error for NeedsManifestEncodeError {
         match self {
             Self::InvalidManifest(error) => Some(error),
             Self::Serialization(error) => Some(error),
+            Self::PayloadTooLarge { .. } => None,
         }
     }
 }
