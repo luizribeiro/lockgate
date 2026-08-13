@@ -128,9 +128,8 @@ fn forbidden_type(resolve: &Resolve, ty: Type) -> Option<String> {
         TypeDefKind::Map(key, value) => [*key, *value]
             .into_iter()
             .find_map(|ty| forbidden_type(resolve, ty)),
-        TypeDefKind::Future(ty) | TypeDefKind::Stream(ty) => {
-            ty.iter().find_map(|ty| forbidden_type(resolve, *ty))
-        }
+        TypeDefKind::Future(_) => Some("future".to_string()),
+        TypeDefKind::Stream(_) => Some("stream".to_string()),
         TypeDefKind::Flags(_) | TypeDefKind::Enum(_) | TypeDefKind::Unknown => None,
     }
 }

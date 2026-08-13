@@ -118,3 +118,27 @@ fn rejects_nested_borrowed_handles_with_guidance() {
         "unsupported export `test:borrowed-handle/api#run`: offending type `borrow<file>` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
     );
 }
+
+#[test]
+fn rejects_nested_futures_with_guidance() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/future.wit"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `test:future-export/api#run`: offending type `future` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
+
+#[test]
+fn rejects_nested_streams_with_guidance() {
+    let bytes = component(include_str!(
+        "../../tests/data/export_validation/stream.wit"
+    ));
+
+    assert_eq!(
+        validate_value_only_exports(&bytes).unwrap_err().to_string(),
+        "unsupported export `test:stream-export/api#run`: offending type `stream` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+    );
+}
