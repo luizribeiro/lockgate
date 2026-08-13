@@ -1,3 +1,10 @@
+#![no_std]
+
+use core::panic::PanicInfo;
+
+#[global_allocator]
+static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
+
 wit_bindgen::generate!({
     path: "wit",
     world: "fixture",
@@ -17,3 +24,8 @@ impl exports::test::exec::guest::Guest for Fixture {
 }
 
 export!(Fixture);
+
+#[panic_handler]
+fn panic(_info: &PanicInfo<'_>) -> ! {
+    core::arch::wasm32::unreachable()
+}
