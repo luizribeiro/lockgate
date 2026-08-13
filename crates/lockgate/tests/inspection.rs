@@ -94,3 +94,31 @@ fn inspection_reports_missing_sections_without_an_engine() {
             .contains("missing required `lockgate:plugin`")
     );
 }
+
+#[test]
+fn inspection_distinguishes_duplicate_metadata_from_missing_needs() {
+    let base = component(
+        "package test:section-errors; interface guest { value: func() -> u32; } world fixture { export guest; }",
+    );
+    let metadata = PluginMetadata::new(PLUGIN_ID, "Inspection fixture", "1.0").unwrap();
+    let metadata_bytes = metadata.to_section_bytes().unwrap();
+    let metadata_only = with_custom_section(&base, PLUGIN_METADATA_SECTION, &metadata_bytes);
+
+    let error = inspect(&metadata_only).unwrap_err();
+    assert!(matches!(error, InspectError::MissingNeeds));
+    assert!(
+        error
+            .to_string()
+            .contains("missing required `lockgate:needs`")
+    );
+
+    let duplicate = with_custom_section(&metadata_only, PLUGIN_METADATA_SECTION, &metadata_bytes);
+    let error = inspect(&duplicate).unwrap_err();
+    assert!(matches!(
+        error,
+        InspectError::DuplicateSection {
+            name: PLUGIN_METADATA_SECTION
+        }
+    ));
+    assert!(error.to_string().contains("duplicate `lockgate:plugin`"));
+}

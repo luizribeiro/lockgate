@@ -26,17 +26,28 @@
 use std::{error::Error, fmt};
 
 use wit_parser::{
-    Handle, InterfaceId, Resolve, Type, TypeDefKind, TypeId, WorldId, WorldItem, WorldKey,
+    Handle, InterfaceId, Resolve, Type, TypeDefKind, TypeId, WorldId, WorldItem,
     decoding::{DecodedWasm, decode},
 };
 
+use crate::inspection::{exported_interface_names, world_key_name};
+
 /// Validates the value-only rule directly against a component's decoded WIT.
+#[cfg(test)]
 pub(crate) fn validate_value_only_exports(bytes: &[u8]) -> Result<(), ValidationError> {
+    validate_and_collect_exported_interfaces(bytes).map(drop)
+}
+
+pub(crate) fn validate_and_collect_exported_interfaces(
+    bytes: &[u8],
+) -> Result<Vec<String>, ValidationError> {
     let decoded = decode(bytes).map_err(classify_decode_error)?;
     let DecodedWasm::Component(resolve, world) = decoded else {
         return Err(ValidationError::NotComponent);
     };
-    validate_world(&resolve, world)
+    let interfaces = exported_interface_names(&resolve, world);
+    validate_world(&resolve, world)?;
+    Ok(interfaces)
 }
 
 fn classify_decode_error(error: anyhow::Error) -> ValidationError {
@@ -61,12 +72,7 @@ fn classify_decode_error(error: anyhow::Error) -> ValidationError {
 fn validate_world(resolve: &Resolve, world: WorldId) -> Result<(), ValidationError> {
     let world = &resolve.worlds[world];
     for (key, item) in &world.exports {
-        let export_name = match key {
-            WorldKey::Name(name) => name.clone(),
-            WorldKey::Interface(id) => resolve
-                .id_of(*id)
-                .unwrap_or_else(|| format!("interface-{}", id.index())),
-        };
+        let export_name = world_key_name(resolve, key);
         match item {
             WorldItem::Interface { id, .. } => validate_interface(resolve, *id, &export_name)?,
             WorldItem::Function(_) => {

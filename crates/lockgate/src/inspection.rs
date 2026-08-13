@@ -3,7 +3,7 @@ use std::{error::Error, fmt};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{NeedsDigest, NeedsManifest, PluginMetadata};
 use wasmparser::{Encoding, Parser, Payload};
-use wit_parser::{WorldItem, WorldKey, decoding::DecodedWasm};
+use wit_parser::{Resolve, WorldId, WorldItem, WorldKey, decoding::DecodedWasm};
 
 /// Decoded plugin declarations suitable for listing and admission displays.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,19 +136,27 @@ pub(crate) fn decode_exported_interfaces(bytes: &[u8]) -> Result<Vec<String>, In
     let DecodedWasm::Component(resolve, world) = decoded else {
         return Err(InspectError::NotComponent);
     };
-    Ok(resolve.worlds[world]
+    Ok(exported_interface_names(&resolve, world))
+}
+
+pub(crate) fn exported_interface_names(resolve: &Resolve, world: WorldId) -> Vec<String> {
+    resolve.worlds[world]
         .exports
         .iter()
         .filter_map(|(key, item)| match item {
-            WorldItem::Interface { id, .. } => Some(match key {
-                WorldKey::Name(name) => name.clone(),
-                WorldKey::Interface(_) => resolve
-                    .id_of(*id)
-                    .unwrap_or_else(|| format!("interface-{}", id.index())),
-            }),
+            WorldItem::Interface { .. } => Some(world_key_name(resolve, key)),
             WorldItem::Function(_) | WorldItem::Type { .. } => None,
         })
-        .collect())
+        .collect()
+}
+
+pub(crate) fn world_key_name(resolve: &Resolve, key: &WorldKey) -> String {
+    match key {
+        WorldKey::Name(name) => name.clone(),
+        WorldKey::Interface(id) => resolve
+            .id_of(*id)
+            .unwrap_or_else(|| format!("interface-{}", id.index())),
+    }
 }
 
 /// A pure inspection failure.

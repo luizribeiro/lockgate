@@ -7,10 +7,6 @@
 mod exec;
 mod inspection;
 mod lifecycle;
-#[allow(
-    dead_code,
-    reason = "the private validator is wired into admission in the next lifecycle step"
-)]
 mod validate;
 
 pub use inspection::{InspectError, Inspection, inspect};

@@ -1,11 +1,8 @@
 use std::{any::Any, collections::BTreeMap, error::Error, fmt, marker::PhantomData, path::PathBuf};
 
 use crate::exec::{ExecEngine, LoadError};
-use crate::inspection::{
-    InspectError, Inspection, decode_exported_interfaces, decode_metadata, decode_needs,
-    decode_sections,
-};
-use crate::validate::{ValidationError, validate_value_only_exports};
+use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
+use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
 
 /// Symbolic root names and their host paths for later scope resolution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -87,9 +84,8 @@ impl<S: Send + 'static> HostBuilder<S> {
         }
         let (needs, needs_digest) =
             decode_needs(&sections).map_err(AdmissionError::from_inspection)?;
-        let exported_interfaces =
-            decode_exported_interfaces(bytes).map_err(AdmissionError::from_inspection)?;
-        validate_value_only_exports(bytes).map_err(AdmissionError::from_validation)?;
+        let exported_interfaces = validate_and_collect_exported_interfaces(bytes)
+            .map_err(AdmissionError::from_validation)?;
         if let Some(field) = config.unavailable_field() {
             return Err(AdmissionError::ConfigFeatureUnavailable { field });
         }
@@ -165,25 +161,11 @@ pub enum AdmissionError {
     ConfigFeatureUnavailable {
         field: &'static str,
     },
-    NotComponent,
-    InvalidComponent {
-        message: String,
-    },
-    InvalidWit {
-        message: String,
-    },
-    MissingMetadata,
-    MissingNeeds,
-    DuplicateSection {
-        name: &'static str,
-    },
-    InvalidMetadata(lockgate_schema::sections::metadata::DecodeError),
+    Inspection(InspectError),
     PluginIdMismatch {
         configured: String,
         embedded: String,
     },
-    InvalidNeeds(lockgate_schema::sections::needs::DecodeError),
-    NeedsDigest(lockgate_schema::sections::needs::EncodeError),
     UnsupportedExport(ValidationError),
     Compilation {
         message: String,
@@ -205,24 +187,16 @@ impl AdmissionError {
     }
 
     fn from_inspection(error: InspectError) -> Self {
-        match error {
-            InspectError::NotComponent => Self::NotComponent,
-            InspectError::InvalidComponent { message } => Self::InvalidComponent { message },
-            InspectError::InvalidWit { message } => Self::InvalidWit { message },
-            InspectError::MissingMetadata => Self::MissingMetadata,
-            InspectError::MissingNeeds => Self::MissingNeeds,
-            InspectError::DuplicateSection { name } => Self::DuplicateSection { name },
-            InspectError::Metadata(error) => Self::InvalidMetadata(error),
-            InspectError::Needs(error) => Self::InvalidNeeds(error),
-            InspectError::NeedsDigest(error) => Self::NeedsDigest(error),
-        }
+        Self::Inspection(error)
     }
 
     fn from_validation(error: ValidationError) -> Self {
         match error {
             error @ ValidationError::UnsupportedExport { .. } => Self::UnsupportedExport(error),
-            ValidationError::Decode { message } => Self::InvalidWit { message },
-            ValidationError::NotComponent => Self::NotComponent,
+            ValidationError::Decode { message } => {
+                Self::Inspection(InspectError::InvalidWit { message })
+            }
+            ValidationError::NotComponent => Self::Inspection(InspectError::NotComponent),
         }
     }
 
@@ -245,27 +219,7 @@ impl fmt::Display for AdmissionError {
                 formatter,
                 "plugin {field} configuration is not yet available in this build"
             ),
-            Self::NotComponent => formatter.write_str("input is not a WebAssembly component"),
-            Self::InvalidComponent { message } => {
-                write!(
-                    formatter,
-                    "input is not a valid WebAssembly component: {message}"
-                )
-            }
-            Self::InvalidWit { message } => {
-                write!(formatter, "component WIT could not be decoded: {message}")
-            }
-            Self::MissingMetadata => formatter
-                .write_str("component is missing required `lockgate:plugin` metadata section"),
-            Self::MissingNeeds => {
-                formatter.write_str("component is missing required `lockgate:needs` needs section")
-            }
-            Self::DuplicateSection { name } => {
-                write!(formatter, "component contains duplicate `{name}` sections")
-            }
-            Self::InvalidMetadata(error) => {
-                write!(formatter, "plugin metadata is invalid: {error}")
-            }
+            Self::Inspection(error) => error.fmt(formatter),
             Self::PluginIdMismatch {
                 configured,
                 embedded,
@@ -273,15 +227,6 @@ impl fmt::Display for AdmissionError {
                 formatter,
                 "configured plugin id `{configured}` does not match embedded id `{embedded}`"
             ),
-            Self::InvalidNeeds(error) => {
-                write!(formatter, "plugin needs manifest is invalid: {error}")
-            }
-            Self::NeedsDigest(error) => {
-                write!(
-                    formatter,
-                    "plugin needs digest could not be computed: {error}"
-                )
-            }
             Self::UnsupportedExport(error) => error.fmt(formatter),
             Self::Compilation { message } => {
                 write!(formatter, "component compilation failed: {message}")
@@ -296,9 +241,7 @@ impl fmt::Display for AdmissionError {
 impl Error for AdmissionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::InvalidMetadata(error) => Some(error),
-            Self::InvalidNeeds(error) => Some(error),
-            Self::NeedsDigest(error) => Some(error),
+            Self::Inspection(error) => Some(error),
             Self::UnsupportedExport(error) => Some(error),
             _ => None,
         }

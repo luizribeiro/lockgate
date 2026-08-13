@@ -1,6 +1,8 @@
 mod common;
 
-use lockgate::{AdmissionError, HostBuilder, LimitSet, PluginConfig, SymbolicRoots, inspect};
+use lockgate::{
+    AdmissionError, HostBuilder, InspectError, LimitSet, PluginConfig, SymbolicRoots, inspect,
+};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{NeedsDigest, NeedsManifest, PluginMetadata};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
@@ -30,6 +32,12 @@ fn value_component() -> Vec<u8> {
 fn engine_rejected_component() -> Vec<u8> {
     component(
         "package test:engine-rejected; interface guest { type failure = error-context; run: func() -> option<failure>; } world fixture { export guest; }",
+    )
+}
+
+fn component_with_unwired_import() -> Vec<u8> {
+    component(
+        "package test:unwired; interface host { wait: func(); } interface guest { value: func() -> u32; } world fixture { import host; export guest; }",
     )
 }
 
@@ -68,6 +76,8 @@ async fn preparation_reports_each_pre_compilation_failure() {
     let metadata_bytes = metadata().to_section_bytes().unwrap();
     let missing_metadata =
         common::with_custom_section(&base, PLUGIN_NEEDS_SECTION, needs.as_slice());
+    let missing_needs =
+        common::with_custom_section(&base, PLUGIN_METADATA_SECTION, &metadata_bytes);
     let malformed_needs = common::with_custom_section(
         &common::with_custom_section(&base, PLUGIN_METADATA_SECTION, &metadata_bytes),
         PLUGIN_NEEDS_SECTION,
@@ -80,7 +90,10 @@ async fn preparation_reports_each_pre_compilation_failure() {
         .prepare(PLUGIN_ID, &missing_metadata, PluginConfig::default())
         .await
         .unwrap_err();
-    assert!(matches!(error, AdmissionError::MissingMetadata));
+    assert!(matches!(
+        error,
+        AdmissionError::Inspection(InspectError::MissingMetadata)
+    ));
     assert!(
         error
             .to_string()
@@ -88,24 +101,46 @@ async fn preparation_reports_each_pre_compilation_failure() {
     );
 
     let error = builder
-        .prepare("com.example.other", &well_formed, PluginConfig::default())
+        .prepare(PLUGIN_ID, &missing_needs, PluginConfig::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AdmissionError::Inspection(InspectError::MissingNeeds)
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("missing required `lockgate:needs`")
+    );
+
+    let configured_id = "com.example.other";
+    let error = builder
+        .prepare(configured_id, &well_formed, PluginConfig::default())
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::PluginIdMismatch { .. }));
     assert!(error.to_string().contains(PLUGIN_ID));
+    assert!(error.to_string().contains(configured_id));
 
     let error = builder
         .prepare(PLUGIN_ID, &malformed_needs, PluginConfig::default())
         .await
         .unwrap_err();
-    assert!(matches!(error, AdmissionError::InvalidNeeds(_)));
+    assert!(matches!(
+        error,
+        AdmissionError::Inspection(InspectError::Needs(_))
+    ));
     assert!(error.to_string().contains("needs manifest is invalid"));
 
     let error = builder
         .prepare(PLUGIN_ID, b"not a component", PluginConfig::default())
         .await
         .unwrap_err();
-    assert!(matches!(error, AdmissionError::InvalidComponent { .. }));
+    assert!(matches!(
+        error,
+        AdmissionError::Inspection(InspectError::InvalidComponent { .. })
+    ));
     assert!(
         error
             .to_string()
@@ -116,6 +151,16 @@ async fn preparation_reports_each_pre_compilation_failure() {
 #[tokio::test]
 async fn forbidden_exports_keep_the_stable_teaching_error() {
     let bytes = common::sectioned_fixture(&engine_rejected_component(), &metadata());
+
+    // The fixture fails Wasmtime compilation, so receiving the stable teaching
+    // error below explicitly guards validation-before-compilation ordering.
+    let mut config = wasmtime::Config::new();
+    config
+        .wasm_component_model(true)
+        .wasm_component_model_async(true);
+    let engine = wasmtime::Engine::new(&config).unwrap();
+    assert!(wasmtime::component::Component::new(&engine, &bytes).is_err());
+
     let mut builder = HostBuilder::<()>::new().unwrap();
     let error = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
@@ -130,6 +175,19 @@ async fn forbidden_exports_keep_the_stable_teaching_error() {
             .starts_with("[admission.unsupported-export] ")
     );
     assert!(error.to_string().contains("offending type `error-context`"));
+}
+
+#[tokio::test]
+async fn validator_passing_unwired_import_fails_linker_preflight() {
+    let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
+    let mut builder = HostBuilder::<()>::new().unwrap();
+    let error = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AdmissionError::Preflight { .. }));
+    assert!(error.to_string().contains("linker preflight failed"));
 }
 
 #[tokio::test]
@@ -190,5 +248,8 @@ async fn artifact_validation_precedes_temporary_config_rejection() {
         .prepare(PLUGIN_ID, &value_component(), config)
         .await
         .unwrap_err();
-    assert!(matches!(error, AdmissionError::MissingMetadata));
+    assert!(matches!(
+        error,
+        AdmissionError::Inspection(InspectError::MissingMetadata)
+    ));
 }
