@@ -13,7 +13,7 @@ fn load_errors_distinguish_compile_from_link() {
         Err(LoadError::Compile(_))
     ));
     assert!(matches!(
-        engine.load::<TestState>(common::exec_fixture(), |_| Ok(())),
+        engine.load::<TestState>(&common::EXEC_FIXTURE, |_| Ok(())),
         Err(LoadError::Link(_))
     ));
 }
@@ -22,7 +22,7 @@ fn load_errors_distinguish_compile_from_link() {
 async fn trap_is_isolated_from_the_next_invocation() {
     let engine = ExecEngine::new().unwrap();
     let loaded = engine
-        .load::<TestState>(common::exec_fixture(), wire_ready_wait)
+        .load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)
         .unwrap();
     let trap = loaded
         .export("test:exec/guest", "trap")
@@ -57,7 +57,7 @@ async fn trap_is_isolated_from_the_next_invocation() {
 async fn marked_host_failure_maps_to_host_import() {
     let engine = ExecEngine::new().unwrap();
     let loaded = engine
-        .load::<TestState>(common::exec_fixture(), |linker| {
+        .load::<TestState>(&common::EXEC_FIXTURE, |linker| {
             linker
                 .instance("test:exec/host")?
                 .func_wrap_concurrent("wait", |_, (): ()| {
@@ -88,7 +88,7 @@ async fn marked_host_failure_maps_to_host_import() {
 async fn guest_trap_after_successful_import_stays_a_trap() {
     let engine = ExecEngine::new().unwrap();
     let loaded = engine
-        .load::<TestState>(common::exec_fixture(), wire_ready_wait)
+        .load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)
         .unwrap();
     let export = loaded
         .export("test:exec/guest", "import-then-trap")

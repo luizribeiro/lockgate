@@ -46,7 +46,7 @@ fn accepts_value_only_component_wit() {
 
 #[test]
 fn accepts_existing_exec_fixture() {
-    validate_value_only_exports(fixtures::exec_fixture()).unwrap();
+    validate_value_only_exports(&fixtures::EXEC_FIXTURE).unwrap();
 }
 
 #[test]

@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use wasmtime::component::Linker;
 
@@ -22,32 +22,16 @@ pub(crate) const INVOCATION_FUEL: u64 = 1_000_000;
 
 pub(crate) struct TestState;
 
-static EXEC_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
-static EXEC_CONCURRENT_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
-static EXEC_FUEL_FIXTURE: OnceLock<Vec<u8>> = OnceLock::new();
-
-pub(crate) fn exec_fixture() -> &'static [u8] {
-    EXEC_FIXTURE
-        .get_or_init(|| build_fixture("exec-guest", "lockgate_exec_fixture.wasm"))
-        .as_slice()
-}
-
-pub(crate) fn exec_concurrent_fixture() -> &'static [u8] {
-    EXEC_CONCURRENT_FIXTURE
-        .get_or_init(|| {
-            build_fixture(
-                "exec-concurrent-guest",
-                "lockgate_exec_concurrent_fixture.wasm",
-            )
-        })
-        .as_slice()
-}
-
-pub(crate) fn exec_fuel_fixture() -> &'static [u8] {
-    EXEC_FUEL_FIXTURE
-        .get_or_init(|| build_fixture("exec-fuel-guest", "lockgate_exec_fuel_fixture.wasm"))
-        .as_slice()
-}
+pub(crate) static EXEC_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("exec-guest", "lockgate_exec_fixture.wasm"));
+pub(crate) static EXEC_CONCURRENT_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    build_fixture(
+        "exec-concurrent-guest",
+        "lockgate_exec_concurrent_fixture.wasm",
+    )
+});
+pub(crate) static EXEC_FUEL_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("exec-fuel-guest", "lockgate_exec_fuel_fixture.wasm"));
 
 pub(crate) fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmtime::Result<()> {
     linker

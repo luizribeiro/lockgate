@@ -18,7 +18,7 @@ async fn guest_async_imports_run_concurrently() -> Result<()> {
     let engine = ExecEngine::new()?;
     let barrier = Arc::new(Barrier::new(2));
     let entries = Arc::new(AtomicUsize::new(0));
-    let loaded = engine.load::<TestState>(common::exec_concurrent_fixture(), {
+    let loaded = engine.load::<TestState>(&common::EXEC_CONCURRENT_FIXTURE, {
         let barrier = Arc::clone(&barrier);
         let entries = Arc::clone(&entries);
         move |linker| {

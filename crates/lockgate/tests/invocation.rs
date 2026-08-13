@@ -15,7 +15,7 @@ use wasmtime::component::{Linker, Val};
 #[tokio::test(flavor = "current_thread")]
 async fn value_export_returns_expected_value() -> Result<()> {
     let engine = ExecEngine::new()?;
-    let loaded = engine.load::<TestState>(common::exec_fixture(), wire_ready_wait)?;
+    let loaded = engine.load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)?;
     let export = loaded
         .export("test:exec/guest", "value")
         .expect("value export should resolve structurally");
@@ -34,7 +34,7 @@ async fn dropping_invocation_drops_store_and_stops_guest() -> Result<()> {
     let import_dropped = Arc::new(AtomicBool::new(false));
     let store_dropped = Arc::new(AtomicBool::new(false));
 
-    let loaded = engine.load::<TestState>(common::exec_fixture(), {
+    let loaded = engine.load::<TestState>(&common::EXEC_FIXTURE, {
         let entered = Arc::clone(&entered);
         let calls = Arc::clone(&calls);
         let import_dropped = Arc::clone(&import_dropped);

@@ -16,7 +16,7 @@ async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
     let engine = ExecEngine::new().unwrap();
     let reported = Arc::new(AtomicU32::new(0));
     let loaded = engine
-        .load::<TestState>(common::exec_fuel_fixture(), {
+        .load::<TestState>(&common::EXEC_FUEL_FIXTURE, {
             let reported = Arc::clone(&reported);
             move |linker| wire_report(linker, reported)
         })

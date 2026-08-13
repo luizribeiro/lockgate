@@ -13,7 +13,7 @@ async fn same_loaded_component_accepts_overlapping_invocations() {
     let engine = ExecEngine::new().unwrap();
     let barrier = Arc::new(Barrier::new(2));
     let loaded = engine
-        .load::<TestState>(common::exec_fixture(), {
+        .load::<TestState>(&common::EXEC_FIXTURE, {
             let barrier = Arc::clone(&barrier);
             move |linker| wire_barrier_wait(linker, barrier)
         })
@@ -40,7 +40,7 @@ async fn same_loaded_component_accepts_overlapping_invocations() {
 async fn every_root_invocation_gets_fresh_guest_globals() {
     let engine = ExecEngine::new().unwrap();
     let loaded = engine
-        .load::<TestState>(common::exec_fixture(), wire_ready_wait)
+        .load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)
         .unwrap();
     let pin = loaded
         .export("test:exec/guest", "pin")
