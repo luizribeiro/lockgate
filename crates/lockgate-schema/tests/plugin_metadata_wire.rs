@@ -130,6 +130,19 @@ fn rejects_non_utf8_and_non_json_payloads() {
 }
 
 #[test]
+fn rejects_wrong_typed_fields() {
+    for payload in [
+        &br#"{"format":"1","id":"plugin","name":"Plugin","version":"1.0.0"}"#[..],
+        &br#"{"format":1,"id":123,"name":"Plugin","version":"1.0.0"}"#[..],
+    ] {
+        let error = decode_plugin_metadata(payload).unwrap_err();
+
+        assert!(matches!(error, PluginMetadataDecodeError::InvalidJson(_)));
+        assert!(error.to_string().contains("invalid type"));
+    }
+}
+
+#[test]
 fn rejects_fields_outside_the_wire_schema() {
     let error = decode_plugin_metadata(
         br#"{"format":1,"id":"plugin","name":"Plugin","version":"1.0.0","publisher":"Example"}"#,
