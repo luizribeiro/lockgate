@@ -1,5 +1,7 @@
 //! Custom-section names and wire-format encode/decode boundaries.
 
+use std::fmt;
+
 pub mod metadata;
 pub mod needs;
 
@@ -26,4 +28,16 @@ pub(crate) fn check_payload_size(actual_bytes: usize) -> Result<(), PayloadTooLa
         });
     }
     Ok(())
+}
+
+pub(crate) fn format_payload_too_large(
+    formatter: &mut fmt::Formatter<'_>,
+    section: &str,
+    actual_bytes: usize,
+    max_bytes: usize,
+) -> fmt::Result {
+    write!(
+        formatter,
+        "{section} payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
+    )
 }

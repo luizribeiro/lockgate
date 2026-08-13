@@ -5,6 +5,8 @@ use crate::needs::{
     ScopeRefError,
 };
 
+use super::super::format_payload_too_large;
+
 /// A failure while decoding a needs manifest custom-section payload.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -59,10 +61,7 @@ impl fmt::Display for DecodeError {
             Self::PayloadTooLarge {
                 actual_bytes,
                 max_bytes,
-            } => write!(
-                formatter,
-                "needs manifest payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
-            ),
+            } => format_payload_too_large(formatter, "needs manifest", *actual_bytes, *max_bytes),
             Self::InvalidJson(error) => {
                 write!(
                     formatter,

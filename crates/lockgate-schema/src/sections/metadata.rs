@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crate::metadata::{PluginMetadata, PluginMetadataValidationError};
 
-use super::check_payload_size;
+use super::{check_payload_size, format_payload_too_large};
 
 /// A failure while encoding plugin metadata for its custom section.
 #[derive(Debug)]
@@ -32,10 +32,7 @@ impl fmt::Display for EncodeError {
             Self::PayloadTooLarge {
                 actual_bytes,
                 max_bytes,
-            } => write!(
-                formatter,
-                "plugin metadata payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
-            ),
+            } => format_payload_too_large(formatter, "plugin metadata", *actual_bytes, *max_bytes),
         }
     }
 }
@@ -71,10 +68,7 @@ impl fmt::Display for DecodeError {
             Self::PayloadTooLarge {
                 actual_bytes,
                 max_bytes,
-            } => write!(
-                formatter,
-                "plugin metadata payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
-            ),
+            } => format_payload_too_large(formatter, "plugin metadata", *actual_bytes, *max_bytes),
             Self::InvalidJson(error) => {
                 write!(
                     formatter,

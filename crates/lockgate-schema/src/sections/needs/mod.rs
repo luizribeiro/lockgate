@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::needs::{NeedKind, NeedsManifest, NeedsManifestValidationError};
 
-use super::check_payload_size;
+use super::{check_payload_size, format_payload_too_large};
 
 mod decode_error;
 mod decoder;
@@ -91,10 +91,7 @@ impl fmt::Display for EncodeError {
             Self::PayloadTooLarge {
                 actual_bytes,
                 max_bytes,
-            } => write!(
-                formatter,
-                "needs manifest payload is {actual_bytes} bytes; maximum is {max_bytes} bytes"
-            ),
+            } => format_payload_too_large(formatter, "needs manifest", *actual_bytes, *max_bytes),
         }
     }
 }
