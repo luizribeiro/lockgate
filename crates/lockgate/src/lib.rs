@@ -5,6 +5,11 @@
     reason = "the private execution core is wired in later steps"
 )]
 mod exec;
+#[allow(
+    dead_code,
+    reason = "the private validator is wired into admission in the next lifecycle step"
+)]
+mod validate;
 
 #[cfg(test)]
 mod tests {

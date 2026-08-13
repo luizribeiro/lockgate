@@ -1,0 +1,17 @@
+package test:value-only;
+
+interface api {
+  record request {
+    id: u64,
+    payload: list<u8>,
+  }
+  variant response {
+    accepted(string),
+    rejected,
+  }
+  run: func(input: request) -> result<response, string>;
+}
+
+world fixture {
+  export api;
+}

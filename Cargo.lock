@@ -664,6 +664,8 @@ dependencies = [
  "anyhow",
  "tokio",
  "wasmtime",
+ "wit-component",
+ "wit-parser",
 ]
 
 [[package]]
@@ -1627,6 +1629,7 @@ dependencies = [
  "wasm-encoder 0.254.0",
  "wasm-metadata",
  "wasmparser 0.254.0",
+ "wat",
  "wit-parser",
 ]
 

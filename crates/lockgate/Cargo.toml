@@ -7,6 +7,8 @@ edition.workspace = true
 anyhow = "1"
 tokio.workspace = true
 wasmtime.workspace = true
+wit-parser.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+wit-component = { workspace = true, features = ["dummy-module"] }
