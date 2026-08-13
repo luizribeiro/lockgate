@@ -1,10 +1,7 @@
 #[path = "data/donor_vectors.rs"]
 mod donor_vectors;
 
-use lockgate_schema::sections::metadata::{
-    PluginMetadataDecodeError, PluginMetadataEncodeError, decode_plugin_metadata,
-    encode_plugin_metadata,
-};
+use lockgate_schema::sections::metadata::{DecodeError, EncodeError};
 use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_METADATA_SECTION};
 use lockgate_schema::{PluginMetadata, PluginMetadataValidationError};
 
@@ -31,11 +28,11 @@ fn donor_payloads_decode_and_reencode_byte_identically() {
     ];
 
     for (donor_bytes, expected) in vectors {
-        let decoded = decode_plugin_metadata(donor_bytes).unwrap();
+        let decoded = PluginMetadata::from_section_bytes(donor_bytes).unwrap();
 
         assert_eq!(decoded, expected);
-        assert_eq!(encode_plugin_metadata(&expected).unwrap(), donor_bytes);
-        assert_eq!(encode_plugin_metadata(&decoded).unwrap(), donor_bytes);
+        assert_eq!(expected.to_section_bytes().unwrap(), donor_bytes);
+        assert_eq!(decoded.to_section_bytes().unwrap(), donor_bytes);
     }
 }
 
@@ -48,9 +45,9 @@ fn round_trip_is_stable_with_every_optional_field() {
         .with_repository("https://example.com/repository")
         .with_homepage("https://example.com");
 
-    let first_encoding = encode_plugin_metadata(&metadata).unwrap();
-    let decoded = decode_plugin_metadata(&first_encoding).unwrap();
-    let second_encoding = encode_plugin_metadata(&decoded).unwrap();
+    let first_encoding = metadata.to_section_bytes().unwrap();
+    let decoded = PluginMetadata::from_section_bytes(&first_encoding).unwrap();
+    let second_encoding = decoded.to_section_bytes().unwrap();
 
     assert_eq!(decoded, metadata);
     assert_eq!(second_encoding, first_encoding);
@@ -62,23 +59,22 @@ fn round_trip_is_stable_with_every_optional_field() {
 
 #[test]
 fn rejects_truncated_payloads_without_panicking() {
-    let error = decode_plugin_metadata(br#"{"format":1,"id":"plugin""#).unwrap_err();
+    let error = PluginMetadata::from_section_bytes(br#"{"format":1,"id":"plugin""#).unwrap_err();
 
-    assert!(matches!(error, PluginMetadataDecodeError::InvalidJson(_)));
+    assert!(matches!(error, DecodeError::InvalidJson(_)));
     assert!(error.to_string().contains("not valid schema JSON"));
 }
 
 #[test]
 fn rejects_unknown_format_versions_with_the_version_in_the_error() {
-    let error =
-        decode_plugin_metadata(br#"{"format":7,"id":"plugin","name":"Plugin","version":"1.0.0"}"#)
-            .unwrap_err();
+    let error = PluginMetadata::from_section_bytes(
+        br#"{"format":7,"id":"plugin","name":"Plugin","version":"1.0.0"}"#,
+    )
+    .unwrap_err();
 
     assert!(matches!(
         error,
-        PluginMetadataDecodeError::InvalidMetadata(
-            PluginMetadataValidationError::UnsupportedFormat { found: 7 }
-        )
+        DecodeError::InvalidMetadata(PluginMetadataValidationError::UnsupportedFormat { found: 7 })
     ));
     assert_eq!(
         error.to_string(),
@@ -112,7 +108,7 @@ fn rejects_invalid_field_values_with_field_specific_errors() {
     ];
 
     for (payload, expected_message) in invalid_payloads {
-        let error = decode_plugin_metadata(payload).unwrap_err();
+        let error = PluginMetadata::from_section_bytes(payload).unwrap_err();
 
         assert!(
             error.to_string().contains(expected_message),
@@ -124,9 +120,9 @@ fn rejects_invalid_field_values_with_field_specific_errors() {
 #[test]
 fn rejects_non_utf8_and_non_json_payloads() {
     for payload in [&[0xff, 0xfe][..], &b"not JSON"[..]] {
-        let error = decode_plugin_metadata(payload).unwrap_err();
+        let error = PluginMetadata::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, PluginMetadataDecodeError::InvalidJson(_)));
+        assert!(matches!(error, DecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("not valid schema JSON"));
     }
 }
@@ -137,30 +133,31 @@ fn rejects_wrong_typed_fields() {
         &br#"{"format":"1","id":"plugin","name":"Plugin","version":"1.0.0"}"#[..],
         &br#"{"format":1,"id":123,"name":"Plugin","version":"1.0.0"}"#[..],
     ] {
-        let error = decode_plugin_metadata(payload).unwrap_err();
+        let error = PluginMetadata::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, PluginMetadataDecodeError::InvalidJson(_)));
+        assert!(matches!(error, DecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("invalid type"));
     }
 }
 
 #[test]
 fn rejects_fields_outside_the_wire_schema() {
-    let error = decode_plugin_metadata(
+    let error = PluginMetadata::from_section_bytes(
         br#"{"format":1,"id":"plugin","name":"Plugin","version":"1.0.0","publisher":"Example"}"#,
     )
     .unwrap_err();
 
-    assert!(matches!(error, PluginMetadataDecodeError::InvalidJson(_)));
+    assert!(matches!(error, DecodeError::InvalidJson(_)));
     assert!(error.to_string().contains("unknown field `publisher`"));
 }
 
 #[test]
 fn rejects_missing_required_fields() {
     let error =
-        decode_plugin_metadata(br#"{"format":1,"name":"Plugin","version":"1.0.0"}"#).unwrap_err();
+        PluginMetadata::from_section_bytes(br#"{"format":1,"name":"Plugin","version":"1.0.0"}"#)
+            .unwrap_err();
 
-    assert!(matches!(error, PluginMetadataDecodeError::InvalidJson(_)));
+    assert!(matches!(error, DecodeError::InvalidJson(_)));
     assert!(error.to_string().contains("missing field `id`"));
 }
 
@@ -170,7 +167,7 @@ fn encoding_revalidates_builder_fields() {
         .unwrap()
         .with_description(" ");
 
-    let error = encode_plugin_metadata(&metadata).unwrap_err();
+    let error = metadata.to_section_bytes().unwrap_err();
 
     assert!(
         error
@@ -184,22 +181,25 @@ fn enforces_plugin_section_payload_ceiling_on_encode_and_decode() {
     let seed = PluginMetadata::new("plugin", "Plugin", "1.0.0")
         .unwrap()
         .with_description("x");
-    let seed_size = encode_plugin_metadata(&seed).unwrap().len();
+    let seed_size = seed.to_section_bytes().unwrap().len();
     let exact_description_size = 1 + MAX_SECTION_PAYLOAD_BYTES - seed_size;
     let exact = PluginMetadata::new("plugin", "Plugin", "1.0.0")
         .unwrap()
         .with_description("x".repeat(exact_description_size));
-    let exact_payload = encode_plugin_metadata(&exact).unwrap();
+    let exact_payload = exact.to_section_bytes().unwrap();
 
     assert_eq!(exact_payload.len(), MAX_SECTION_PAYLOAD_BYTES);
-    assert_eq!(decode_plugin_metadata(&exact_payload).unwrap(), exact);
+    assert_eq!(
+        PluginMetadata::from_section_bytes(&exact_payload).unwrap(),
+        exact
+    );
 
     let over = PluginMetadata::new("plugin", "Plugin", "1.0.0")
         .unwrap()
         .with_description("x".repeat(exact_description_size + 1));
     assert!(matches!(
-        encode_plugin_metadata(&over).unwrap_err(),
-        PluginMetadataEncodeError::PayloadTooLarge {
+        over.to_section_bytes().unwrap_err(),
+        EncodeError::PayloadTooLarge {
             actual_bytes,
             max_bytes: MAX_SECTION_PAYLOAD_BYTES,
         } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1
@@ -207,8 +207,8 @@ fn enforces_plugin_section_payload_ceiling_on_encode_and_decode() {
 
     let oversized_garbage = vec![0; MAX_SECTION_PAYLOAD_BYTES + 1];
     assert!(matches!(
-        decode_plugin_metadata(&oversized_garbage).unwrap_err(),
-        PluginMetadataDecodeError::PayloadTooLarge {
+        PluginMetadata::from_section_bytes(&oversized_garbage).unwrap_err(),
+        DecodeError::PayloadTooLarge {
             actual_bytes,
             max_bytes: MAX_SECTION_PAYLOAD_BYTES,
         } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1

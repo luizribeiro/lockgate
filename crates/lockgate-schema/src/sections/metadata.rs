@@ -7,7 +7,7 @@ use super::check_payload_size;
 /// A failure while encoding plugin metadata for its custom section.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum PluginMetadataEncodeError {
+pub enum EncodeError {
     /// The metadata does not satisfy the wire schema's semantic rules.
     InvalidMetadata(PluginMetadataValidationError),
     /// The validated metadata could not be serialized as JSON.
@@ -19,7 +19,7 @@ pub enum PluginMetadataEncodeError {
     },
 }
 
-impl fmt::Display for PluginMetadataEncodeError {
+impl fmt::Display for EncodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidMetadata(error) => {
@@ -40,7 +40,7 @@ impl fmt::Display for PluginMetadataEncodeError {
     }
 }
 
-impl Error for PluginMetadataEncodeError {
+impl Error for EncodeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::InvalidMetadata(error) => Some(error),
@@ -53,7 +53,7 @@ impl Error for PluginMetadataEncodeError {
 /// A failure while decoding plugin metadata from its custom section.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum PluginMetadataDecodeError {
+pub enum DecodeError {
     /// The custom-section payload exceeds the wire ceiling.
     PayloadTooLarge {
         actual_bytes: usize,
@@ -65,7 +65,7 @@ pub enum PluginMetadataDecodeError {
     InvalidMetadata(PluginMetadataValidationError),
 }
 
-impl fmt::Display for PluginMetadataDecodeError {
+impl fmt::Display for DecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PayloadTooLarge {
@@ -88,7 +88,7 @@ impl fmt::Display for PluginMetadataDecodeError {
     }
 }
 
-impl Error for PluginMetadataDecodeError {
+impl Error for DecodeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::PayloadTooLarge { .. } => None,
@@ -98,35 +98,26 @@ impl Error for PluginMetadataDecodeError {
     }
 }
 
-/// Encodes validated metadata as the JSON payload of `lockgate:plugin`.
-pub fn encode_plugin_metadata(
-    metadata: &PluginMetadata,
-) -> Result<Vec<u8>, PluginMetadataEncodeError> {
-    metadata
-        .validate()
-        .map_err(PluginMetadataEncodeError::InvalidMetadata)?;
-    let payload = serde_json::to_vec(metadata).map_err(PluginMetadataEncodeError::Serialization)?;
-    check_payload_size(payload.len()).map_err(|error| {
-        PluginMetadataEncodeError::PayloadTooLarge {
+impl PluginMetadata {
+    /// Encodes validated metadata as the JSON payload of `lockgate:plugin`.
+    pub fn to_section_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        self.validate().map_err(EncodeError::InvalidMetadata)?;
+        let payload = serde_json::to_vec(self).map_err(EncodeError::Serialization)?;
+        check_payload_size(payload.len()).map_err(|error| EncodeError::PayloadTooLarge {
             actual_bytes: error.actual_bytes,
             max_bytes: error.max_bytes,
-        }
-    })?;
-    Ok(payload)
-}
+        })?;
+        Ok(payload)
+    }
 
-/// Decodes and validates the JSON payload of `lockgate:plugin`.
-pub fn decode_plugin_metadata(bytes: &[u8]) -> Result<PluginMetadata, PluginMetadataDecodeError> {
-    check_payload_size(bytes.len()).map_err(|error| {
-        PluginMetadataDecodeError::PayloadTooLarge {
+    /// Decodes and validates the JSON payload of `lockgate:plugin`.
+    pub fn from_section_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        check_payload_size(bytes.len()).map_err(|error| DecodeError::PayloadTooLarge {
             actual_bytes: error.actual_bytes,
             max_bytes: error.max_bytes,
-        }
-    })?;
-    let metadata: PluginMetadata =
-        serde_json::from_slice(bytes).map_err(PluginMetadataDecodeError::InvalidJson)?;
-    metadata
-        .validate()
-        .map_err(PluginMetadataDecodeError::InvalidMetadata)?;
-    Ok(metadata)
+        })?;
+        let metadata: Self = serde_json::from_slice(bytes).map_err(DecodeError::InvalidJson)?;
+        metadata.validate().map_err(DecodeError::InvalidMetadata)?;
+        Ok(metadata)
+    }
 }
