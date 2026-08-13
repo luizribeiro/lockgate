@@ -34,10 +34,6 @@ impl NeedsDigest {
 
 impl fmt::Display for NeedsDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("sha256:")?;
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
+        write!(formatter, "sha256:{}", self.to_hex())
     }
 }
