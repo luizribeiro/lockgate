@@ -8,11 +8,15 @@ mod needs;
 
 pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedEntry, NeedEntryError, NeedKind, NeedReasonError,
-    NeedsManifest, NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError,
+    NeedsManifest, NeedsManifestEncodeError, NeedsManifestValidationError, Requirement, ScopeRef,
+    ScopeRefError, encode_needs_manifest,
 };
 
 /// Name of the WebAssembly custom section containing Lockgate plugin metadata.
 pub const PLUGIN_METADATA_SECTION: &str = "lockgate:plugin";
+
+/// Name of the WebAssembly custom section containing symbolic permission needs.
+pub const PLUGIN_NEEDS_SECTION: &str = "lockgate:needs";
 
 const PLUGIN_METADATA_FORMAT: u32 = 1;
 

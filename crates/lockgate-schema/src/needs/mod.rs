@@ -3,10 +3,12 @@ use std::{error::Error, fmt, str::FromStr};
 mod entry;
 mod manifest;
 mod scope_ref;
+mod wire;
 
 pub use entry::{NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
 pub use manifest::{EntryLocation, NeedsManifest, NeedsManifestValidationError, Requirement};
 pub use scope_ref::{ScopeRef, ScopeRefError};
+pub use wire::{NeedsManifestEncodeError, encode_needs_manifest};
 
 /// The identity of one permission operation, written `capability.operation`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
