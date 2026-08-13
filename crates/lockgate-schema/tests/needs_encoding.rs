@@ -1,5 +1,6 @@
 use lockgate_schema::{
-    AtomKey, NeedEntry, NeedsManifest, PLUGIN_NEEDS_SECTION, ScopeRef, encode_needs_manifest,
+    AtomKey, NeedEntry, NeedsManifest, PLUGIN_NEEDS_SECTION, ScopeRef, decode_needs_manifest,
+    encode_needs_manifest,
 };
 
 fn atom(value: &str) -> AtomKey {
@@ -44,8 +45,12 @@ fn encoding_sorts_maps_and_uses_symbolic_scope_strings() {
     )
     .unwrap();
 
+    let encoded = encode_needs_manifest(&manifest).unwrap();
     assert_eq!(
-        encode_needs_manifest(&manifest).unwrap(),
+        encoded,
         br#"{"format":1,"optional":{"http.request":["setting:/endpoint"]},"reasons":{"http.request":"deliver notifications"},"required":{"fs.read":["$workspace/generated/html","current"],"notify.send":true}}"#
     );
+    let decoded = decode_needs_manifest(&encoded).unwrap();
+    assert_eq!(decoded, manifest);
+    assert_eq!(encode_needs_manifest(&decoded).unwrap(), encoded);
 }
