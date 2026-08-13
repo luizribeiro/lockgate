@@ -1,0 +1,4 @@
+[package]
+name = "lockgate-schema"
+version.workspace = true
+edition.workspace = true

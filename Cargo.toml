@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/lockgate",
+    "crates/lockgate-macros",
+    "crates/lockgate-schema",
+    "crates/lockgate-plugin",
+    "crates/lockgate-plugin-macros",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+tokio = "1.51.1"
+wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", features = ["component-model", "component-model-async"] }
+wit-bindgen = "0.57"
