@@ -48,6 +48,7 @@ pub fn encode_needs_manifest(
 
 #[derive(Serialize)]
 struct WireManifest<'a> {
+    // Alphabetical field order is load-bearing because the digest covers these exact JSON bytes.
     format: u32,
     optional: BTreeMap<String, WireNeed>,
     reasons: BTreeMap<String, &'a str>,
