@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use lockgate_schema::{AtomKey, GrantSet, PluginMetadata};
+use lockgate_schema::{AtomKey, GrantSet, NeedsManifest, PluginMetadata};
 
 use crate::exec::{ExecEngine, ExecError, ExecLimits, LoadError, LoadedComponent};
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
@@ -99,6 +99,25 @@ impl Acceptance {
     pub fn accepted(grants: GrantSet) -> Self {
         Self(AcceptanceKind::Accepted(grants))
     }
+}
+
+fn validate_acceptance(
+    needs: &NeedsManifest,
+    acceptance: &Acceptance,
+) -> Result<(), AdmissionError> {
+    // Intentionally a no-op: non-empty needs are rejected before this point,
+    // and accepted-but-never-declared grants remain inert by design.
+    // FIXME(grant-system): the grant-algebra join computes effective = declared
+    // ∩ accepted ∩ limits, parses accepted values through registered scope
+    // types, and changes this return type to the effective-grants value.
+    let _ = needs;
+    match &acceptance.0 {
+        AcceptanceKind::AllDeclared => {}
+        AcceptanceKind::Accepted(grants) => {
+            let _ = grants;
+        }
+    }
+    Ok(())
 }
 
 /// Symbolic root names and their host paths for later scope resolution.
@@ -251,11 +270,7 @@ impl<S: Send + 'static> HostBuilder<S> {
             });
         }
 
-        // Intentionally a no-op: the future registry replaces this exhaustive reminder.
-        match acceptance.0 {
-            AcceptanceKind::AllDeclared => {}
-            AcceptanceKind::Accepted(grants) => drop(grants),
-        }
+        validate_acceptance(inspection.needs(), &acceptance)?;
 
         let artifact = artifact
             .downcast::<LoadedComponent<S>>()
