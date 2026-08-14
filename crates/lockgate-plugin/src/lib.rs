@@ -61,6 +61,9 @@ pub use lockgate_plugin_macros::export;
 /// Identity is always explicit. Optional metadata defaults to the corresponding
 /// Cargo package field at the `export!` call site, and permission needs default
 /// to deny-by-default emptiness.
+/// Display-string controls, format characters, and length limits are enforced
+/// at host admission in this version; compile-time checks arrive with the later
+/// const-needs validation work.
 pub trait Plugin {
     const ID: &'static str;
     const NAME: Option<&'static str> = None;
@@ -107,7 +110,7 @@ pub mod __private {
 
     pub const fn cargo_optional(value: Option<&'static str>) -> Option<&'static str> {
         match value {
-            Some(value) if !value.as_bytes().is_empty() => Some(value),
+            Some(value) if !value.is_empty() => Some(value),
             Some(_) | None => None,
         }
     }
@@ -171,7 +174,7 @@ pub mod __private {
     }
 
     const fn validate_manifest(manifest: &Manifest) {
-        if manifest.id.as_bytes().is_empty() {
+        if manifest.id.is_empty() {
             panic!("Lockgate plugin ID must not be empty");
         }
         validate_needs(&manifest.needs);

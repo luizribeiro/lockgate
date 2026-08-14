@@ -51,6 +51,8 @@ pub(crate) fn sectioned_fixture(bytes: &[u8], metadata: &PluginMetadata) -> Vec<
     let metadata_bytes = metadata.to_section_bytes().unwrap();
     let needs_bytes = NeedsManifest::empty().to_section_bytes().unwrap();
 
+    // The public guest now self-embeds its identity. Keep pre-facade callers
+    // byte-for-byte unchanged by accepting a match or replacing both sections.
     let bytes = match embedded_lockgate_sections(bytes) {
         (Some(embedded_metadata), Some(embedded_needs))
             if embedded_metadata == metadata_bytes && embedded_needs == needs_bytes =>
