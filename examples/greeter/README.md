@@ -5,7 +5,7 @@ the interfaces that plugins may implement, and plugin authors build against the 
 published WIT. Both the host and plugin point to this shared contract through `../wit`.
 
 The plugin exports the greeter interface through the guest facade. The host admits that
-component and invokes it through a hand-written public role.
+component and invokes it through the generated typed role client.
 
 From the repository root, build the plugin:
 
