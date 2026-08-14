@@ -26,6 +26,17 @@ impl exports::test::detached_jobs::guest::Guest for Fixture {
             Err(error) => alloc::format!("error:{error}"),
         }
     }
+
+    async fn cancel() {
+        if test::detached_jobs::application::start(0).is_err() {
+            core::arch::wasm32::unreachable();
+        }
+        test::detached_jobs::application::suspend().await;
+    }
+
+    fn healthy() -> u32 {
+        7
+    }
 }
 
 lockgate_plugin::export!(Fixture);

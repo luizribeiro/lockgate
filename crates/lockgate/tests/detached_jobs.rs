@@ -32,6 +32,10 @@ struct Control {
     completed: Arc<Semaphore>,
     aborted: Arc<AtomicBool>,
     quota_errors: Arc<AtomicUsize>,
+    import_entered: Arc<Semaphore>,
+    import_cancelled: Arc<Semaphore>,
+    import_dropped: Arc<AtomicBool>,
+    import_completed: Arc<AtomicBool>,
 }
 
 impl Control {
@@ -42,6 +46,10 @@ impl Control {
             completed: Arc::new(Semaphore::new(0)),
             aborted: Arc::new(AtomicBool::new(false)),
             quota_errors: Arc::new(AtomicUsize::new(0)),
+            import_entered: Arc::new(Semaphore::new(0)),
+            import_cancelled: Arc::new(Semaphore::new(0)),
+            import_dropped: Arc::new(AtomicBool::new(false)),
+            import_completed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -55,6 +63,18 @@ impl Control {
 
     fn release_one(&self) {
         self.release.add_permits(1);
+    }
+
+    async fn wait_import_entered(&self) {
+        wait_for(&self.import_entered, "non-detached import did not suspend").await;
+    }
+
+    async fn wait_import_cancelled(&self) {
+        wait_for(
+            &self.import_cancelled,
+            "non-detached import future was not cancelled",
+        )
+        .await;
     }
 }
 
@@ -76,6 +96,16 @@ impl application::Host for Imports {
             }
             Err(error) => Err(error.to_string()),
         }
+    }
+
+    async fn suspend(&mut self, _cx: HostCtx<'_, ()>) {
+        let _drop_marker = ImportDropMarker {
+            dropped: Arc::clone(&self.control.import_dropped),
+            cancelled: Arc::clone(&self.control.import_cancelled),
+        };
+        self.control.import_entered.add_permits(1);
+        pending::<()>().await;
+        self.control.import_completed.store(true, Ordering::SeqCst);
     }
 }
 
@@ -108,6 +138,18 @@ struct DropMarker(Arc<AtomicBool>);
 impl Drop for DropMarker {
     fn drop(&mut self) {
         self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+struct ImportDropMarker {
+    dropped: Arc<AtomicBool>,
+    cancelled: Arc<Semaphore>,
+}
+
+impl Drop for ImportDropMarker {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+        self.cancelled.add_permits(1);
     }
 }
 
@@ -144,6 +186,29 @@ impl DetachedClient<'_, ()> {
         match values.as_slice() {
             [Value::String(value)] => Ok(value.clone()),
             _ => Err(CallError::shape("expected one string result")),
+        }
+    }
+
+    async fn cancel(&self) -> Result<(), CallError> {
+        let values = self
+            .0
+            .invoke("cancel", &[], InvocationCtx::bounded(1_000_000))
+            .await?;
+        if values.is_empty() {
+            Ok(())
+        } else {
+            Err(CallError::shape("expected no results"))
+        }
+    }
+
+    async fn healthy(&self) -> Result<u32, CallError> {
+        let values = self
+            .0
+            .invoke("healthy", &[], InvocationCtx::bounded(1_000_000))
+            .await?;
+        match values.as_slice() {
+            [Value::U32(value)] => Ok(*value),
+            _ => Err(CallError::shape("expected one u32 result")),
         }
     }
 }
@@ -268,6 +333,37 @@ async fn host_drop_aborts_and_awaits_detached_jobs() {
     .expect("Host drop hung while awaiting an aborted detached job")
     .unwrap();
     assert!(control.aborted.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn dropping_a_call_cancels_its_import_but_not_its_detached_job() {
+    let control = Control::new();
+    let failures = Arc::new(Mutex::new(Vec::new()));
+    let (host, plugin) = host(control.clone(), failures).await;
+    let client = host.client::<DetachedRole>(&plugin).unwrap();
+
+    let mut invocation = Box::pin(client.cancel());
+    tokio::select! {
+        result = &mut invocation => {
+            panic!("instrumented invocation completed before cancellation: {result:?}")
+        }
+        () = async {
+            control.wait_started().await;
+            control.wait_import_entered().await;
+        } => {}
+    }
+    assert!(!control.import_dropped.load(Ordering::SeqCst));
+    assert!(!control.import_completed.load(Ordering::SeqCst));
+
+    drop(invocation);
+    control.wait_import_cancelled().await;
+    assert!(control.import_dropped.load(Ordering::SeqCst));
+    assert!(!control.import_completed.load(Ordering::SeqCst));
+
+    assert_eq!(client.healthy().await.unwrap(), 7);
+    control.release_one();
+    control.wait_completed().await;
+    assert!(!control.import_completed.load(Ordering::SeqCst));
 }
 
 async fn wait_for(semaphore: &Semaphore, message: &str) {

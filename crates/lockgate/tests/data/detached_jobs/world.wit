@@ -2,10 +2,13 @@ package test:detached-jobs;
 
 interface application {
   start: func(kind: u8) -> result<string, string>;
+  suspend: async func();
 }
 
 interface guest {
   start: func(kind: u8) -> string;
+  cancel: async func();
+  healthy: func() -> u32;
 }
 
 world fixture {
