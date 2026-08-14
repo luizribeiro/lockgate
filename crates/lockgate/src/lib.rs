@@ -1,8 +1,11 @@
 //! Host admission, permissions, and execution kernel.
 
-#[allow(
-    dead_code,
-    reason = "the private execution core is wired in later steps"
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "execution test hooks are exercised by the integration-test harness"
+    )
 )]
 mod exec;
 mod inspection;

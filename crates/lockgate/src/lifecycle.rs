@@ -158,15 +158,7 @@ pub struct HostBuilder<S: Send + 'static> {
 
 struct AdmittedPlugin<S: 'static> {
     handle: PluginHandle,
-    #[allow(
-        dead_code,
-        reason = "retained for Host invocation in the next lifecycle step"
-    )]
     artifact: LoadedComponent<S>,
-    #[allow(
-        dead_code,
-        reason = "retained for Host invocation in the next lifecycle step"
-    )]
     limits: RuntimeLimits,
     interfaces: Vec<String>,
 }
@@ -304,7 +296,7 @@ pub struct Host<S: Send + 'static> {
     id: HostId,
     #[allow(
         dead_code,
-        reason = "retained for role invocation in the next lifecycle step"
+        reason = "retained as the steady-state engine owner alongside its prelinked artifacts"
     )]
     engine: ExecEngine,
     plugins: Vec<AdmittedPlugin<S>>,
