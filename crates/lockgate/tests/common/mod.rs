@@ -66,11 +66,14 @@ pub(crate) fn sectioned_fixture(bytes: &[u8], metadata: &PluginMetadata) -> Vec<
 }
 
 pub(crate) fn embedded_lockgate_sections(bytes: &[u8]) -> (Option<&[u8]>, Option<&[u8]>) {
+    let mut depth = 0usize;
     let mut metadata = None;
     let mut needs = None;
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.expect("fixture must be valid WebAssembly") {
-            Payload::CustomSection(section) => match section.name() {
+            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
+            Payload::End(_) if depth > 0 => depth -= 1,
+            Payload::CustomSection(section) if depth <= 1 => match section.name() {
                 PLUGIN_METADATA_SECTION => {
                     assert!(metadata.replace(section.data()).is_none());
                 }

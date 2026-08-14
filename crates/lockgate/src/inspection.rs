@@ -71,6 +71,7 @@ pub(crate) struct Sections<'a> {
 
 pub(crate) fn decode_sections(bytes: &[u8]) -> Result<Sections<'_>, InspectError> {
     let mut encoding = None;
+    let mut depth = 0usize;
     let mut metadata = None;
     let mut needs = None;
 
@@ -81,7 +82,9 @@ pub(crate) fn decode_sections(bytes: &[u8]) -> Result<Sections<'_>, InspectError
             Payload::Version {
                 encoding: found, ..
             } if encoding.is_none() => encoding = Some(found),
-            Payload::CustomSection(section) => match section.name() {
+            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
+            Payload::End(_) if depth > 0 => depth -= 1,
+            Payload::CustomSection(section) if depth <= 1 => match section.name() {
                 PLUGIN_METADATA_SECTION => {
                     set_section(&mut metadata, section.data(), PLUGIN_METADATA_SECTION)?
                 }

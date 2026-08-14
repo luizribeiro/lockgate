@@ -70,6 +70,25 @@ fn linked_sectioned_component(wit: &str) -> Vec<u8> {
         .unwrap()
 }
 
+fn deeply_nested_sectioned_component() -> Vec<u8> {
+    let metadata = PluginMetadata::new(PLUGIN_ID, "Inspection fixture", "1.0").unwrap();
+    let mut module = wasm_encoder::Module::new();
+    module.section(&CustomSection {
+        name: PLUGIN_METADATA_SECTION.into(),
+        data: metadata.to_section_bytes().unwrap().into(),
+    });
+    module.section(&CustomSection {
+        name: PLUGIN_NEEDS_SECTION.into(),
+        data: NeedsManifest::empty().to_section_bytes().unwrap().into(),
+    });
+
+    let mut nested = wasm_encoder::ComponentBuilder::default();
+    nested.core_module_raw(None, &module.finish());
+    let mut outer = wasm_encoder::ComponentBuilder::default();
+    outer.component_raw(None, &nested.finish());
+    outer.finish()
+}
+
 #[test]
 fn inspects_metadata_needs_digest_and_exports() {
     let bytes = sectioned_component(
@@ -96,6 +115,13 @@ fn inspects_manifest_sections_linked_inside_the_guest_module() {
     assert_eq!(inspection.metadata().id(), PLUGIN_ID);
     assert_eq!(inspection.needs(), &NeedsManifest::empty());
     assert_eq!(inspection.exported_interfaces(), ["test:inspection/guest"]);
+}
+
+#[test]
+fn ignores_manifest_sections_buried_below_the_linked_guest_module() {
+    let error = inspect(&deeply_nested_sectioned_component()).unwrap_err();
+
+    assert!(matches!(error, InspectError::MissingMetadata));
 }
 
 #[test]
