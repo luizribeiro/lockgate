@@ -36,6 +36,22 @@ macro_rules! generate {
 /// impl Plugin for MissingIdentity {}
 /// export!(MissingIdentity);
 /// ```
+///
+/// An explicitly empty identity is rejected during const evaluation:
+///
+/// ```compile_fail,E0080
+/// use lockgate_plugin::{Plugin, export};
+///
+/// macro_rules! __lockgate_wit_export {
+///     ($plugin:ident) => {};
+/// }
+///
+/// struct EmptyIdentity;
+/// impl Plugin for EmptyIdentity {
+///     const ID: &'static str = "";
+/// }
+/// export!(EmptyIdentity);
+/// ```
 pub use lockgate_plugin_macros::export;
 
 /// Static declarations embedded into a plugin component by [`export!`](macro@export).
