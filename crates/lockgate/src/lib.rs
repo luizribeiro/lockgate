@@ -7,6 +7,7 @@
 mod exec;
 mod inspection;
 mod lifecycle;
+mod role;
 mod validate;
 
 pub use inspection::{InspectError, Inspection, inspect};
@@ -14,6 +15,7 @@ pub use lifecycle::{
     Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, InvocationCtx,
     LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
+pub use role::{Role, RoleError, RoleInvocation};
 pub use validate::ValidationError;
 
 #[cfg(test)]

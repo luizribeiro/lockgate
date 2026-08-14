@@ -1,10 +1,29 @@
-use std::{any::Any, collections::BTreeMap, error::Error, fmt, path::PathBuf};
+use std::{
+    any::Any,
+    collections::BTreeMap,
+    error::Error,
+    fmt,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use lockgate_schema::{AtomKey, GrantSet, PluginMetadata};
 
 use crate::exec::{ExecEngine, ExecError, ExecLimits, LoadError, LoadedComponent};
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
+use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
+
+static NEXT_HOST_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HostId(u64);
+
+impl HostId {
+    fn next() -> Self {
+        Self(NEXT_HOST_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 /// Per-invocation execution budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +151,7 @@ impl PluginConfig {
 
 /// Retained engine and linker state for preparing plugins with invocation data `S`.
 pub struct HostBuilder<S: Send + 'static> {
+    id: HostId,
     engine: ExecEngine,
     admitted: Vec<AdmittedPlugin<S>>,
 }
@@ -148,11 +168,14 @@ struct AdmittedPlugin<S: 'static> {
         reason = "retained for Host invocation in the next lifecycle step"
     )]
     limits: RuntimeLimits,
+    interfaces: Vec<String>,
 }
 
 /// Identity and display metadata for an admitted plugin.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginHandle {
+    host: HostId,
+    index: usize,
     metadata: PluginMetadata,
 }
 
@@ -172,6 +195,7 @@ impl<S: Send + 'static> HostBuilder<S> {
     /// Creates a builder with Lockgate's pinned component-engine configuration.
     pub fn new() -> Result<Self, EngineError> {
         Ok(Self {
+            id: HostId::next(),
             engine: ExecEngine::new().map_err(EngineError::new)?,
             admitted: Vec::new(),
         })
@@ -252,12 +276,15 @@ impl<S: Send + 'static> HostBuilder<S> {
             .map_err(AdmissionError::from_smoke)?;
 
         let handle = PluginHandle {
+            host: self.id,
+            index: self.admitted.len(),
             metadata: inspection.metadata().clone(),
         };
         self.admitted.push(AdmittedPlugin {
             handle: handle.clone(),
             artifact: *artifact,
             limits,
+            interfaces: inspection.exported_interfaces().to_vec(),
         });
         Ok(handle)
     }
@@ -265,6 +292,7 @@ impl<S: Send + 'static> HostBuilder<S> {
     /// Finishes configuration and transfers admitted plugins into a steady-state Host.
     pub fn finish(self) -> Host<S> {
         Host {
+            id: self.id,
             engine: self.engine,
             plugins: self.admitted,
         }
@@ -273,6 +301,7 @@ impl<S: Send + 'static> HostBuilder<S> {
 
 /// Steady-state owner of the execution engine and admitted plugins.
 pub struct Host<S: Send + 'static> {
+    id: HostId,
     #[allow(
         dead_code,
         reason = "retained for role invocation in the next lifecycle step"
@@ -285,6 +314,32 @@ impl<S: Send + 'static> Host<S> {
     /// Iterates over admitted plugins in admission order.
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
         self.plugins.iter().map(|plugin| &plugin.handle)
+    }
+
+    /// Casts a plugin to an exported WIT role before any call is attempted.
+    pub fn client<R: Role>(&self, plugin: &PluginHandle) -> Result<R::Client<'_, S>, RoleError> {
+        if plugin.host != self.id {
+            return Err(RoleError::WrongHost);
+        }
+        let admitted = self
+            .plugins
+            .get(plugin.index)
+            .filter(|admitted| &admitted.handle == plugin)
+            .ok_or(RoleError::WrongHost)?;
+        if !admitted
+            .interfaces
+            .iter()
+            .any(|interface| interface == R::INTERFACE)
+        {
+            return Err(RoleError::RoleNotExported {
+                interface: R::INTERFACE,
+            });
+        }
+        Ok(R::client(RoleInvocation::new(
+            &admitted.artifact,
+            admitted.limits,
+            R::INTERFACE,
+        )))
     }
 }
 

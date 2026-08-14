@@ -2,7 +2,7 @@ mod common;
 
 use lockgate::{
     Acceptance, AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet,
-    PluginConfig, RuntimeLimits, SymbolicRoots, inspect,
+    PluginConfig, Role, RoleError, RoleInvocation, RuntimeLimits, SymbolicRoots, inspect,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, GrantSet, NeedEntry, NeedsDigest, NeedsManifest, PluginMetadata};
@@ -10,6 +10,40 @@ use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_compon
 use wit_parser::{ManglingAndAbi, Resolve};
 
 const PLUGIN_ID: &str = "com.example.lifecycle";
+
+struct GuestRole;
+
+impl Role for GuestRole {
+    const INTERFACE: &'static str = "test:lifecycle/guest";
+    type Client<'a, S>
+        = RoleInvocation<'a, S>
+    where
+        S: Send + 'static;
+
+    fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
+    where
+        S: Send + 'static,
+    {
+        invocation
+    }
+}
+
+struct MissingRole;
+
+impl Role for MissingRole {
+    const INTERFACE: &'static str = "test:lifecycle/missing";
+    type Client<'a, S>
+        = RoleInvocation<'a, S>
+    where
+        S: Send + 'static;
+
+    fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
+    where
+        S: Send + 'static,
+    {
+        invocation
+    }
+}
 
 fn component(wit: &str) -> Vec<u8> {
     let mut resolve = Resolve::new();
@@ -157,6 +191,41 @@ async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
     assert_eq!(plugins, [&admitted]);
     assert_eq!(plugins[0].id(), PLUGIN_ID);
     assert_eq!(plugins[0].metadata(), &metadata());
+}
+
+#[tokio::test]
+async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
+    let bytes = well_formed_fixture();
+    let mut builder = HostBuilder::<()>::new().unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let handle = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+    let host = builder.finish();
+
+    host.client::<GuestRole>(&handle).unwrap();
+    let error = host.client::<MissingRole>(&handle).unwrap_err();
+    assert!(matches!(
+        error,
+        RoleError::RoleNotExported {
+            interface: "test:lifecycle/missing"
+        }
+    ));
+    assert!(error.to_string().contains("test:lifecycle/missing"));
+
+    let other_host = HostBuilder::<()>::new().unwrap().finish();
+    let error = other_host.client::<GuestRole>(&handle).unwrap_err();
+    assert!(matches!(error, RoleError::WrongHost));
+    assert!(error.to_string().contains("different Lockgate Host"));
 }
 
 #[tokio::test]
