@@ -86,7 +86,7 @@ impl Error for HostImportMarker {}
 
 #[allow(
     dead_code,
-    reason = "used by generated host-import adapters and integration tests"
+    reason = "reserved for future fallible capability adapters and covered by the direct exec test"
 )]
 pub(crate) fn host_import_error(error: AnyError) -> WasmtimeError {
     WasmtimeError::new(HostImportMarker(error))

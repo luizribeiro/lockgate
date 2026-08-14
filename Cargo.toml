@@ -20,12 +20,17 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+heck = "0.5.0"
 proc-macro-crate = "3.5.0"
+proc-macro2 = "1.0.103"
+quote = "1.0.42"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"
+syn = { version = "2.0.110", features = ["full"] }
 tokio = "1.51.1"
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", features = ["component-model", "component-model-async"] }
+wasmtime-wit-bindgen = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", package = "wasmtime-internal-wit-bindgen", features = ["component-model-async"] }
 wasm-encoder = "0.254.0"
 wasmparser = "0.254.0"
 wit-bindgen = "0.57"

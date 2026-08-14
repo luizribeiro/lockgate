@@ -39,6 +39,8 @@ pub(crate) static EXEC_FUEL_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("exec-fuel-guest", "lockgate_exec_fuel_fixture.wasm"));
 pub(crate) static PUBLIC_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("public-guest", "lockgate_public_fixture.wasm"));
+pub(crate) static HOST_BINDINGS_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("host-bindings-guest", "lockgate_host_bindings_fixture.wasm"));
 
 pub(crate) fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmtime::Result<()> {
     linker

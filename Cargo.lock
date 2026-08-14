@@ -670,6 +670,7 @@ name = "lockgate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "lockgate-macros",
  "lockgate-schema",
  "serde_json",
  "tokio",
@@ -684,6 +685,15 @@ dependencies = [
 [[package]]
 name = "lockgate-macros"
 version = "0.1.0"
+dependencies = [
+ "heck",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "wasmtime-internal-wit-bindgen",
+ "wit-parser 0.254.0",
+]
 
 [[package]]
 name = "lockgate-plugin"

@@ -205,7 +205,11 @@ impl PluginHandle {
 }
 
 impl<S: Send + Sync + 'static> HostBuilder<S> {
-    /// Creates a builder with Lockgate's pinned component-engine configuration.
+    /// Creates a builder with application host imports and Lockgate's pinned
+    /// component-engine configuration.
+    ///
+    /// Generated bindings implement [`crate::HostImports`] for the supplied
+    /// value. Pass `()` when admitted plugins import no application functions.
     pub fn new<I: crate::HostImports<S>>(imports: I) -> Result<Self, EngineError> {
         Ok(Self {
             id: HostId::next(),

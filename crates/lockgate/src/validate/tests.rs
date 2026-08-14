@@ -4,6 +4,10 @@ use wit_component::{
 };
 use wit_parser::{ManglingAndAbi, Resolve};
 
+#[allow(
+    clippy::duplicate_mod,
+    reason = "validation unit tests reuse the integration fixture module"
+)]
 #[path = "../../tests/common/mod.rs"]
 mod fixtures;
 

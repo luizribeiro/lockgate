@@ -1,0 +1,27 @@
+package test:host-bindings;
+
+interface application {
+  record request {
+    value: u32,
+    fail: bool,
+  }
+
+  read-data: func() -> string;
+  caller: func() -> string;
+  transform: func(request: request) -> result<request, string>;
+  first: async func();
+  second: async func();
+  startup: func() -> u32;
+}
+
+interface guest {
+  data: func() -> string;
+  caller: func() -> string;
+  overlap: async func() -> u32;
+  rich: func(value: u32, fail: bool) -> string;
+}
+
+world fixture {
+  import application;
+  export guest;
+}

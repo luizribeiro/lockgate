@@ -150,7 +150,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         store
             .set_fuel(invocation_fuel)
             .map_err(map_dispatch_error)?;
-        let Some(func) = instance.get_func(&mut store, &export.func) else {
+        let Some(func) = instance.get_func(&mut store, export.func) else {
             return Err(ExecError::Dispatch(anyhow::anyhow!(
                 "resolved component export was not a function"
             )));
@@ -246,6 +246,9 @@ pub(crate) struct ExecLimits {
 #[doc(hidden)]
 pub struct StoreCtx<S> {
     limiter: MemoryLimiter,
+    // Invocation futures may move between executor threads. The Store owns an
+    // Arc so host calls can cheaply retain data across await points; Arc<S> is
+    // Send only when S is Sync, which is why that bound reaches the public API.
     data: Arc<S>,
     imports: Box<dyn Any + Send>,
     plugin: Option<Arc<dyn Any + Send + Sync>>,
@@ -279,22 +282,23 @@ impl<S> StoreCtx<S> {
     }
 
     #[doc(hidden)]
-    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, P)
+    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, Arc<P>)
     where
         I: Clone + 'static,
-        P: Clone + 'static,
+        P: Send + Sync + 'static,
     {
         let imports = self
             .imports
             .downcast_ref::<I>()
             .expect("Store imports must match their generated host bindings")
             .clone();
-        let plugin = self
-            .plugin
-            .as_deref()
-            .and_then(|plugin| plugin.downcast_ref::<P>())
-            .expect("public plugin Stores must carry a PluginHandle")
-            .clone();
+        let plugin = Arc::clone(
+            self.plugin
+                .as_ref()
+                .expect("public plugin Stores must carry a PluginHandle"),
+        )
+        .downcast::<P>()
+        .expect("Store plugin identity must be a PluginHandle");
         (imports, Arc::clone(&self.data), plugin)
     }
 

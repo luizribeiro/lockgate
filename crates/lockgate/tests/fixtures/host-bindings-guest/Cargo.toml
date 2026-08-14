@@ -1,0 +1,12 @@
+[package]
+name = "lockgate-host-bindings-fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dlmalloc.workspace = true
+futures = { workspace = true, features = ["async-await"] }
+lockgate-plugin = { path = "../../../../lockgate-plugin" }

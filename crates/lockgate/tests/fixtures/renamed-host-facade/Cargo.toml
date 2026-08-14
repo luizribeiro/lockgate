@@ -1,0 +1,10 @@
+[package]
+name = "lockgate-renamed-host-facade-fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+lg = { package = "lockgate", path = "../../../../lockgate" }

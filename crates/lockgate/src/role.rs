@@ -114,9 +114,10 @@ impl CallError {
                 detail: detail.to_string(),
             },
             ExecError::OutOfBudget => Self::OutOfBudget { fuel },
-            // Host imports are not admitted through the public lifecycle yet.
-            // Keep this defensive mapping in the dynamic dispatch family until
-            // the host-bindings step gives import failures their public shape.
+            // Generated application imports have no outer failure channel yet:
+            // WIT `result` values are guest data, while only future fallible
+            // capability adapters can create the internal HostImport marker.
+            // That later step will give these failures their public shape.
             ExecError::HostImport(error) | ExecError::Dispatch(error) => Self::Dispatch {
                 message: error.to_string(),
             },

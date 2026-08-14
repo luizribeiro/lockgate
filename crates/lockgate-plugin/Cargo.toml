@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 lockgate-plugin-macros = { path = "../lockgate-plugin-macros" }
-wit-bindgen = { workspace = true, default-features = false, features = ["macros"] }
+wit-bindgen = { workspace = true, default-features = false, features = ["async", "macros"] }
 
 [dev-dependencies]
 lockgate-schema = { path = "../lockgate-schema" }

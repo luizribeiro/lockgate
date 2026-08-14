@@ -4,8 +4,10 @@ members = [
     "exec-concurrent-guest",
     "exec-fuel-guest",
     "exec-guest",
+    "host-bindings-guest",
     "public-guest",
     "renamed-facade",
+    "renamed-host-facade",
 ]
 
 [workspace.dependencies]
