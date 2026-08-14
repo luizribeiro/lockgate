@@ -155,7 +155,11 @@ async fn equal_fuel_exhausts_at_the_same_iteration_boundary() {
         .work(InvocationCtx::bounded(LOW_FUEL), first)
         .await
         .unwrap_err();
-    assert!(matches!(error, CallError::OutOfBudget));
+    assert!(matches!(
+        &error,
+        CallError::OutOfBudget { fuel } if *fuel == LOW_FUEL
+    ));
+    assert!(error.to_string().contains(&LOW_FUEL.to_string()));
 }
 
 async fn first_exhausted_iteration(diagnostics: &DiagnosticsClient<'_, ()>, fuel: u64) -> u32 {
@@ -165,7 +169,10 @@ async fn first_exhausted_iteration(diagnostics: &DiagnosticsClient<'_, ()>, fuel
         .work(InvocationCtx::bounded(fuel), exhausts)
         .await
         .expect_err("the boundary-search upper limit should exhaust its fuel");
-    assert!(matches!(upper_error, CallError::OutOfBudget));
+    assert!(matches!(
+        upper_error,
+        CallError::OutOfBudget { fuel: exhausted } if exhausted == fuel
+    ));
 
     while completes + 1 < exhausts {
         let candidate = completes + (exhausts - completes) / 2;
@@ -174,7 +181,10 @@ async fn first_exhausted_iteration(diagnostics: &DiagnosticsClient<'_, ()>, fuel
             .await
         {
             Ok(_) => completes = candidate,
-            Err(CallError::OutOfBudget) => exhausts = candidate,
+            Err(CallError::OutOfBudget { fuel: exhausted }) => {
+                assert_eq!(exhausted, fuel);
+                exhausts = candidate;
+            }
             Err(error) => panic!("boundary search failed unexpectedly: {error}"),
         }
     }

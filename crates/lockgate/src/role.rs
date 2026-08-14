@@ -76,7 +76,7 @@ impl<'a, S: Send + 'static> RoleInvocation<'a, S> {
         self.artifact
             .invoke(export, arguments, ctx.data, self.limits.into(), fuel)
             .await
-            .map_err(CallError::from_exec)
+            .map_err(|error| CallError::from_exec(error, fuel))
     }
 }
 
@@ -92,7 +92,7 @@ pub enum CallError {
     /// Guest execution trapped.
     Trap { detail: String },
     /// The invocation exhausted its bounded fuel allowance.
-    OutOfBudget,
+    OutOfBudget { fuel: u64 },
     /// Dynamic function lookup, argument lowering, or result lifting failed.
     Dispatch { message: String },
 }
@@ -105,7 +105,7 @@ impl CallError {
         }
     }
 
-    fn from_exec(error: ExecError) -> Self {
+    fn from_exec(error: ExecError, fuel: u64) -> Self {
         match error {
             ExecError::Instantiate(error) => Self::Instantiate {
                 message: error.to_string(),
@@ -113,7 +113,7 @@ impl CallError {
             ExecError::Trap(detail) => Self::Trap {
                 detail: detail.to_string(),
             },
-            ExecError::OutOfBudget => Self::OutOfBudget,
+            ExecError::OutOfBudget => Self::OutOfBudget { fuel },
             // Host imports are not admitted through the public lifecycle yet.
             // Keep this defensive mapping in the dynamic dispatch family until
             // the host-bindings step gives import failures their public shape.
@@ -131,7 +131,10 @@ impl fmt::Display for CallError {
                 write!(formatter, "plugin instance could not be created: {message}")
             }
             Self::Trap { detail } => write!(formatter, "plugin trapped: {detail}"),
-            Self::OutOfBudget => formatter.write_str("plugin exhausted its bounded call budget"),
+            Self::OutOfBudget { fuel } => write!(
+                formatter,
+                "plugin exhausted its bounded call budget of {fuel} fuel units"
+            ),
             Self::Dispatch { message } => {
                 write!(formatter, "plugin call could not be dispatched: {message}")
             }
