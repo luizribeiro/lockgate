@@ -5,7 +5,7 @@ use lockgate_schema::{NeedsDigest, NeedsManifest, PluginMetadata};
 
 #[test]
 fn facade_fixture_sections_match_host_encoding_byte_for_byte() {
-    let expected_metadata = PluginMetadata::new("greeter", "Greeter", "1.0").unwrap();
+    let expected_metadata = expected_metadata();
     let expected_needs = NeedsManifest::empty();
     let (metadata, needs) = common::embedded_lockgate_sections(&common::PUBLIC_FIXTURE);
 
@@ -21,7 +21,7 @@ fn facade_fixture_sections_match_host_encoding_byte_for_byte() {
 
 #[test]
 fn facade_fixture_inspection_preserves_its_declarations() {
-    let expected_metadata = PluginMetadata::new("greeter", "Greeter", "1.0").unwrap();
+    let expected_metadata = expected_metadata();
     let expected_needs = NeedsManifest::empty();
     let inspection = inspect(&common::PUBLIC_FIXTURE).unwrap();
 
@@ -31,4 +31,11 @@ fn facade_fixture_inspection_preserves_its_declarations() {
         inspection.needs_digest(),
         NeedsDigest::compute(&expected_needs).unwrap()
     );
+}
+
+fn expected_metadata() -> PluginMetadata {
+    PluginMetadata::new("greeter", "Greeter", "1.0")
+        .unwrap()
+        .with_description("Public facade fixture")
+        .with_license("MIT OR Apache-2.0")
 }

@@ -2,6 +2,8 @@
 name = "lockgate-public-fixture"
 version = "0.1.0"
 edition = "2024"
+description = "Public facade fixture"
+license = "MIT OR Apache-2.0"
 
 [lib]
 crate-type = ["cdylib"]
