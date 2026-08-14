@@ -15,7 +15,7 @@ pub use lifecycle::{
     Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, InvocationCtx,
     LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
-pub use role::{Role, RoleError, RoleInvocation};
+pub use role::{CallError, Role, RoleError, RoleInvocation, Value};
 pub use validate::ValidationError;
 
 #[cfg(test)]

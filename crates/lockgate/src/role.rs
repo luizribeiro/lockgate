@@ -1,7 +1,9 @@
 use std::{error::Error, fmt};
 
-use crate::exec::LoadedComponent;
-use crate::lifecycle::RuntimeLimits;
+use wasmtime::component::Val;
+
+use crate::exec::{ExecError, LoadedComponent};
+use crate::lifecycle::{BudgetClass, InvocationCtx, RuntimeLimits};
 
 /// A hand-written or generated view of one exported WIT interface.
 ///
@@ -22,10 +24,6 @@ pub trait Role: 'static {
 }
 
 /// Interface-scoped calling capability supplied to a role client at cast time.
-#[allow(
-    dead_code,
-    reason = "the public invocation method lands in the next role-client commit"
-)]
 pub struct RoleInvocation<'a, S: Send + 'static> {
     pub(crate) artifact: &'a LoadedComponent<S>,
     pub(crate) limits: RuntimeLimits,
@@ -53,7 +51,95 @@ impl<'a, S: Send + 'static> RoleInvocation<'a, S> {
             interface,
         }
     }
+
+    /// Invokes one function in this role's interface using a fresh bounded Store.
+    ///
+    /// This is the narrow dynamic-value boundary for hand-written and generated
+    /// role clients. Role clients lower their typed arguments to [`Value`]s and
+    /// lift the returned values before exposing a typed method to applications.
+    pub async fn invoke(
+        &self,
+        function: &str,
+        arguments: &[Value],
+        ctx: InvocationCtx<S>,
+    ) -> Result<Vec<Value>, CallError> {
+        let export = self
+            .artifact
+            .export(self.interface, function)
+            .ok_or_else(|| CallError::Dispatch {
+                message: format!(
+                    "interface `{}` has no function `{function}`",
+                    self.interface
+                ),
+            })?;
+        let BudgetClass::Bounded { fuel } = ctx.budget;
+        self.artifact
+            .invoke(export, arguments, ctx.data, self.limits.into(), fuel)
+            .await
+            .map_err(CallError::from_exec)
+    }
 }
+
+/// A dynamically lowered or lifted WIT value used inside role clients.
+pub type Value = Val;
+
+/// Failure of one plugin invocation.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum CallError {
+    /// A fresh plugin instance could not be created for the call.
+    Instantiate { message: String },
+    /// Guest execution trapped.
+    Trap { detail: String },
+    /// The invocation exhausted its bounded fuel allowance.
+    OutOfBudget,
+    /// Dynamic function lookup, argument lowering, or result lifting failed.
+    Dispatch { message: String },
+}
+
+impl CallError {
+    /// Reports a mismatch while a role client lowers arguments or lifts results.
+    pub fn shape(message: impl Into<String>) -> Self {
+        Self::Dispatch {
+            message: message.into(),
+        }
+    }
+
+    fn from_exec(error: ExecError) -> Self {
+        match error {
+            ExecError::Instantiate(error) => Self::Instantiate {
+                message: error.to_string(),
+            },
+            ExecError::Trap(detail) => Self::Trap {
+                detail: detail.to_string(),
+            },
+            ExecError::OutOfBudget => Self::OutOfBudget,
+            // Host imports are not admitted through the public lifecycle yet.
+            // Keep this defensive mapping in the dynamic dispatch family until
+            // the host-bindings step gives import failures their public shape.
+            ExecError::HostImport(error) | ExecError::Dispatch(error) => Self::Dispatch {
+                message: error.to_string(),
+            },
+        }
+    }
+}
+
+impl fmt::Display for CallError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Instantiate { message } => {
+                write!(formatter, "plugin instance could not be created: {message}")
+            }
+            Self::Trap { detail } => write!(formatter, "plugin trapped: {detail}"),
+            Self::OutOfBudget => formatter.write_str("plugin exhausted its bounded call budget"),
+            Self::Dispatch { message } => {
+                write!(formatter, "plugin call could not be dispatched: {message}")
+            }
+        }
+    }
+}
+
+impl Error for CallError {}
 
 /// Failure to cast an admitted plugin handle to a role.
 #[derive(Clone, Debug, PartialEq, Eq)]
