@@ -690,6 +690,7 @@ dependencies = [
 name = "lockgate-plugin-macros"
 version = "0.1.0"
 dependencies = [
+ "lockgate-schema",
  "proc-macro-crate",
  "quote",
  "syn 2.0.119",

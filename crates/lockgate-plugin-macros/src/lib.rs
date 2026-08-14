@@ -1,5 +1,6 @@
 //! Private proc-macro implementations for the Lockgate guest facade.
 
+use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use quote::{format_ident, quote};
@@ -8,6 +9,8 @@ use syn::{Ident, parse_macro_input};
 #[proc_macro]
 pub fn export(input: TokenStream) -> TokenStream {
     let plugin = parse_macro_input!(input as Ident);
+    let metadata_section = PLUGIN_METADATA_SECTION;
+    let needs_section = PLUGIN_NEEDS_SECTION;
     let facade = match crate_name("lockgate-plugin") {
         Ok(FoundCrate::Itself) => quote!(::lockgate_plugin),
         Ok(FoundCrate::Name(name)) => {
@@ -65,14 +68,14 @@ pub fn export(input: TokenStream) -> TokenStream {
         const __LOCKGATE_PLUGIN_METADATA_LEN: usize =
             #facade::__private::metadata_len(&__LOCKGATE_PLUGIN_MANIFEST);
         #[used]
-        #[unsafe(link_section = "lockgate:plugin")]
+        #[unsafe(link_section = #metadata_section)]
         static __LOCKGATE_PLUGIN_METADATA: [u8; __LOCKGATE_PLUGIN_METADATA_LEN] =
             #facade::__private::metadata_bytes(&__LOCKGATE_PLUGIN_MANIFEST);
 
         const __LOCKGATE_PLUGIN_NEEDS_LEN: usize =
             #facade::__private::needs_len(&__LOCKGATE_PLUGIN_MANIFEST.needs);
         #[used]
-        #[unsafe(link_section = "lockgate:needs")]
+        #[unsafe(link_section = #needs_section)]
         static __LOCKGATE_PLUGIN_NEEDS: [u8; __LOCKGATE_PLUGIN_NEEDS_LEN] =
             #facade::__private::needs_bytes(&__LOCKGATE_PLUGIN_MANIFEST.needs);
     }
