@@ -9,7 +9,9 @@ use std::sync::LazyLock;
 
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{NeedsManifest, PluginMetadata};
+use wasm_encoder::reencode::{Error as ReencodeError, Reencode, ReencodeComponent};
 use wasm_encoder::{ComponentSection, CustomSection};
+use wasmparser::{Parser, Payload};
 use wasmtime::component::Linker;
 
 #[path = "../../src/exec/mod.rs"]
@@ -46,16 +48,41 @@ pub(crate) fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmt
 }
 
 pub(crate) fn sectioned_fixture(bytes: &[u8], metadata: &PluginMetadata) -> Vec<u8> {
-    let bytes = with_custom_section(
-        bytes,
-        PLUGIN_METADATA_SECTION,
-        &metadata.to_section_bytes().unwrap(),
-    );
-    with_custom_section(
-        &bytes,
-        PLUGIN_NEEDS_SECTION,
-        &NeedsManifest::empty().to_section_bytes().unwrap(),
-    )
+    let metadata_bytes = metadata.to_section_bytes().unwrap();
+    let needs_bytes = NeedsManifest::empty().to_section_bytes().unwrap();
+
+    let bytes = match embedded_lockgate_sections(bytes) {
+        (Some(embedded_metadata), Some(embedded_needs))
+            if embedded_metadata == metadata_bytes && embedded_needs == needs_bytes =>
+        {
+            return bytes.to_vec();
+        }
+        (Some(_), Some(_)) => without_lockgate_sections(bytes),
+        (None, None) => bytes.to_vec(),
+        _ => panic!("fixture must embed both Lockgate sections or neither"),
+    };
+    let bytes = with_custom_section(&bytes, PLUGIN_METADATA_SECTION, &metadata_bytes);
+    with_custom_section(&bytes, PLUGIN_NEEDS_SECTION, &needs_bytes)
+}
+
+pub(crate) fn embedded_lockgate_sections(bytes: &[u8]) -> (Option<&[u8]>, Option<&[u8]>) {
+    let mut metadata = None;
+    let mut needs = None;
+    for payload in Parser::new(0).parse_all(bytes) {
+        match payload.expect("fixture must be valid WebAssembly") {
+            Payload::CustomSection(section) => match section.name() {
+                PLUGIN_METADATA_SECTION => {
+                    assert!(metadata.replace(section.data()).is_none());
+                }
+                PLUGIN_NEEDS_SECTION => {
+                    assert!(needs.replace(section.data()).is_none());
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    (metadata, needs)
 }
 
 pub(crate) fn with_custom_section(bytes: &[u8], name: &str, data: &[u8]) -> Vec<u8> {
@@ -66,6 +93,50 @@ pub(crate) fn with_custom_section(bytes: &[u8], name: &str, data: &[u8]) -> Vec<
     }
     .append_to_component(&mut output);
     output
+}
+
+struct StripLockgateSections;
+
+impl Reencode for StripLockgateSections {
+    type Error = core::convert::Infallible;
+
+    fn parse_custom_section(
+        &mut self,
+        module: &mut wasm_encoder::Module,
+        section: wasmparser::CustomSectionReader<'_>,
+    ) -> Result<(), ReencodeError<Self::Error>> {
+        if is_lockgate_section(section.name()) {
+            return Ok(());
+        }
+        wasm_encoder::reencode::utils::parse_custom_section(self, module, section)
+    }
+}
+
+impl ReencodeComponent for StripLockgateSections {
+    fn parse_component_custom_section(
+        &mut self,
+        component: &mut wasm_encoder::Component,
+        section: wasmparser::CustomSectionReader<'_>,
+    ) -> Result<(), ReencodeError<Self::Error>> {
+        if is_lockgate_section(section.name()) {
+            return Ok(());
+        }
+        wasm_encoder::reencode::component_utils::parse_component_custom_section(
+            self, component, section,
+        )
+    }
+}
+
+fn without_lockgate_sections(bytes: &[u8]) -> Vec<u8> {
+    let mut component = wasm_encoder::Component::new();
+    StripLockgateSections
+        .parse_component(&mut component, Parser::new(0), bytes)
+        .expect("fixture component must re-encode");
+    component.finish()
+}
+
+fn is_lockgate_section(name: &str) -> bool {
+    matches!(name, PLUGIN_METADATA_SECTION | PLUGIN_NEEDS_SECTION)
 }
 
 fn build_fixture(directory: &str, artifact: &str) -> Vec<u8> {

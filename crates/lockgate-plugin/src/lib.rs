@@ -15,6 +15,7 @@ macro_rules! generate {
             path: $path,
             world: $world,
             export_macro_name: "__lockgate_wit_export",
+            runtime_path: "::lockgate_plugin::__wit_bindgen::rt",
         });
     };
 }

@@ -192,11 +192,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-plugin"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin-macros",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "lockgate-plugin-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "lockgate-public-fixture"
 version = "0.1.0"
 dependencies = [
  "dlmalloc",
- "wit-bindgen",
+ "lockgate-plugin",
 ]
 
 [[package]]

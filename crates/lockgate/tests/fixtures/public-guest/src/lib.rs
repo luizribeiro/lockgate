@@ -8,12 +8,18 @@ use core::panic::PanicInfo;
 #[global_allocator]
 static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
-wit_bindgen::generate!({
+lockgate_plugin::generate!({
     path: "wit",
     world: "fixture",
 });
 
 struct Fixture;
+
+impl lockgate_plugin::Plugin for Fixture {
+    const ID: &'static str = "greeter";
+    const NAME: Option<&'static str> = Some("Greeter");
+    const VERSION: Option<&'static str> = Some("1.0");
+}
 
 static mut PIN_COUNT: u32 = 0;
 
@@ -59,7 +65,7 @@ impl exports::test::public::diagnostics::Guest for Fixture {
     }
 }
 
-export!(Fixture);
+lockgate_plugin::export!(Fixture);
 
 #[unsafe(export_name = "cabi_realloc")]
 unsafe extern "C" fn cabi_realloc(
