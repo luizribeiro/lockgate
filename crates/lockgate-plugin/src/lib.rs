@@ -24,6 +24,13 @@ mod runtime {
     #[global_allocator]
     static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
+    /// Reallocates guest memory for canonical ABI lifting and lowering.
+    ///
+    /// # Safety
+    ///
+    /// A non-null `old_ptr` must denote an allocation made by this allocator
+    /// with the supplied `old_len` and `align`. The canonical ABI is the only
+    /// intended caller.
     #[unsafe(export_name = "cabi_realloc")]
     pub unsafe extern "C" fn cabi_realloc(
         old_ptr: *mut u8,
