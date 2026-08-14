@@ -137,11 +137,16 @@ pub struct HostBuilder<S: Send + 'static> {
 }
 
 struct AdmittedPlugin<S: 'static> {
-    #[allow(dead_code, reason = "exposed through Host::plugins in the next step")]
     handle: PluginHandle,
-    #[allow(dead_code, reason = "retained for Host invocation in the next step")]
+    #[allow(
+        dead_code,
+        reason = "retained for Host invocation in the next lifecycle step"
+    )]
     artifact: LoadedComponent<S>,
-    #[allow(dead_code, reason = "retained for Host invocation in the next step")]
+    #[allow(
+        dead_code,
+        reason = "retained for Host invocation in the next lifecycle step"
+    )]
     limits: RuntimeLimits,
 }
 
@@ -255,6 +260,31 @@ impl<S: Send + 'static> HostBuilder<S> {
             limits,
         });
         Ok(handle)
+    }
+
+    /// Finishes configuration and transfers admitted plugins into a steady-state Host.
+    pub fn finish(self) -> Host<S> {
+        Host {
+            engine: self.engine,
+            plugins: self.admitted,
+        }
+    }
+}
+
+/// Steady-state owner of the execution engine and admitted plugins.
+pub struct Host<S: Send + 'static> {
+    #[allow(
+        dead_code,
+        reason = "retained for role invocation in the next lifecycle step"
+    )]
+    engine: ExecEngine,
+    plugins: Vec<AdmittedPlugin<S>>,
+}
+
+impl<S: Send + 'static> Host<S> {
+    /// Iterates over admitted plugins in admission order.
+    pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
+        self.plugins.iter().map(|plugin| &plugin.handle)
     }
 }
 

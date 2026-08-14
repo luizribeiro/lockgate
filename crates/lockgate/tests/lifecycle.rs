@@ -135,6 +135,31 @@ async fn empty_needs_accept_both_consent_paths_and_ignore_stale_grants() {
 }
 
 #[tokio::test]
+async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
+    let bytes = well_formed_fixture();
+    let mut builder = HostBuilder::<()>::new().unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let admitted = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+
+    let host = builder.finish();
+    let plugins: Vec<_> = host.plugins().collect();
+    assert_eq!(plugins, [&admitted]);
+    assert_eq!(plugins[0].id(), PLUGIN_ID);
+    assert_eq!(plugins[0].metadata(), &metadata());
+}
+
+#[tokio::test]
 async fn unregistered_declared_capability_fails_before_smoke() {
     let atom: AtomKey = "http.request".parse().unwrap();
     let needs = NeedsManifest::new(vec![NeedEntry::flag(atom.clone())], vec![]).unwrap();
