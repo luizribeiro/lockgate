@@ -131,6 +131,15 @@ impl<S: Send + 'static> LoadedComponent<S> {
         Ok(results)
     }
 
+    /// Instantiates the component under its runtime limits and startup budget.
+    ///
+    /// Instantiation executes the component plan: inner core modules instantiate,
+    /// `start` sections run, memories and tables allocate, and guest runtime and
+    /// allocator initialization runs—effectively the plugin's constructors. It can
+    /// therefore trap, exhaust fuel, or exceed the memory cap at admission instead
+    /// of at first call. Once host imports exist, start code may call them and
+    /// observes `data`, which is why admission takes a full startup invocation
+    /// context rather than a bare fuel value.
     pub(crate) async fn smoke(
         &self,
         data: S,
