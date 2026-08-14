@@ -1,11 +1,11 @@
 mod common;
 
 use lockgate::{
-    AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet, PluginConfig,
-    RuntimeLimits, SymbolicRoots, inspect,
+    Acceptance, AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet,
+    PluginConfig, RuntimeLimits, SymbolicRoots, inspect,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{NeedsDigest, NeedsManifest, PluginMetadata};
+use lockgate_schema::{AtomKey, GrantSet, NeedEntry, NeedsDigest, NeedsManifest, PluginMetadata};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -36,6 +36,21 @@ fn engine_rejected_component() -> Vec<u8> {
     )
 }
 
+fn memory_growing_component() -> Vec<u8> {
+    let module = wat::parse_str(
+        "(module (memory 0) (func $start (drop (memory.grow (i32.const 1)))) (start $start))",
+    )
+    .unwrap();
+    let mut component = wasm_encoder::ComponentBuilder::default();
+    let module = component.core_module_raw(None, &module);
+    component.core_instantiate(
+        None,
+        module,
+        std::iter::empty::<(&str, wasm_encoder::ModuleArg)>(),
+    );
+    component.finish()
+}
+
 fn component_with_unwired_import() -> Vec<u8> {
     component(
         "package test:unwired; interface host { wait: func(); } interface guest { value: func() -> u32; } world fixture { import host; export guest; }",
@@ -48,6 +63,19 @@ fn metadata() -> PluginMetadata {
 
 fn well_formed_fixture() -> Vec<u8> {
     common::sectioned_fixture(&value_component(), &metadata())
+}
+
+fn fixture_with_needs(needs: &NeedsManifest) -> Vec<u8> {
+    let bytes = common::with_custom_section(
+        &value_component(),
+        PLUGIN_METADATA_SECTION,
+        &metadata().to_section_bytes().unwrap(),
+    );
+    common::with_custom_section(
+        &bytes,
+        PLUGIN_NEEDS_SECTION,
+        &needs.to_section_bytes().unwrap(),
+    )
 }
 
 #[test]
@@ -66,6 +94,125 @@ fn runtime_inputs_are_bounded_and_explicit() {
         InvocationCtx::new("startup", BudgetClass::Bounded { fuel: 456 }).data,
         "startup"
     );
+}
+
+#[tokio::test]
+async fn empty_needs_accept_both_consent_paths_and_ignore_stale_grants() {
+    let bytes = well_formed_fixture();
+    let mut builder = HostBuilder::<()>::new().unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let handle = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+    assert_eq!(handle.id(), PLUGIN_ID);
+    assert_eq!(handle.metadata(), &metadata());
+
+    let mut stale = GrantSet::new();
+    stale.insert_flag("obsolete.feature".parse().unwrap());
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let handle = builder
+        .admit(
+            prepared,
+            Acceptance::accepted(stale),
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+    assert_eq!(handle.id(), PLUGIN_ID);
+}
+
+#[tokio::test]
+async fn unregistered_declared_capability_fails_before_smoke() {
+    let atom: AtomKey = "http.request".parse().unwrap();
+    let needs = NeedsManifest::new(vec![NeedEntry::flag(atom.clone())], vec![]).unwrap();
+    let bytes = fixture_with_needs(&needs);
+    let mut builder = HostBuilder::<()>::new().unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+
+    let error = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(0),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AdmissionError::UnregisteredCapability { atom: ref found } if found == &atom
+    ));
+    assert!(error.to_string().contains("http.request"));
+    assert!(error.to_string().contains("application never registered"));
+}
+
+#[tokio::test]
+async fn smoke_instantiation_budget_exhaustion_is_typed() {
+    let bytes = well_formed_fixture();
+    let mut builder = HostBuilder::<()>::new().unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let limits = RuntimeLimits {
+        instantiation_fuel: 0,
+        ..RuntimeLimits::default()
+    };
+
+    let error = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            limits,
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::SmokeOutOfBudget));
+    assert!(error.to_string().contains("startup budget"));
+}
+
+#[tokio::test]
+async fn smoke_instantiation_applies_the_store_memory_cap() {
+    let bytes = common::sectioned_fixture(&memory_growing_component(), &metadata());
+    let mut builder = HostBuilder::<()>::new().unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let limits = RuntimeLimits {
+        max_memory_bytes: 0,
+        ..RuntimeLimits::default()
+    };
+
+    let error = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            limits,
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::SmokeFailure { .. }));
+    assert!(error.to_string().contains("linear memory growth"));
+    assert!(error.to_string().contains("0-byte limit"));
 }
 
 #[tokio::test]

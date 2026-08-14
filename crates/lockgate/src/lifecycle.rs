@@ -1,6 +1,8 @@
-use std::{any::Any, collections::BTreeMap, error::Error, fmt, marker::PhantomData, path::PathBuf};
+use std::{any::Any, collections::BTreeMap, error::Error, fmt, path::PathBuf};
 
-use crate::exec::{ExecEngine, LoadError};
+use lockgate_schema::{AtomKey, GrantSet, PluginMetadata};
+
+use crate::exec::{ExecEngine, ExecError, ExecLimits, LoadError, LoadedComponent};
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
 
@@ -46,6 +48,37 @@ impl Default for RuntimeLimits {
             instantiation_fuel: 10_000_000,
             max_memory_bytes: 64 * 1024 * 1024,
         }
+    }
+}
+
+impl From<RuntimeLimits> for ExecLimits {
+    fn from(limits: RuntimeLimits) -> Self {
+        Self {
+            instantiation_fuel: limits.instantiation_fuel,
+            max_memory_bytes: limits.max_memory_bytes,
+        }
+    }
+}
+
+/// The application consent accepted for a prepared plugin.
+#[derive(Clone, Debug)]
+pub struct Acceptance(AcceptanceKind);
+
+#[derive(Clone, Debug)]
+enum AcceptanceKind {
+    AllDeclared,
+    Accepted(GrantSet),
+}
+
+impl Acceptance {
+    /// Accepts every atom declared by the prepared plugin.
+    pub fn all_declared() -> Self {
+        Self(AcceptanceKind::AllDeclared)
+    }
+
+    /// Uses grants selected by an application consent flow.
+    pub fn accepted(grants: GrantSet) -> Self {
+        Self(AcceptanceKind::Accepted(grants))
     }
 }
 
@@ -100,7 +133,34 @@ impl PluginConfig {
 /// Retained engine and linker state for preparing plugins with invocation data `S`.
 pub struct HostBuilder<S: Send + 'static> {
     engine: ExecEngine,
-    marker: PhantomData<fn() -> S>,
+    admitted: Vec<AdmittedPlugin<S>>,
+}
+
+struct AdmittedPlugin<S: 'static> {
+    #[allow(dead_code, reason = "exposed through Host::plugins in the next step")]
+    handle: PluginHandle,
+    #[allow(dead_code, reason = "retained for Host invocation in the next step")]
+    artifact: LoadedComponent<S>,
+    #[allow(dead_code, reason = "retained for Host invocation in the next step")]
+    limits: RuntimeLimits,
+}
+
+/// Identity and display metadata for an admitted plugin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginHandle {
+    metadata: PluginMetadata,
+}
+
+impl PluginHandle {
+    /// Returns the stable plugin identifier.
+    pub fn id(&self) -> &str {
+        self.metadata.id()
+    }
+
+    /// Returns the plugin's validated display metadata.
+    pub fn metadata(&self) -> &PluginMetadata {
+        &self.metadata
+    }
 }
 
 impl<S: Send + 'static> HostBuilder<S> {
@@ -108,7 +168,7 @@ impl<S: Send + 'static> HostBuilder<S> {
     pub fn new() -> Result<Self, EngineError> {
         Ok(Self {
             engine: ExecEngine::new().map_err(EngineError::new)?,
-            marker: PhantomData,
+            admitted: Vec::new(),
         })
     }
 
@@ -145,15 +205,62 @@ impl<S: Send + 'static> HostBuilder<S> {
             artifact: Box::new(artifact),
         })
     }
+
+    /// Rejects declared needs before consulting acceptance while no capability
+    /// registry exists, then smoke-instantiates the prepared plugin.
+    pub async fn admit(
+        &mut self,
+        prepared: Prepared,
+        acceptance: Acceptance,
+        limits: RuntimeLimits,
+        startup_ctx: InvocationCtx<S>,
+    ) -> Result<PluginHandle, AdmissionError> {
+        let Prepared {
+            inspection,
+            artifact,
+        } = prepared;
+        if let Some(entry) = inspection
+            .needs()
+            .required()
+            .iter()
+            .chain(inspection.needs().optional())
+            .next()
+        {
+            return Err(AdmissionError::UnregisteredCapability {
+                atom: entry.atom().clone(),
+            });
+        }
+
+        // Intentionally a no-op: the future registry replaces this exhaustive reminder.
+        match acceptance.0 {
+            AcceptanceKind::AllDeclared => {}
+            AcceptanceKind::Accepted(grants) => drop(grants),
+        }
+
+        let artifact = artifact
+            .downcast::<LoadedComponent<S>>()
+            .expect("prepared artifact type must match its originating HostBuilder");
+        let BudgetClass::Bounded { fuel } = startup_ctx.budget;
+        artifact
+            .smoke(startup_ctx.data, limits.into(), fuel)
+            .await
+            .map_err(AdmissionError::from_smoke)?;
+
+        let handle = PluginHandle {
+            metadata: inspection.metadata().clone(),
+        };
+        self.admitted.push(AdmittedPlugin {
+            handle: handle.clone(),
+            artifact: *artifact,
+            limits,
+        });
+        Ok(handle)
+    }
 }
 
 /// A validated, compiled, and prelinked plugin artifact.
 pub struct Prepared {
     inspection: Inspection,
-    #[allow(
-        dead_code,
-        reason = "retained for admit and invocation lifecycle steps"
-    )]
     artifact: Box<dyn Any + Send>,
 }
 
@@ -218,6 +325,13 @@ pub enum AdmissionError {
     Preflight {
         message: String,
     },
+    UnregisteredCapability {
+        atom: AtomKey,
+    },
+    SmokeOutOfBudget,
+    SmokeFailure {
+        message: String,
+    },
 }
 
 impl AdmissionError {
@@ -255,6 +369,15 @@ impl AdmissionError {
             },
         }
     }
+
+    fn from_smoke(error: ExecError) -> Self {
+        match error {
+            ExecError::OutOfBudget => Self::SmokeOutOfBudget,
+            error => Self::SmokeFailure {
+                message: error.to_string(),
+            },
+        }
+    }
 }
 
 impl fmt::Display for AdmissionError {
@@ -278,6 +401,15 @@ impl fmt::Display for AdmissionError {
             }
             Self::Preflight { message } => {
                 write!(formatter, "component linker preflight failed: {message}")
+            }
+            Self::UnregisteredCapability { atom } => write!(
+                formatter,
+                "plugin declares capability `{atom}` that the application never registered"
+            ),
+            Self::SmokeOutOfBudget => formatter
+                .write_str("plugin exhausted its startup budget during smoke instantiation"),
+            Self::SmokeFailure { message } => {
+                write!(formatter, "plugin smoke instantiation failed: {message}")
             }
         }
     }
