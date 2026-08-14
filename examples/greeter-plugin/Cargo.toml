@@ -1,0 +1,14 @@
+[package]
+name = "greeter-plugin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dlmalloc = { version = "0.2", features = ["global"] }
+lockgate-plugin = { path = "../../crates/lockgate-plugin" }
+
+[workspace]
