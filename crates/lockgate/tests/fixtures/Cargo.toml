@@ -5,6 +5,7 @@ members = [
     "exec-fuel-guest",
     "exec-guest",
     "public-guest",
+    "renamed-facade",
 ]
 
 [workspace.dependencies]

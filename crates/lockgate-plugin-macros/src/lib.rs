@@ -1,67 +1,80 @@
 //! Private proc-macro implementations for the Lockgate guest facade.
 
 use proc_macro::TokenStream;
-use quote::quote;
+use proc_macro_crate::{FoundCrate, crate_name};
+use quote::{format_ident, quote};
 use syn::{Ident, parse_macro_input};
 
 #[proc_macro]
 pub fn export(input: TokenStream) -> TokenStream {
     let plugin = parse_macro_input!(input as Ident);
+    let facade = match crate_name("lockgate-plugin") {
+        Ok(FoundCrate::Itself) => quote!(::lockgate_plugin),
+        Ok(FoundCrate::Name(name)) => {
+            let name = format_ident!("{name}");
+            quote!(::#name)
+        }
+        Err(error) => {
+            return syn::Error::new(plugin.span(), error.to_string())
+                .into_compile_error()
+                .into();
+        }
+    };
 
     quote! {
         __lockgate_wit_export!(#plugin);
 
-        const __LOCKGATE_PLUGIN_MANIFEST: ::lockgate_plugin::__private::Manifest =
-            ::lockgate_plugin::__private::Manifest {
-                id: <#plugin as ::lockgate_plugin::Plugin>::ID,
-                name: match <#plugin as ::lockgate_plugin::Plugin>::NAME {
+        const __LOCKGATE_PLUGIN_MANIFEST: #facade::__private::Manifest =
+            #facade::__private::Manifest {
+                id: <#plugin as #facade::Plugin>::ID,
+                name: match <#plugin as #facade::Plugin>::NAME {
                     ::core::option::Option::Some(value) => value,
                     ::core::option::Option::None => env!("CARGO_PKG_NAME"),
                 },
-                version: match <#plugin as ::lockgate_plugin::Plugin>::VERSION {
+                version: match <#plugin as #facade::Plugin>::VERSION {
                     ::core::option::Option::Some(value) => value,
                     ::core::option::Option::None => env!("CARGO_PKG_VERSION"),
                 },
-                description: match <#plugin as ::lockgate_plugin::Plugin>::DESCRIPTION {
+                description: match <#plugin as #facade::Plugin>::DESCRIPTION {
                     ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => ::lockgate_plugin::__private::cargo_optional(
+                    ::core::option::Option::None => #facade::__private::cargo_optional(
                         option_env!("CARGO_PKG_DESCRIPTION"),
                     ),
                 },
-                license: match <#plugin as ::lockgate_plugin::Plugin>::LICENSE {
+                license: match <#plugin as #facade::Plugin>::LICENSE {
                     ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => ::lockgate_plugin::__private::cargo_optional(
+                    ::core::option::Option::None => #facade::__private::cargo_optional(
                         option_env!("CARGO_PKG_LICENSE"),
                     ),
                 },
-                repository: match <#plugin as ::lockgate_plugin::Plugin>::REPOSITORY {
+                repository: match <#plugin as #facade::Plugin>::REPOSITORY {
                     ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => ::lockgate_plugin::__private::cargo_optional(
+                    ::core::option::Option::None => #facade::__private::cargo_optional(
                         option_env!("CARGO_PKG_REPOSITORY"),
                     ),
                 },
-                homepage: match <#plugin as ::lockgate_plugin::Plugin>::HOMEPAGE {
+                homepage: match <#plugin as #facade::Plugin>::HOMEPAGE {
                     ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => ::lockgate_plugin::__private::cargo_optional(
+                    ::core::option::Option::None => #facade::__private::cargo_optional(
                         option_env!("CARGO_PKG_HOMEPAGE"),
                     ),
                 },
-                needs: <#plugin as ::lockgate_plugin::Plugin>::NEEDS,
+                needs: <#plugin as #facade::Plugin>::NEEDS,
             };
 
         const __LOCKGATE_PLUGIN_METADATA_LEN: usize =
-            ::lockgate_plugin::__private::metadata_len(&__LOCKGATE_PLUGIN_MANIFEST);
+            #facade::__private::metadata_len(&__LOCKGATE_PLUGIN_MANIFEST);
         #[used]
         #[unsafe(link_section = "lockgate:plugin")]
         static __LOCKGATE_PLUGIN_METADATA: [u8; __LOCKGATE_PLUGIN_METADATA_LEN] =
-            ::lockgate_plugin::__private::metadata_bytes(&__LOCKGATE_PLUGIN_MANIFEST);
+            #facade::__private::metadata_bytes(&__LOCKGATE_PLUGIN_MANIFEST);
 
         const __LOCKGATE_PLUGIN_NEEDS_LEN: usize =
-            ::lockgate_plugin::__private::needs_len(&__LOCKGATE_PLUGIN_MANIFEST.needs);
+            #facade::__private::needs_len(&__LOCKGATE_PLUGIN_MANIFEST.needs);
         #[used]
         #[unsafe(link_section = "lockgate:needs")]
         static __LOCKGATE_PLUGIN_NEEDS: [u8; __LOCKGATE_PLUGIN_NEEDS_LEN] =
-            ::lockgate_plugin::__private::needs_bytes(&__LOCKGATE_PLUGIN_MANIFEST.needs);
+            #facade::__private::needs_bytes(&__LOCKGATE_PLUGIN_MANIFEST.needs);
     }
     .into()
 }

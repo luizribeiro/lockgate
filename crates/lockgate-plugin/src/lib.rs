@@ -1,6 +1,8 @@
 //! Guest authoring facade for Lockgate plugins.
 #![no_std]
 
+extern crate self as lockgate_plugin;
+
 #[doc(hidden)]
 pub use wit_bindgen as __wit_bindgen;
 
