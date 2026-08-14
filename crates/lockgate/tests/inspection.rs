@@ -1,7 +1,7 @@
 use lockgate::{InspectError, inspect};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{NeedsDigest, NeedsManifest, PluginMetadata};
-use wasm_encoder::{ComponentSection, CustomSection};
+use wasm_encoder::{ComponentSection, CustomSection, Section};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -44,6 +44,32 @@ fn sectioned_component(wit: &str) -> Vec<u8> {
     )
 }
 
+fn linked_sectioned_component(wit: &str) -> Vec<u8> {
+    let mut resolve = Resolve::new();
+    let package = resolve.push_str("fixture.wit", wit).unwrap();
+    let world = resolve.select_world(&[package], None).unwrap();
+    let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+    embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+
+    let metadata = PluginMetadata::new(PLUGIN_ID, "Inspection fixture", "1.0").unwrap();
+    CustomSection {
+        name: PLUGIN_METADATA_SECTION.into(),
+        data: metadata.to_section_bytes().unwrap().into(),
+    }
+    .append_to(&mut module);
+    CustomSection {
+        name: PLUGIN_NEEDS_SECTION.into(),
+        data: NeedsManifest::empty().to_section_bytes().unwrap().into(),
+    }
+    .append_to(&mut module);
+
+    ComponentEncoder::default()
+        .module(&module)
+        .unwrap()
+        .encode()
+        .unwrap()
+}
+
 #[test]
 fn inspects_metadata_needs_digest_and_exports() {
     let bytes = sectioned_component(
@@ -57,6 +83,18 @@ fn inspects_metadata_needs_digest_and_exports() {
         inspection.needs_digest(),
         NeedsDigest::compute(&NeedsManifest::empty()).unwrap()
     );
+    assert_eq!(inspection.exported_interfaces(), ["test:inspection/guest"]);
+}
+
+#[test]
+fn inspects_manifest_sections_linked_inside_the_guest_module() {
+    let bytes = linked_sectioned_component(
+        "package test:inspection; interface guest { value: func() -> u32; } world fixture { export guest; }",
+    );
+
+    let inspection = inspect(&bytes).unwrap();
+    assert_eq!(inspection.metadata().id(), PLUGIN_ID);
+    assert_eq!(inspection.needs(), &NeedsManifest::empty());
     assert_eq!(inspection.exported_interfaces(), ["test:inspection/guest"]);
 }
 
