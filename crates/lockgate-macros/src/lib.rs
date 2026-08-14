@@ -14,10 +14,11 @@ use wit_parser::{InterfaceId, Resolve, WorldItem};
 
 /// Generates application-facing host-import traits and their linker adapters.
 ///
-/// The macro takes `path`, `world`, `imports`, and `data` options. Each imported
-/// WIT interface becomes a top-level Rust module with a `Host` trait; an
-/// implementation may use `async fn` methods whose second parameter is
-/// `HostCtx<'_, data>`.
+/// The macro takes `path` and `world` options. Worlds with imported interfaces
+/// also provide `imports` and `data` as a pair; export-only worlds omit both.
+/// Each imported WIT interface becomes a top-level Rust module with a `Host`
+/// trait; an implementation may use `async fn` methods whose second parameter
+/// is `HostCtx<'_, data>`.
 ///
 /// The `imports` type is cloned once for each fresh plugin Store and once more
 /// for each overlapping host call. Shared application state should therefore
@@ -33,6 +34,10 @@ pub fn host_bindings(input: TokenStream) -> TokenStream {
 struct HostBindingsInput {
     path: LitStr,
     world: LitStr,
+    imports: Option<HostImportsConfig>,
+}
+
+struct HostImportsConfig {
     imports: Type,
     data: Type,
 }
@@ -78,11 +83,20 @@ impl HostBindingsInput {
             }
         }
 
+        let imports = match (imports, data) {
+            (Some(imports), Some(data)) => Some(HostImportsConfig { imports, data }),
+            (None, None) => None,
+            _ => {
+                return Err(input.error(
+                    "lockgate::host_bindings! options `imports` and `data` must be specified together",
+                ));
+            }
+        };
+
         Ok(Self {
             path: required(path, input, "path")?,
             world: required(world, input, "world")?,
-            imports: required(imports, input, "imports")?,
-            data: required(data, input, "data")?,
+            imports,
         })
     }
 }
@@ -168,6 +182,13 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         });
     }
 
+    if input.imports.is_none() && !interfaces.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &input.world,
+            "lockgate::host_bindings! requires `imports` and `data` for a world that imports interfaces",
+        ));
+    }
+
     let mut imports_config = FunctionConfig::new();
     imports_config.push(
         FunctionFilter::Default,
@@ -188,61 +209,99 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         )
     })?;
 
-    let imports = &input.imports;
-    let data = &input.data;
-    for interface in &interfaces {
-        let items =
-            nested_module_items_mut(&mut generated.items, &interface.path).ok_or_else(|| {
-                syn::Error::new_spanned(
-                    &input.world,
-                    format!(
-                        "could not locate generated host interface `{}`",
-                        interface.public_module
-                    ),
-                )
-            })?;
-        let host = items
-            .iter()
-            .find_map(|item| match item {
-                Item::Trait(item) if item.ident == "HostWithStore" => Some(item.clone()),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                syn::Error::new_spanned(
-                    &input.world,
-                    format!(
-                        "generated interface `{}` has no host function trait",
-                        interface.public_module
-                    ),
-                )
-            })?;
-        items.extend(adapter_items(&host, &lockgate)?);
+    if input.imports.is_some() {
+        for interface in &interfaces {
+            let items = nested_module_items_mut(&mut generated.items, &interface.path).ok_or_else(
+                || {
+                    syn::Error::new_spanned(
+                        &input.world,
+                        format!(
+                            "could not locate generated host interface `{}`",
+                            interface.public_module
+                        ),
+                    )
+                },
+            )?;
+            let host = items
+                .iter()
+                .find_map(|item| match item {
+                    Item::Trait(item) if item.ident == "HostWithStore" => Some(item.clone()),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        &input.world,
+                        format!(
+                            "generated interface `{}` has no host function trait",
+                            interface.public_module
+                        ),
+                    )
+                })?;
+            items.extend(adapter_items(&host, &lockgate)?);
+        }
     }
 
     let generated_items = generated.items;
-    let public_modules = interfaces.iter().map(|interface| {
-        let module = &interface.public_module;
-        let path = &interface.path;
-        let raw = quote!(super::__lockgate_host_bindings::#(#path)::*);
-        let type_reexports = interface
-            .public_types
-            .iter()
-            .map(|ty| quote!(pub use #raw::#ty;));
+    let import_aliases = input.imports.as_ref().map(|config| {
+        let imports = &config.imports;
+        let data = &config.data;
         quote! {
-            pub mod #module {
-                pub use #raw::__LockgateHost as Host;
-                #(#type_reexports)*
-            }
+            type __LockgateImports = #imports;
+            type __LockgateData = #data;
         }
     });
-    let host_bounds = interfaces.iter().map(|interface| {
-        let module = &interface.public_module;
-        quote!(#imports: #module::Host,)
-    });
-    let registrations = interfaces.iter().map(|interface| {
-        let path = &interface.path;
+    let public_modules = input
+        .imports
+        .as_ref()
+        .map(|_| {
+            interfaces
+                .iter()
+                .map(|interface| {
+                    let module = &interface.public_module;
+                    let path = &interface.path;
+                    let raw = quote!(super::__lockgate_host_bindings::#(#path)::*);
+                    let type_reexports = interface
+                        .public_types
+                        .iter()
+                        .map(|ty| quote!(pub use #raw::#ty;));
+                    quote! {
+                        pub mod #module {
+                            pub use #raw::__LockgateHost as Host;
+                            #(#type_reexports)*
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let host_imports_impl = input.imports.as_ref().map(|config| {
+        let imports = &config.imports;
+        let data = &config.data;
+        let host_bounds = interfaces.iter().map(|interface| {
+            let module = &interface.public_module;
+            quote!(#imports: #module::Host,)
+        });
+        let registrations = interfaces.iter().map(|interface| {
+            let path = &interface.path;
+            quote! {
+                __lockgate_host_bindings::#(#path)::*::__lockgate_register(linker)?;
+            }
+        });
         quote! {
-            __lockgate_host_bindings::#(#path)::*::__lockgate_register(linker)?;
+            impl #lockgate::HostImports<#data> for #imports
+            where
+                #(#host_bounds)*
+            {
+                fn add_to_linker(
+                    &self,
+                    linker: &mut #lockgate::__private::wasmtime::component::Linker<
+                        #lockgate::__private::StoreCtx<#data>,
+                    >,
+                ) -> #lockgate::__private::wasmtime::Result<()> {
+                    #(#registrations)*
+                    Ok(())
+                }
+            }
         }
     });
 
@@ -250,27 +309,12 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         #[doc(hidden)]
         pub mod __lockgate_host_bindings {
             use super::*;
-            type __LockgateImports = #imports;
-            type __LockgateData = #data;
+            #import_aliases
             #(#generated_items)*
         }
 
         #(#public_modules)*
-
-        impl #lockgate::HostImports<#data> for #imports
-        where
-            #(#host_bounds)*
-        {
-            fn add_to_linker(
-                &self,
-                linker: &mut #lockgate::__private::wasmtime::component::Linker<
-                    #lockgate::__private::StoreCtx<#data>,
-                >,
-            ) -> #lockgate::__private::wasmtime::Result<()> {
-                #(#registrations)*
-                Ok(())
-            }
-        }
+        #host_imports_impl
     })
 }
 
@@ -539,6 +583,39 @@ fn rust_type_ident(name: &str) -> String {
         format!("{name}_")
     } else {
         name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HostBindingsInput;
+
+    #[test]
+    fn accepts_import_options_as_a_pair_or_not_at_all() {
+        let imports: HostBindingsInput =
+            syn::parse_str(r#"{ path: "wit", world: "plugin", imports: Imports, data: Data }"#)
+                .unwrap();
+        assert!(imports.imports.is_some());
+
+        let exports: HostBindingsInput =
+            syn::parse_str(r#"{ path: "wit", world: "plugin" }"#).unwrap();
+        assert!(exports.imports.is_none());
+    }
+
+    #[test]
+    fn rejects_half_of_the_import_option_pair() {
+        for options in [
+            r#"{ path: "wit", world: "plugin", imports: Imports }"#,
+            r#"{ path: "wit", world: "plugin", data: Data }"#,
+        ] {
+            let error = match syn::parse_str::<HostBindingsInput>(options) {
+                Ok(_) => panic!("half an import option pair was accepted"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().ends_with(
+                "lockgate::host_bindings! options `imports` and `data` must be specified together"
+            ));
+        }
     }
 }
 

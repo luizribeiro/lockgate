@@ -13,14 +13,9 @@ const DEFAULT_PLUGIN_PATH: &str =
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
 examples/greeter/plugin/Cargo.toml --target wasm32-wasip2 --release";
 
-#[derive(Clone, Copy)]
-struct HostImports;
-
 lockgate::host_bindings!({
     path: "../wit",
     world: "plugin",
-    imports: HostImports,
-    data: (),
 });
 
 struct GreeterRole;
@@ -72,7 +67,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_PLUGIN_PATH));
     let bytes = read_component(&path)?;
 
-    let mut builder = HostBuilder::<()>::new(HostImports)?;
+    let mut builder = HostBuilder::<()>::new(())?;
     // prepare validates the declared identity, needs, and supported WIT shape.
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
