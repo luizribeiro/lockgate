@@ -12,7 +12,7 @@ const LOW_FUEL: u64 = 100_000;
 
 struct DiagnosticsRole;
 
-struct DiagnosticsClient<'a, S: Send + 'static> {
+struct DiagnosticsClient<'a, S: Send + Sync + 'static> {
     invocation: RoleInvocation<'a, S>,
 }
 
@@ -22,17 +22,17 @@ impl Role for DiagnosticsRole {
     type Client<'a, S>
         = DiagnosticsClient<'a, S>
     where
-        S: Send + 'static;
+        S: Send + Sync + 'static;
 
     fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
     where
-        S: Send + 'static,
+        S: Send + Sync + 'static,
     {
         DiagnosticsClient { invocation }
     }
 }
 
-impl<S: Send + 'static> DiagnosticsClient<'_, S> {
+impl<S: Send + Sync + 'static> DiagnosticsClient<'_, S> {
     async fn value(&self, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
         self.call_u32("value", &[], ctx).await
     }
@@ -73,7 +73,7 @@ impl<S: Send + 'static> DiagnosticsClient<'_, S> {
 async fn admitted_fixture() -> (Host<()>, PluginHandle) {
     let metadata = PluginMetadata::new(PLUGIN_ID, "Diagnostics", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&common::PUBLIC_FIXTURE, &metadata);
-    let mut builder = HostBuilder::<()>::new().unwrap();
+    let mut builder = HostBuilder::<()>::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await

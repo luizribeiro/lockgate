@@ -14,7 +14,7 @@ const GREETER_INTERFACE: &str = "test:public/greeter";
 
 struct GreeterRole;
 
-struct GreeterClient<'a, S: Send + 'static> {
+struct GreeterClient<'a, S: Send + Sync + 'static> {
     invocation: RoleInvocation<'a, S>,
 }
 
@@ -24,17 +24,17 @@ impl Role for GreeterRole {
     type Client<'a, S>
         = GreeterClient<'a, S>
     where
-        S: Send + 'static;
+        S: Send + Sync + 'static;
 
     fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
     where
-        S: Send + 'static,
+        S: Send + Sync + 'static,
     {
         GreeterClient { invocation }
     }
 }
 
-impl<S: Send + 'static> GreeterClient<'_, S> {
+impl<S: Send + Sync + 'static> GreeterClient<'_, S> {
     async fn greet(&self, ctx: InvocationCtx<S>, name: &str) -> Result<String, CallError> {
         let results = self
             .invocation
@@ -52,7 +52,7 @@ async fn minimal_embedder_calls_a_greeter() {
     let metadata = PluginMetadata::new(PLUGIN_ID, "Greeter", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&common::PUBLIC_FIXTURE, &metadata);
 
-    let mut builder = HostBuilder::<()>::new().unwrap();
+    let mut builder = HostBuilder::<()>::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await

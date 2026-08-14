@@ -9,7 +9,9 @@ use std::{
 
 use lockgate_schema::{AtomKey, GrantSet, NeedsManifest, PluginMetadata};
 
-use crate::exec::{ExecEngine, ExecError, ExecLimits, LoadError, LoadedComponent};
+use crate::exec::{
+    ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError, LoadedComponent, TypedImports,
+};
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
 use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
@@ -169,9 +171,10 @@ impl PluginConfig {
 }
 
 /// Retained engine and linker state for preparing plugins with invocation data `S`.
-pub struct HostBuilder<S: Send + 'static> {
+pub struct HostBuilder<S: Send + Sync + 'static> {
     id: HostId,
     engine: ExecEngine,
+    imports: std::sync::Arc<dyn ImportsFactory<S>>,
     admitted: Vec<AdmittedPlugin<S>>,
 }
 
@@ -201,12 +204,15 @@ impl PluginHandle {
     }
 }
 
-impl<S: Send + 'static> HostBuilder<S> {
+impl<S: Send + Sync + 'static> HostBuilder<S> {
     /// Creates a builder with Lockgate's pinned component-engine configuration.
-    pub fn new() -> Result<Self, EngineError> {
+    pub fn new<I: crate::HostImports<S>>(imports: I) -> Result<Self, EngineError> {
         Ok(Self {
             id: HostId::next(),
             engine: ExecEngine::new().map_err(EngineError::new)?,
+            imports: std::sync::Arc::new(TypedImports::new(imports, |imports, linker| {
+                crate::HostImports::add_to_linker(imports, linker)
+            })),
             admitted: Vec::new(),
         })
     }
@@ -236,7 +242,7 @@ impl<S: Send + 'static> HostBuilder<S> {
 
         let artifact = self
             .engine
-            .load::<S>(bytes, |_| Ok(()))
+            .load_hosted::<S>(bytes, std::sync::Arc::clone(&self.imports))
             .map_err(AdmissionError::from_load)?;
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
@@ -272,20 +278,21 @@ impl<S: Send + 'static> HostBuilder<S> {
 
         validate_acceptance(inspection.needs(), &acceptance)?;
 
-        let artifact = artifact
+        let mut artifact = artifact
             .downcast::<LoadedComponent<S>>()
             .expect("prepared artifact type must match its originating HostBuilder");
+        let handle = PluginHandle {
+            host: self.id,
+            index: self.admitted.len(),
+            metadata: inspection.metadata().clone(),
+        };
+        artifact.set_plugin(handle.clone());
         let BudgetClass::Bounded { fuel } = startup_ctx.budget;
         artifact
             .smoke(startup_ctx.data, limits.into(), fuel)
             .await
             .map_err(AdmissionError::from_smoke)?;
 
-        let handle = PluginHandle {
-            host: self.id,
-            index: self.admitted.len(),
-            metadata: inspection.metadata().clone(),
-        };
         self.admitted.push(AdmittedPlugin {
             handle: handle.clone(),
             artifact: *artifact,
@@ -305,7 +312,7 @@ impl<S: Send + 'static> HostBuilder<S> {
 }
 
 /// Steady-state owner of the execution engine and admitted plugins.
-pub struct Host<S: Send + 'static> {
+pub struct Host<S: Send + Sync + 'static> {
     id: HostId,
     #[allow(
         dead_code,
@@ -315,7 +322,7 @@ pub struct Host<S: Send + 'static> {
     plugins: Vec<AdmittedPlugin<S>>,
 }
 
-impl<S: Send + 'static> Host<S> {
+impl<S: Send + Sync + 'static> Host<S> {
     /// Iterates over admitted plugins in admission order.
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
         self.plugins.iter().map(|plugin| &plugin.handle)

@@ -15,22 +15,22 @@ pub trait Role: 'static {
 
     type Client<'a, S>: 'a
     where
-        S: Send + 'static,
+        S: Send + Sync + 'static,
         Self: 'a;
 
     fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
     where
-        S: Send + 'static;
+        S: Send + Sync + 'static;
 }
 
 /// Interface-scoped calling capability supplied to a role client at cast time.
-pub struct RoleInvocation<'a, S: Send + 'static> {
+pub struct RoleInvocation<'a, S: Send + Sync + 'static> {
     pub(crate) artifact: &'a LoadedComponent<S>,
     pub(crate) limits: RuntimeLimits,
     pub(crate) interface: &'static str,
 }
 
-impl<S: Send + 'static> fmt::Debug for RoleInvocation<'_, S> {
+impl<S: Send + Sync + 'static> fmt::Debug for RoleInvocation<'_, S> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RoleInvocation")
@@ -39,7 +39,7 @@ impl<S: Send + 'static> fmt::Debug for RoleInvocation<'_, S> {
     }
 }
 
-impl<'a, S: Send + 'static> RoleInvocation<'a, S> {
+impl<'a, S: Send + Sync + 'static> RoleInvocation<'a, S> {
     pub(crate) fn new(
         artifact: &'a LoadedComponent<S>,
         limits: RuntimeLimits,

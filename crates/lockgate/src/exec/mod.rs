@@ -4,6 +4,10 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(not(test))]
+use std::sync::Arc;
+use std::{any::Any, marker::PhantomData};
+
 use wasmtime::component::{
     Component, ComponentExportIndex, InstancePre, Linker, Val, types::ComponentItem,
 };
@@ -49,7 +53,11 @@ impl ExecEngine {
     /// in the `Linker` before the component is baked into an `InstancePre`.
     /// Tests are currently its only authors, and registration failures surface
     /// as [`LoadError::Link`].
-    pub(crate) fn load<S: Send + 'static>(
+    #[allow(
+        dead_code,
+        reason = "the direct linker hook remains an execution-test seam"
+    )]
+    pub(crate) fn load<S: Send + Sync + 'static>(
         &self,
         bytes: &[u8],
         imports: impl FnOnce(&mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>,
@@ -61,15 +69,44 @@ impl ExecEngine {
             .instantiate_pre(&component)
             .map_err(LoadError::link)?;
 
-        Ok(LoadedComponent { instance_pre })
+        Ok(LoadedComponent {
+            instance_pre,
+            imports: Arc::new(UnitImports),
+            plugin: None,
+        })
+    }
+
+    pub(crate) fn load_hosted<S: Send + Sync + 'static>(
+        &self,
+        bytes: &[u8],
+        imports: Arc<dyn ImportsFactory<S>>,
+    ) -> Result<LoadedComponent<S>, LoadError> {
+        let component = Component::new(&self.engine, bytes).map_err(LoadError::compile)?;
+        let mut linker = Linker::new(&self.engine);
+        imports.register(&mut linker).map_err(LoadError::link)?;
+        let instance_pre = linker
+            .instantiate_pre(&component)
+            .map_err(LoadError::link)?;
+
+        Ok(LoadedComponent {
+            instance_pre,
+            imports,
+            plugin: None,
+        })
     }
 }
 
 pub(crate) struct LoadedComponent<S: 'static> {
     instance_pre: InstancePre<StoreCtx<S>>,
+    imports: Arc<dyn ImportsFactory<S>>,
+    plugin: Option<Arc<dyn Any + Send + Sync>>,
 }
 
-impl<S: Send + 'static> LoadedComponent<S> {
+impl<S: Send + Sync + 'static> LoadedComponent<S> {
+    pub(crate) fn set_plugin<P: Clone + Send + Sync + 'static>(&mut self, plugin: P) {
+        self.plugin = Some(Arc::new(plugin));
+    }
+
     pub(crate) fn exports_interface(&self, interface: &str) -> bool {
         self.instance_pre
             .component()
@@ -154,7 +191,12 @@ impl<S: Send + 'static> LoadedComponent<S> {
     fn configured_store(&self, data: S, max_memory_bytes: usize) -> Store<StoreCtx<S>> {
         let mut store = Store::new(
             self.instance_pre.engine(),
-            StoreCtx::new(data, max_memory_bytes),
+            StoreCtx::new(
+                data,
+                self.imports.create(),
+                self.plugin.clone(),
+                max_memory_bytes,
+            ),
         );
         store.limiter(|ctx| &mut ctx.limiter);
         store.set_epoch_deadline(u64::MAX);
@@ -201,18 +243,28 @@ pub(crate) struct ExecLimits {
 ///
 /// The invocation data is installed before instantiation so constructor host
 /// imports see the same context as later guest calls.
-pub(crate) struct StoreCtx<S> {
+#[doc(hidden)]
+pub struct StoreCtx<S> {
     limiter: MemoryLimiter,
-    data: S,
+    data: Arc<S>,
+    imports: Box<dyn Any + Send>,
+    plugin: Option<Arc<dyn Any + Send + Sync>>,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
 }
 
 impl<S> StoreCtx<S> {
-    fn new(data: S, max_memory_bytes: usize) -> Self {
+    fn new(
+        data: S,
+        imports: Box<dyn Any + Send>,
+        plugin: Option<Arc<dyn Any + Send + Sync>>,
+        max_memory_bytes: usize,
+    ) -> Self {
         Self {
             limiter: MemoryLimiter { max_memory_bytes },
-            data,
+            data: Arc::new(data),
+            imports,
+            plugin,
             #[cfg(test)]
             drop_probe: None,
         }
@@ -223,12 +275,83 @@ impl<S> StoreCtx<S> {
         reason = "generated host-import adapters consume invocation data in the next step"
     )]
     pub(crate) fn data(&self) -> &S {
-        &self.data
+        self.data.as_ref()
+    }
+
+    #[doc(hidden)]
+    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, P)
+    where
+        I: Clone + 'static,
+        P: Clone + 'static,
+    {
+        let imports = self
+            .imports
+            .downcast_ref::<I>()
+            .expect("Store imports must match their generated host bindings")
+            .clone();
+        let plugin = self
+            .plugin
+            .as_deref()
+            .and_then(|plugin| plugin.downcast_ref::<P>())
+            .expect("public plugin Stores must carry a PluginHandle")
+            .clone();
+        (imports, Arc::clone(&self.data), plugin)
     }
 
     #[cfg(test)]
     pub(crate) fn observe_drop(&mut self, dropped: Arc<AtomicBool>) {
         self.drop_probe = Some(StoreDropProbe(dropped));
+    }
+}
+
+pub(crate) trait ImportsFactory<S>: Send + Sync {
+    fn register(&self, linker: &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>;
+    fn create(&self) -> Box<dyn Any + Send>;
+}
+
+pub(crate) struct TypedImports<S: 'static, I> {
+    imports: I,
+    register: fn(&I, &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>,
+    marker: PhantomData<fn() -> S>,
+}
+
+impl<S: 'static, I> TypedImports<S, I> {
+    pub(crate) fn new(
+        imports: I,
+        register: fn(&I, &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>,
+    ) -> Self {
+        Self {
+            imports,
+            register,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<S, I> ImportsFactory<S> for TypedImports<S, I>
+where
+    S: Send + Sync + 'static,
+    I: Clone + Send + Sync + 'static,
+{
+    fn register(&self, linker: &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()> {
+        (self.register)(&self.imports, linker)
+    }
+
+    fn create(&self) -> Box<dyn Any + Send> {
+        Box::new(self.imports.clone())
+    }
+}
+
+#[allow(dead_code, reason = "used by the direct execution-test linker seam")]
+struct UnitImports;
+
+impl<S> ImportsFactory<S> for UnitImports {
+    fn register(&self, _linker: &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()> {
+        Ok(())
+    }
+
+    fn create(&self) -> Box<dyn Any + Send> {
+        Box::new(())
     }
 }
 

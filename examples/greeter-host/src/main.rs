@@ -15,7 +15,7 @@ examples/greeter-plugin/Cargo.toml --target wasm32-wasip2 --release";
 
 struct GreeterRole;
 
-struct GreeterClient<'a, S: Send + 'static> {
+struct GreeterClient<'a, S: Send + Sync + 'static> {
     invocation: RoleInvocation<'a, S>,
 }
 
@@ -24,17 +24,17 @@ impl Role for GreeterRole {
     type Client<'a, S>
         = GreeterClient<'a, S>
     where
-        S: Send + 'static;
+        S: Send + Sync + 'static;
 
     fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
     where
-        S: Send + 'static,
+        S: Send + Sync + 'static,
     {
         GreeterClient { invocation }
     }
 }
 
-impl<S: Send + 'static> GreeterClient<'_, S> {
+impl<S: Send + Sync + 'static> GreeterClient<'_, S> {
     async fn greet(&self, name: &str, ctx: InvocationCtx<S>) -> Result<String, CallError> {
         let results = self
             .invocation
@@ -62,7 +62,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_PLUGIN_PATH));
     let bytes = read_component(&path)?;
 
-    let mut builder = HostBuilder::<()>::new()?;
+    let mut builder = HostBuilder::<()>::new(())?;
     // prepare validates the declared identity, needs, and supported WIT shape.
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
