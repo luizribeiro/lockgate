@@ -12,6 +12,7 @@ members = [
     "crates/lockgate-schema",
     "crates/lockgate-plugin",
     "crates/lockgate-plugin-macros",
+    "examples/greeter-host",
 ]
 
 [workspace.package]
