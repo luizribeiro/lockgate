@@ -7,8 +7,8 @@ use std::sync::{
 use std::time::Duration;
 
 use lockgate::{
-    Acceptance, BudgetClass, CallError, HostBuilder, HostCtx, InvocationCtx, PluginConfig, Role,
-    RoleInvocation, RuntimeLimits, Value,
+    Acceptance, BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RoleError,
+    RuntimeLimits,
 };
 use tokio::sync::Barrier;
 
@@ -33,6 +33,8 @@ lockgate::host_bindings!({
     imports: Imports,
     data: CallData,
 });
+
+use guest::HostExt;
 
 impl application::Host for Imports {
     async fn read_data(&mut self, cx: HostCtx<'_, CallData>) -> String {
@@ -69,62 +71,6 @@ impl application::Host for Imports {
     async fn startup(&mut self, cx: HostCtx<'_, CallData>) -> u32 {
         self.startups.lock().unwrap().push(cx.data().startup);
         cx.data().startup
-    }
-}
-
-struct GuestRole;
-
-struct GuestClient<'a, S: Send + Sync + 'static> {
-    invocation: RoleInvocation<'a, S>,
-}
-
-impl Role for GuestRole {
-    const INTERFACE: &'static str = "test:host-bindings/guest";
-
-    type Client<'a, S>
-        = GuestClient<'a, S>
-    where
-        S: Send + Sync + 'static;
-
-    fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
-    where
-        S: Send + Sync + 'static,
-    {
-        GuestClient { invocation }
-    }
-}
-
-impl<S: Send + Sync + 'static> GuestClient<'_, S> {
-    async fn string(&self, function: &str, ctx: InvocationCtx<S>) -> Result<String, CallError> {
-        let values = self.invocation.invoke(function, &[], ctx).await?;
-        match values.as_slice() {
-            [Value::String(value)] => Ok(value.clone()),
-            _ => Err(CallError::shape("expected one string result")),
-        }
-    }
-
-    async fn overlap(&self, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
-        let values = self.invocation.invoke("overlap", &[], ctx).await?;
-        match values.as_slice() {
-            [Value::U32(value)] => Ok(*value),
-            _ => Err(CallError::shape("expected one u32 result")),
-        }
-    }
-
-    async fn rich(
-        &self,
-        value: u32,
-        fail: bool,
-        ctx: InvocationCtx<S>,
-    ) -> Result<String, CallError> {
-        let values = self
-            .invocation
-            .invoke("rich", &[Value::U32(value), Value::Bool(fail)], ctx)
-            .await?;
-        match values.as_slice() {
-            [Value::String(value)] => Ok(value.clone()),
-            _ => Err(CallError::shape("expected one string result")),
-        }
     }
 }
 
@@ -181,12 +127,9 @@ fn context(label: &str) -> InvocationCtx<CallData> {
 #[tokio::test]
 async fn concurrent_invocations_observe_their_own_data() {
     let (host, plugin, _, _) = host().await;
-    let guest = host.client::<GuestRole>(&plugin).unwrap();
+    let guest = host.guest(&plugin).unwrap();
     let (left, right) = tokio::time::timeout(REGRESSION_TIMEOUT, async {
-        tokio::join!(
-            guest.string("data", context("left")),
-            guest.string("data", context("right"))
-        )
+        tokio::join!(guest.data(context("left")), guest.data(context("right")))
     })
     .await
     .expect("invocations did not overlap at the host-import barrier");
@@ -197,17 +140,14 @@ async fn concurrent_invocations_observe_their_own_data() {
 #[tokio::test]
 async fn host_context_identifies_the_calling_plugin() {
     let (host, plugin, _, _) = host().await;
-    let guest = host.client::<GuestRole>(&plugin).unwrap();
-    assert_eq!(
-        guest.string("caller", context("call")).await.unwrap(),
-        "host-caller"
-    );
+    let guest = host.guest(&plugin).unwrap();
+    assert_eq!(guest.caller(context("call")).await.unwrap(), "host-caller");
 }
 
 #[tokio::test]
 async fn generated_host_imports_preserve_overlapping_calls() {
     let (host, plugin, entries, _) = host().await;
-    let guest = host.client::<GuestRole>(&plugin).unwrap();
+    let guest = host.guest(&plugin).unwrap();
     let result = tokio::time::timeout(REGRESSION_TIMEOUT, guest.overlap(context("call")))
         .await
         .expect("serialized generated host imports deadlocked at the barrier");
@@ -277,11 +217,105 @@ async fn smoke_imports_observe_startup_data() {
 #[tokio::test]
 async fn rich_import_types_keep_wit_results_in_the_guest_data_channel() {
     let (host, plugin, _, _) = host().await;
-    let guest = host.client::<GuestRole>(&plugin).unwrap();
-    assert_eq!(guest.rich(7, false, context("call")).await.unwrap(), "ok:7");
+    let guest = host.guest(&plugin).unwrap();
+    assert_eq!(guest.rich(context("call"), 7, false).await.unwrap(), "ok:7");
     assert_eq!(
-        guest.rich(7, true, context("call")).await.unwrap(),
+        guest.rich(context("call"), 7, true).await.unwrap(),
         "guest-visible"
+    );
+}
+
+fn payload(outcome: Result<u64, String>) -> guest::Payload {
+    guest::Payload {
+        flag: true,
+        unsigned_8: 8,
+        unsigned_16: 16,
+        unsigned_32: 32,
+        unsigned_64: 64,
+        signed_8: -8,
+        signed_16: -16,
+        signed_32: -32,
+        signed_64: -64,
+        float_32: 3.25,
+        float_64: -6.5,
+        letter: 'λ',
+        text: "typed".into(),
+        items: vec![2, 4, 8],
+        maybe: Some("optional".into()),
+        outcome,
+    }
+}
+
+fn assert_payload(value: guest::Payload, outcome: Result<u64, String>) {
+    assert!(value.flag);
+    assert_eq!(value.unsigned_8, 8);
+    assert_eq!(value.unsigned_16, 16);
+    assert_eq!(value.unsigned_32, 32);
+    assert_eq!(value.unsigned_64, 64);
+    assert_eq!(value.signed_8, -8);
+    assert_eq!(value.signed_16, -16);
+    assert_eq!(value.signed_32, -32);
+    assert_eq!(value.signed_64, -64);
+    assert_eq!(value.float_32, 3.25);
+    assert_eq!(value.float_64, -6.5);
+    assert_eq!(value.letter, 'λ');
+    assert_eq!(value.text, "typed");
+    assert_eq!(value.items, [2, 4, 8]);
+    assert_eq!(value.maybe.as_deref(), Some("optional"));
+    assert_eq!(value.outcome, outcome);
+}
+
+#[tokio::test]
+async fn generated_clients_round_trip_value_shapes_through_both_casts() {
+    let (host, plugin, _, _) = host().await;
+
+    let extension = host.guest(&plugin).unwrap();
+    let via_extension = extension
+        .round_trip(context("call"), payload(Ok(99)))
+        .await
+        .unwrap();
+    let generic = host.client::<guest::Role>(&plugin).unwrap();
+    let via_generic = generic
+        .round_trip(context("call"), payload(Err("guest-data".into())))
+        .await
+        .unwrap();
+
+    assert_payload(via_extension, Ok(99));
+    assert_payload(via_generic, Err("guest-data".into()));
+}
+
+#[tokio::test]
+async fn generated_role_fails_at_the_cast_when_not_exported() {
+    let imports = Imports {
+        barrier: Arc::new(Barrier::new(2)),
+        entries: Arc::new(AtomicUsize::new(0)),
+        startups: Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let mut builder = HostBuilder::<CallData>::new(imports).unwrap();
+    let prepared = builder
+        .prepare("greeter", &common::PUBLIC_FIXTURE, PluginConfig::default())
+        .await
+        .unwrap();
+    let plugin = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            context("startup"),
+        )
+        .await
+        .unwrap();
+    let host = builder.finish();
+
+    let error = match host.client::<guest::Role>(&plugin) {
+        Ok(_) => panic!("generated role cast unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error,
+        RoleError::RoleNotExported {
+            interface: "test:host-bindings/guest",
+        }
     );
 }
 
@@ -329,17 +363,14 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         .unwrap();
 
     let host = builder.finish();
-    let first_guest = host.client::<GuestRole>(&first).unwrap();
-    let second_guest = host.client::<GuestRole>(&second).unwrap();
+    let first_guest = host.guest(&first).unwrap();
+    let second_guest = host.guest(&second).unwrap();
     assert_eq!(
-        first_guest.string("caller", context("call")).await.unwrap(),
+        first_guest.caller(context("call")).await.unwrap(),
         "host-caller"
     );
     assert_eq!(
-        second_guest
-            .string("caller", context("call"))
-            .await
-            .unwrap(),
+        second_guest.caller(context("call")).await.unwrap(),
         "other-caller"
     );
 }

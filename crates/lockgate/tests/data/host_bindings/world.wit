@@ -15,10 +15,30 @@ interface application {
 }
 
 interface guest {
+  record payload {
+    flag: bool,
+    unsigned-8: u8,
+    unsigned-16: u16,
+    unsigned-32: u32,
+    unsigned-64: u64,
+    signed-8: s8,
+    signed-16: s16,
+    signed-32: s32,
+    signed-64: s64,
+    float-32: f32,
+    float-64: f64,
+    letter: char,
+    text: string,
+    items: list<u16>,
+    maybe: option<string>,
+    outcome: result<u64, string>,
+  }
+
   data: func() -> string;
   caller: func() -> string;
   overlap: async func() -> u32;
   rich: func(value: u32, fail: bool) -> string;
+  round-trip: func(payload: payload) -> payload;
 }
 
 world fixture {

@@ -737,6 +737,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-host-export-values-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate",
+]
+
+[[package]]
 name = "lockgate-macros"
 version = "0.1.0"
 dependencies = [

@@ -1,13 +1,9 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use lockgate::{
-    Acceptance, CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation,
-    RuntimeLimits, Value,
-};
+use lockgate::{Acceptance, HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "example.greeter";
-const GREETER_INTERFACE: &str = "example:greeter/greeter";
 const DEFAULT_PLUGIN_PATH: &str =
     "examples/greeter/plugin/target/wasm32-wasip2/release/greeter_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
@@ -18,39 +14,7 @@ lockgate::host_bindings!({
     world: "plugin",
 });
 
-struct GreeterRole;
-
-struct GreeterClient<'a, S: Send + Sync + 'static> {
-    invocation: RoleInvocation<'a, S>,
-}
-
-impl Role for GreeterRole {
-    const INTERFACE: &'static str = GREETER_INTERFACE;
-    type Client<'a, S>
-        = GreeterClient<'a, S>
-    where
-        S: Send + Sync + 'static;
-
-    fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
-    where
-        S: Send + Sync + 'static,
-    {
-        GreeterClient { invocation }
-    }
-}
-
-impl<S: Send + Sync + 'static> GreeterClient<'_, S> {
-    async fn greet(&self, name: &str, ctx: InvocationCtx<S>) -> Result<String, CallError> {
-        let results = self
-            .invocation
-            .invoke("greet", &[Value::String(name.to_owned())], ctx)
-            .await?;
-        match results.as_slice() {
-            [Value::String(greeting)] => Ok(greeting.clone()),
-            _ => Err(CallError::shape("greet returned a non-string result")),
-        }
-    }
-}
+use greeter::HostExt;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -83,11 +47,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .await?;
     let host = builder.finish();
 
-    let greeter = host.client::<GreeterRole>(&plugin)?;
     // Every call receives its own application context and execution budget.
-    let greeting = greeter
-        .greet("world", InvocationCtx::bounded(25_000_000))
-        .await?;
+    let ctx = InvocationCtx::bounded(25_000_000);
+    let greeting = host.greeter(&plugin)?.greet(ctx, "world").await?;
     println!("{greeting}");
     Ok(())
 }

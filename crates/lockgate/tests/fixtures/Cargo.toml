@@ -6,6 +6,7 @@ members = [
     "exec-fuel-guest",
     "exec-guest",
     "host-bindings-guest",
+    "host-export-values",
     "public-guest",
     "renamed-facade",
     "renamed-host-facade",

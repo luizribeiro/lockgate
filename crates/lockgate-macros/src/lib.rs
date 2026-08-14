@@ -1,24 +1,29 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use heck::{ToSnakeCase, ToUpperCamelCase};
+use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    FnArg, GenericArgument, Ident, Item, ItemTrait, LitStr, PathArguments, ReturnType, Token, Type,
-    TypeImplTrait, braced, parse::Parse, parse::ParseStream,
+    FnArg, GenericArgument, Ident, Item, ItemTrait, LitStr, PathArguments, ReturnType, Token,
+    Type as SynType, TypeImplTrait, braced, parse::Parse, parse::ParseStream,
 };
 use wasmtime_wit_bindgen::{FunctionConfig, FunctionFilter, FunctionFlags, Opts};
-use wit_parser::{InterfaceId, Resolve, WorldItem};
+use wit_parser::{InterfaceId, Resolve, Type, TypeDefKind, TypeId, WorldItem};
 
-/// Generates application-facing host-import traits and their linker adapters.
+/// Generates typed application bindings for a WIT world.
 ///
 /// The macro takes `path` and `world` options. Worlds with imported interfaces
 /// also provide `imports` and `data` as a pair; export-only worlds omit both.
 /// Each imported WIT interface becomes a top-level Rust module with a `Host`
 /// trait; an implementation may use `async fn` methods whose second parameter
 /// is `HostCtx<'_, data>`.
+///
+/// Each named exported interface becomes a top-level module containing its WIT
+/// value types plus `Role`, `Client`, and `HostExt`. Client methods take an
+/// `InvocationCtx` before their WIT arguments and invoke the plugin through
+/// Lockgate's value-only call boundary.
 ///
 /// The `imports` type is cloned once for each fresh plugin Store and once more
 /// for each overlapping host call. Shared application state should therefore
@@ -38,8 +43,8 @@ struct HostBindingsInput {
 }
 
 struct HostImportsConfig {
-    imports: Type,
-    data: Type,
+    imports: SynType,
+    data: SynType,
 }
 
 impl Parse for HostBindingsInput {
@@ -120,10 +125,929 @@ fn required<T>(value: Option<T>, input: ParseStream<'_>, name: &str) -> syn::Res
     })
 }
 
+fn export_module(
+    resolve: &Resolve,
+    exported: &ExportedInterface,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    let interface = &resolve.interfaces[exported.id];
+    let module = &exported.public_module;
+    let extension_method = module;
+    let interface_name = &exported.interface_name;
+    let type_names = interface
+        .types
+        .iter()
+        .map(|(name, id)| (*id, format_ident!("{}", rust_type_ident(name))))
+        .collect::<BTreeMap<_, _>>();
+    let type_definitions = interface
+        .types
+        .iter()
+        .map(|(name, id)| {
+            public_type_definition(
+                resolve,
+                &type_names,
+                *id,
+                format_ident!("{}", rust_type_ident(name)),
+            )
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+    let methods = interface
+        .functions
+        .values()
+        .map(|function| client_method(resolve, &type_names, function, lockgate))
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    Ok(quote! {
+        pub mod #module {
+            #(#type_definitions)*
+
+            /// Role marker for this exported WIT interface.
+            pub struct Role;
+
+            /// Typed client for one admitted plugin's exported WIT interface.
+            pub struct Client<'a, S: Send + Sync + 'static> {
+                invocation: #lockgate::RoleInvocation<'a, S>,
+            }
+
+            impl #lockgate::Role for Role {
+                const INTERFACE: &'static str = #interface_name;
+
+                type Client<'a, S>
+                    = Client<'a, S>
+                where
+                    S: Send + Sync + 'static;
+
+                fn client<'a, S>(
+                    invocation: #lockgate::RoleInvocation<'a, S>,
+                ) -> Self::Client<'a, S>
+                where
+                    S: Send + Sync + 'static,
+                {
+                    Client { invocation }
+                }
+            }
+
+            impl<S: Send + Sync + 'static> Client<'_, S> {
+                #(#methods)*
+            }
+
+            /// Readable cast extension for this exported WIT interface.
+            pub trait HostExt<S: Send + Sync + 'static> {
+                fn #extension_method(
+                    &self,
+                    plugin: &#lockgate::PluginHandle,
+                ) -> Result<Client<'_, S>, #lockgate::RoleError>;
+            }
+
+            impl<S: Send + Sync + 'static> HostExt<S> for #lockgate::Host<S> {
+                fn #extension_method(
+                    &self,
+                    plugin: &#lockgate::PluginHandle,
+                ) -> Result<Client<'_, S>, #lockgate::RoleError> {
+                    self.client::<Role>(plugin)
+                }
+            }
+        }
+    })
+}
+
+fn public_type_definition(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    id: TypeId,
+    name: Ident,
+) -> syn::Result<TokenStream2> {
+    Ok(match &resolve.types[id].kind {
+        TypeDefKind::Record(record) => {
+            let fields = record
+                .fields
+                .iter()
+                .map(|field| {
+                    let field_name = format_ident!("{}", rust_ident(&field.name));
+                    let ty = rust_type(resolve, type_names, field.ty, false)?;
+                    Ok(quote!(pub #field_name: #ty))
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote! {
+                #[derive(Clone, Debug, PartialEq)]
+                pub struct #name { #(#fields,)* }
+            }
+        }
+        TypeDefKind::Variant(variant) => {
+            let cases = variant
+                .cases
+                .iter()
+                .map(|case| {
+                    let case_name = format_ident!("{}", rust_type_ident(&case.name));
+                    match case.ty {
+                        Some(ty) => {
+                            let ty = rust_type(resolve, type_names, ty, false)?;
+                            Ok(quote!(#case_name(#ty)))
+                        }
+                        None => Ok(quote!(#case_name)),
+                    }
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote! {
+                #[derive(Clone, Debug, PartialEq)]
+                pub enum #name { #(#cases,)* }
+            }
+        }
+        TypeDefKind::Enum(enum_) => {
+            let cases = enum_
+                .cases
+                .iter()
+                .map(|case| format_ident!("{}", rust_type_ident(&case.name)));
+            quote! {
+                #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+                pub enum #name { #(#cases,)* }
+            }
+        }
+        TypeDefKind::Flags(flags) => flags_definition(&name, flags),
+        TypeDefKind::Tuple(_)
+        | TypeDefKind::Option(_)
+        | TypeDefKind::Result(_)
+        | TypeDefKind::List(_)
+        | TypeDefKind::Map(_, _)
+        | TypeDefKind::FixedLengthList(_, _)
+        | TypeDefKind::Type(_) => {
+            let ty = rust_anonymous_type(resolve, type_names, id)?;
+            quote!(pub type #name = #ty;)
+        }
+        TypeDefKind::Resource => return Err(unsupported_codegen_type("resource")),
+        TypeDefKind::Handle(_) => return Err(unsupported_codegen_type("resource handle")),
+        TypeDefKind::Future(_) => return Err(unsupported_codegen_type("future")),
+        TypeDefKind::Stream(_) => return Err(unsupported_codegen_type("stream")),
+        TypeDefKind::Unknown => return Err(unsupported_codegen_type("unknown")),
+    })
+}
+
+fn flags_definition(name: &Ident, flags: &wit_parser::Flags) -> TokenStream2 {
+    let word_count = flags.flags.len().div_ceil(32);
+    let constants = flags.flags.iter().enumerate().map(|(index, flag)| {
+        let constant = format_ident!("{}", flag.name.to_shouty_snake_case());
+        let word = index / 32;
+        let bit = index % 32;
+        let words =
+            (0..word_count).map(|candidate| if candidate == word { 1u32 << bit } else { 0 });
+        quote!(pub const #constant: Self = Self([#(#words),*]);)
+    });
+    let indices = (0..word_count).map(syn::Index::from).collect::<Vec<_>>();
+    let contains = if indices.is_empty() {
+        quote!(true)
+    } else {
+        quote!(#((self.0[#indices] & other.0[#indices]) == other.0[#indices])&&*)
+    };
+
+    quote! {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct #name([u32; #word_count]);
+
+        impl #name {
+            pub const fn empty() -> Self {
+                Self([0; #word_count])
+            }
+
+            #(#constants)*
+
+            pub fn contains(self, other: Self) -> bool {
+                #contains
+            }
+        }
+
+        impl std::ops::BitOr for #name {
+            type Output = Self;
+
+            fn bitor(self, other: Self) -> Self {
+                Self([#(self.0[#indices] | other.0[#indices]),*])
+            }
+        }
+
+        impl std::ops::BitOrAssign for #name {
+            fn bitor_assign(&mut self, other: Self) {
+                *self = *self | other;
+            }
+        }
+    }
+}
+
+fn client_method(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    function: &wit_parser::Function,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    let method = format_ident!("{}", rust_ident(&function.name));
+    let function_name = &function.name;
+    let mut parameters = Vec::new();
+    let mut arguments = Vec::new();
+    for parameter in &function.params {
+        let name = format_ident!("{}", rust_ident(&parameter.name));
+        let ty = rust_type(resolve, type_names, parameter.ty, true)?;
+        let value = lower_value(
+            resolve,
+            type_names,
+            parameter.ty,
+            quote!(#name),
+            true,
+            lockgate,
+        )?;
+        parameters.push(quote!(#name: #ty));
+        arguments.push(value);
+    }
+    let result_type = function
+        .result
+        .map(|ty| rust_type(resolve, type_names, ty, false))
+        .transpose()?
+        .unwrap_or_else(|| quote!(()));
+    let lifted = match function.result {
+        Some(ty) => {
+            let value = lift_value(resolve, type_names, ty, quote!(value), lockgate)?;
+            let message =
+                format!("function `{function_name}` returned a value with an unexpected shape");
+            quote! {
+                match results.as_slice() {
+                    [value] => #value,
+                    _ => Err(#lockgate::CallError::shape(#message)),
+                }
+            }
+        }
+        None => {
+            let message = format!("function `{function_name}` unexpectedly returned values");
+            quote! {
+                if results.is_empty() {
+                    Ok(())
+                } else {
+                    Err(#lockgate::CallError::shape(#message))
+                }
+            }
+        }
+    };
+
+    Ok(quote! {
+        pub async fn #method(
+            &self,
+            ctx: #lockgate::InvocationCtx<S>,
+            #(#parameters),*
+        ) -> Result<#result_type, #lockgate::CallError> {
+            let results = self
+                .invocation
+                .invoke(#function_name, &[#(#arguments),*], ctx)
+                .await?;
+            #lifted
+        }
+    })
+}
+
+fn rust_type(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    ty: Type,
+    borrow_string: bool,
+) -> syn::Result<TokenStream2> {
+    Ok(match ty {
+        Type::Bool => quote!(bool),
+        Type::U8 => quote!(u8),
+        Type::U16 => quote!(u16),
+        Type::U32 => quote!(u32),
+        Type::U64 => quote!(u64),
+        Type::S8 => quote!(i8),
+        Type::S16 => quote!(i16),
+        Type::S32 => quote!(i32),
+        Type::S64 => quote!(i64),
+        Type::F32 => quote!(f32),
+        Type::F64 => quote!(f64),
+        Type::Char => quote!(char),
+        Type::String if borrow_string => quote!(&str),
+        Type::String => quote!(String),
+        Type::ErrorContext => return Err(unsupported_codegen_type("error-context")),
+        Type::Id(id) => {
+            if let Some(name) = named_type(resolve, type_names, id) {
+                quote!(#name)
+            } else {
+                rust_anonymous_type(resolve, type_names, id)?
+            }
+        }
+    })
+}
+
+fn rust_anonymous_type(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    id: TypeId,
+) -> syn::Result<TokenStream2> {
+    Ok(match &resolve.types[id].kind {
+        TypeDefKind::Tuple(tuple) => {
+            let types = tuple
+                .types
+                .iter()
+                .map(|ty| rust_type(resolve, type_names, *ty, false))
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote!((#(#types,)*))
+        }
+        TypeDefKind::Option(ty) => {
+            let ty = rust_type(resolve, type_names, *ty, false)?;
+            quote!(Option<#ty>)
+        }
+        TypeDefKind::Result(result) => {
+            let ok = optional_rust_type(resolve, type_names, result.ok)?;
+            let err = optional_rust_type(resolve, type_names, result.err)?;
+            quote!(Result<#ok, #err>)
+        }
+        TypeDefKind::List(ty) => {
+            let ty = rust_type(resolve, type_names, *ty, false)?;
+            quote!(Vec<#ty>)
+        }
+        TypeDefKind::Map(key, value) => {
+            let key = rust_type(resolve, type_names, *key, false)?;
+            let value = rust_type(resolve, type_names, *value, false)?;
+            quote!(std::collections::HashMap<#key, #value>)
+        }
+        TypeDefKind::FixedLengthList(ty, size) => {
+            let ty = rust_type(resolve, type_names, *ty, false)?;
+            let size = *size as usize;
+            quote!([#ty; #size])
+        }
+        TypeDefKind::Type(ty) => rust_type(resolve, type_names, *ty, false)?,
+        TypeDefKind::Record(_) => return Err(unnamed_codegen_type("record")),
+        TypeDefKind::Flags(_) => return Err(unnamed_codegen_type("flags")),
+        TypeDefKind::Variant(_) => return Err(unnamed_codegen_type("variant")),
+        TypeDefKind::Enum(_) => return Err(unnamed_codegen_type("enum")),
+        TypeDefKind::Resource => return Err(unsupported_codegen_type("resource")),
+        TypeDefKind::Handle(_) => return Err(unsupported_codegen_type("resource handle")),
+        TypeDefKind::Future(_) => return Err(unsupported_codegen_type("future")),
+        TypeDefKind::Stream(_) => return Err(unsupported_codegen_type("stream")),
+        TypeDefKind::Unknown => return Err(unsupported_codegen_type("unknown")),
+    })
+}
+
+fn optional_rust_type(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    ty: Option<Type>,
+) -> syn::Result<TokenStream2> {
+    ty.map(|ty| rust_type(resolve, type_names, ty, false))
+        .transpose()
+        .map(|ty| ty.unwrap_or_else(|| quote!(())))
+}
+
+fn lower_value(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    ty: Type,
+    value: TokenStream2,
+    borrowed_string: bool,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    Ok(match ty {
+        Type::Bool => quote!(#lockgate::Value::Bool(#value)),
+        Type::U8 => quote!(#lockgate::Value::U8(#value)),
+        Type::U16 => quote!(#lockgate::Value::U16(#value)),
+        Type::U32 => quote!(#lockgate::Value::U32(#value)),
+        Type::U64 => quote!(#lockgate::Value::U64(#value)),
+        Type::S8 => quote!(#lockgate::Value::S8(#value)),
+        Type::S16 => quote!(#lockgate::Value::S16(#value)),
+        Type::S32 => quote!(#lockgate::Value::S32(#value)),
+        Type::S64 => quote!(#lockgate::Value::S64(#value)),
+        Type::F32 => quote!(#lockgate::Value::Float32(#value)),
+        Type::F64 => quote!(#lockgate::Value::Float64(#value)),
+        Type::Char => quote!(#lockgate::Value::Char(#value)),
+        Type::String if borrowed_string => quote!(#lockgate::Value::String(#value.to_owned())),
+        Type::String => quote!(#lockgate::Value::String(#value)),
+        Type::ErrorContext => return Err(unsupported_codegen_type("error-context")),
+        Type::Id(id) => lower_type_id(resolve, type_names, id, value, lockgate)?,
+    })
+}
+
+fn lower_type_id(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    id: TypeId,
+    value: TokenStream2,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    Ok(match &resolve.types[id].kind {
+        TypeDefKind::Record(record) => {
+            let fields = record
+                .fields
+                .iter()
+                .map(|field| {
+                    let name = &field.name;
+                    let member = format_ident!("{}", rust_ident(name));
+                    let value = lower_value(
+                        resolve,
+                        type_names,
+                        field.ty,
+                        quote!(#value.#member),
+                        false,
+                        lockgate,
+                    )?;
+                    Ok(quote!((#name.to_owned(), #value)))
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote!(#lockgate::Value::Record(vec![#(#fields),*]))
+        }
+        TypeDefKind::Tuple(tuple) => {
+            let values = tuple
+                .types
+                .iter()
+                .enumerate()
+                .map(|(index, ty)| {
+                    let index = syn::Index::from(index);
+                    lower_value(
+                        resolve,
+                        type_names,
+                        *ty,
+                        quote!(#value.#index),
+                        false,
+                        lockgate,
+                    )
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote!(#lockgate::Value::Tuple(vec![#(#values),*]))
+        }
+        TypeDefKind::Variant(variant) => {
+            let ty = required_named_type(resolve, type_names, id, "variant")?;
+            let cases = variant
+                .cases
+                .iter()
+                .map(|case| {
+                    let name = &case.name;
+                    let case_name = format_ident!("{}", rust_type_ident(name));
+                    Ok(match case.ty {
+                        Some(payload) => {
+                            let payload = lower_value(
+                                resolve,
+                                type_names,
+                                payload,
+                                quote!(payload),
+                                false,
+                                lockgate,
+                            )?;
+                            quote!(#ty::#case_name(payload) => #lockgate::Value::Variant(
+                                #name.to_owned(), Some(Box::new(#payload)),
+                            ))
+                        }
+                        None => quote!(#ty::#case_name => #lockgate::Value::Variant(
+                            #name.to_owned(), None,
+                        )),
+                    })
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote!(match #value { #(#cases),* })
+        }
+        TypeDefKind::Enum(enum_) => {
+            let ty = required_named_type(resolve, type_names, id, "enum")?;
+            let cases = enum_.cases.iter().map(|case| {
+                let name = &case.name;
+                let case_name = format_ident!("{}", rust_type_ident(name));
+                quote!(#ty::#case_name => #lockgate::Value::Enum(#name.to_owned()))
+            });
+            quote!(match #value { #(#cases),* })
+        }
+        TypeDefKind::Option(ty) => {
+            let lowered = lower_value(resolve, type_names, *ty, quote!(value), false, lockgate)?;
+            quote!(#lockgate::Value::Option(
+                #value.map(|value| Box::new(#lowered))
+            ))
+        }
+        TypeDefKind::Result(result) => {
+            let ok = lower_optional_value(resolve, type_names, result.ok, quote!(value), lockgate)?;
+            let err =
+                lower_optional_value(resolve, type_names, result.err, quote!(value), lockgate)?;
+            quote!(#lockgate::Value::Result(match #value {
+                Ok(value) => Ok(#ok),
+                Err(value) => Err(#err),
+            }))
+        }
+        TypeDefKind::List(ty) => {
+            let element = lower_value(resolve, type_names, *ty, quote!(value), false, lockgate)?;
+            quote!(#lockgate::Value::List(
+                #value.into_iter().map(|value| #element).collect()
+            ))
+        }
+        TypeDefKind::Map(key, item) => {
+            let key = lower_value(resolve, type_names, *key, quote!(key), false, lockgate)?;
+            let item = lower_value(resolve, type_names, *item, quote!(value), false, lockgate)?;
+            quote!(#lockgate::Value::Map(
+                #value
+                    .into_iter()
+                    .map(|(key, value)| (#key, #item))
+                    .collect()
+            ))
+        }
+        TypeDefKind::FixedLengthList(ty, _) => {
+            let element = lower_value(resolve, type_names, *ty, quote!(value), false, lockgate)?;
+            quote!(#lockgate::Value::FixedLengthList(
+                #value.into_iter().map(|value| #element).collect()
+            ))
+        }
+        TypeDefKind::Flags(flags) => {
+            let ty = required_named_type(resolve, type_names, id, "flags")?;
+            let pushes = flags.flags.iter().map(|flag| {
+                let name = &flag.name;
+                let constant = format_ident!("{}", name.to_shouty_snake_case());
+                quote! {
+                    if #value.contains(#ty::#constant) {
+                        names.push(#name.to_owned());
+                    }
+                }
+            });
+            quote!({
+                let mut names = Vec::new();
+                #(#pushes)*
+                #lockgate::Value::Flags(names)
+            })
+        }
+        TypeDefKind::Type(ty) => lower_value(resolve, type_names, *ty, value, false, lockgate)?,
+        TypeDefKind::Resource => return Err(unsupported_codegen_type("resource")),
+        TypeDefKind::Handle(_) => return Err(unsupported_codegen_type("resource handle")),
+        TypeDefKind::Future(_) => return Err(unsupported_codegen_type("future")),
+        TypeDefKind::Stream(_) => return Err(unsupported_codegen_type("stream")),
+        TypeDefKind::Unknown => return Err(unsupported_codegen_type("unknown")),
+    })
+}
+
+fn lower_optional_value(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    ty: Option<Type>,
+    value: TokenStream2,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    match ty {
+        Some(ty) => {
+            let value = lower_value(resolve, type_names, ty, value, false, lockgate)?;
+            Ok(quote!(Some(Box::new(#value))))
+        }
+        None => Ok(quote!(None)),
+    }
+}
+
+fn lift_value(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    ty: Type,
+    value: TokenStream2,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    let mismatch = |expected: &str| {
+        let message = format!("expected {expected}");
+        quote!(Err(#lockgate::CallError::shape(#message)))
+    };
+    Ok(match ty {
+        Type::Bool => {
+            let error = mismatch("a bool");
+            quote!(match #value { #lockgate::Value::Bool(value) => Ok(*value), _ => #error })
+        }
+        Type::U8 => {
+            let error = mismatch("a u8");
+            quote!(match #value { #lockgate::Value::U8(value) => Ok(*value), _ => #error })
+        }
+        Type::U16 => {
+            let error = mismatch("a u16");
+            quote!(match #value { #lockgate::Value::U16(value) => Ok(*value), _ => #error })
+        }
+        Type::U32 => {
+            let error = mismatch("a u32");
+            quote!(match #value { #lockgate::Value::U32(value) => Ok(*value), _ => #error })
+        }
+        Type::U64 => {
+            let error = mismatch("a u64");
+            quote!(match #value { #lockgate::Value::U64(value) => Ok(*value), _ => #error })
+        }
+        Type::S8 => {
+            let error = mismatch("an s8");
+            quote!(match #value { #lockgate::Value::S8(value) => Ok(*value), _ => #error })
+        }
+        Type::S16 => {
+            let error = mismatch("an s16");
+            quote!(match #value { #lockgate::Value::S16(value) => Ok(*value), _ => #error })
+        }
+        Type::S32 => {
+            let error = mismatch("an s32");
+            quote!(match #value { #lockgate::Value::S32(value) => Ok(*value), _ => #error })
+        }
+        Type::S64 => {
+            let error = mismatch("an s64");
+            quote!(match #value { #lockgate::Value::S64(value) => Ok(*value), _ => #error })
+        }
+        Type::F32 => {
+            let error = mismatch("an f32");
+            quote!(match #value { #lockgate::Value::Float32(value) => Ok(*value), _ => #error })
+        }
+        Type::F64 => {
+            let error = mismatch("an f64");
+            quote!(match #value { #lockgate::Value::Float64(value) => Ok(*value), _ => #error })
+        }
+        Type::Char => {
+            let error = mismatch("a char");
+            quote!(match #value { #lockgate::Value::Char(value) => Ok(*value), _ => #error })
+        }
+        Type::String => {
+            let error = mismatch("a string");
+            quote!(match #value {
+                #lockgate::Value::String(value) => Ok(value.clone()),
+                _ => #error,
+            })
+        }
+        Type::ErrorContext => return Err(unsupported_codegen_type("error-context")),
+        Type::Id(id) => lift_type_id(resolve, type_names, id, value, lockgate)?,
+    })
+}
+
+fn lift_type_id(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    id: TypeId,
+    value: TokenStream2,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    let expected = resolve.types[id]
+        .name
+        .as_deref()
+        .unwrap_or_else(|| resolve.types[id].kind.as_str());
+    let message = format!("expected {expected}");
+    let mismatch = quote!(Err(#lockgate::CallError::shape(#message)));
+    Ok(match &resolve.types[id].kind {
+        TypeDefKind::Record(record) => {
+            let ty = required_named_type(resolve, type_names, id, "record")?;
+            let names = (0..record.fields.len())
+                .map(|index| format_ident!("field_name_{index}"))
+                .collect::<Vec<_>>();
+            let values = (0..record.fields.len())
+                .map(|index| format_ident!("field_value_{index}"))
+                .collect::<Vec<_>>();
+            let bindings = names
+                .iter()
+                .zip(&values)
+                .map(|(name, value)| quote!((#name, #value)))
+                .collect::<Vec<_>>();
+            let guards = names.iter().zip(&record.fields).map(|(binding, field)| {
+                let name = &field.name;
+                quote!(#binding == #name)
+            });
+            let fields = record
+                .fields
+                .iter()
+                .zip(&values)
+                .map(|(field, value)| {
+                    let member = format_ident!("{}", rust_ident(&field.name));
+                    let lifted =
+                        lift_value(resolve, type_names, field.ty, quote!(#value), lockgate)?;
+                    Ok(quote!(#member: (#lifted)?))
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            let guard = if record.fields.is_empty() {
+                quote!(true)
+            } else {
+                quote!(#(#guards)&&*)
+            };
+            quote!(match #value {
+                #lockgate::Value::Record(fields) => match fields.as_slice() {
+                    [#(#bindings),*] if #guard => Ok(#ty { #(#fields),* }),
+                    _ => #mismatch,
+                },
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Tuple(tuple) => {
+            let values = (0..tuple.types.len())
+                .map(|index| format_ident!("item_{index}"))
+                .collect::<Vec<_>>();
+            let items = tuple
+                .types
+                .iter()
+                .zip(&values)
+                .map(|(ty, value)| {
+                    let lifted = lift_value(resolve, type_names, *ty, quote!(#value), lockgate)?;
+                    Ok(quote!((#lifted)?))
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote!(match #value {
+                #lockgate::Value::Tuple(values) => match values.as_slice() {
+                    [#(#values),*] => Ok((#(#items,)*)),
+                    _ => #mismatch,
+                },
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Variant(variant) => {
+            let ty = required_named_type(resolve, type_names, id, "variant")?;
+            let cases = variant
+                .cases
+                .iter()
+                .map(|case| {
+                    let name = &case.name;
+                    let case_name = format_ident!("{}", rust_type_ident(name));
+                    Ok(match case.ty {
+                        Some(payload) => {
+                            let lifted = lift_value(
+                                resolve,
+                                type_names,
+                                payload,
+                                quote!(payload),
+                                lockgate,
+                            )?;
+                            quote!((#name, Some(payload)) => Ok(#ty::#case_name((#lifted)?)))
+                        }
+                        None => quote!((#name, None) => Ok(#ty::#case_name)),
+                    })
+                })
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote!(match #value {
+                #lockgate::Value::Variant(case, payload) => {
+                    match (case.as_str(), payload.as_deref()) {
+                        #(#cases,)*
+                        _ => #mismatch,
+                    }
+                }
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Enum(enum_) => {
+            let ty = required_named_type(resolve, type_names, id, "enum")?;
+            let cases = enum_.cases.iter().map(|case| {
+                let name = &case.name;
+                let case_name = format_ident!("{}", rust_type_ident(name));
+                quote!(#name => Ok(#ty::#case_name))
+            });
+            quote!(match #value {
+                #lockgate::Value::Enum(case) => match case.as_str() {
+                    #(#cases,)*
+                    _ => #mismatch,
+                },
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Option(ty) => {
+            let lifted = lift_value(resolve, type_names, *ty, quote!(value.as_ref()), lockgate)?;
+            quote!(match #value {
+                #lockgate::Value::Option(None) => Ok(None),
+                #lockgate::Value::Option(Some(value)) => Ok(Some((#lifted)?)),
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Result(result) => {
+            let ok = lift_optional_value(
+                resolve,
+                type_names,
+                result.ok,
+                quote!(value.as_ref()),
+                lockgate,
+            )?;
+            let err = lift_optional_value(
+                resolve,
+                type_names,
+                result.err,
+                quote!(value.as_ref()),
+                lockgate,
+            )?;
+            let ok_pattern = if result.ok.is_some() {
+                quote!(Some(value))
+            } else {
+                quote!(None)
+            };
+            let err_pattern = if result.err.is_some() {
+                quote!(Some(value))
+            } else {
+                quote!(None)
+            };
+            quote!(match #value {
+                #lockgate::Value::Result(Ok(#ok_pattern)) => Ok(Ok(#ok)),
+                #lockgate::Value::Result(Err(#err_pattern)) => Ok(Err(#err)),
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::List(ty) => {
+            let lifted = lift_value(resolve, type_names, *ty, quote!(value), lockgate)?;
+            quote!(match #value {
+                #lockgate::Value::List(values) => values
+                    .iter()
+                    .map(|value| #lifted)
+                    .collect::<Result<Vec<_>, #lockgate::CallError>>(),
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Map(key, item) => {
+            let key = lift_value(resolve, type_names, *key, quote!(key), lockgate)?;
+            let item = lift_value(resolve, type_names, *item, quote!(value), lockgate)?;
+            quote!(match #value {
+                #lockgate::Value::Map(values) => values
+                    .iter()
+                    .map(|(key, value)| Ok(((#key)?, (#item)?)))
+                    .collect::<Result<std::collections::HashMap<_, _>, #lockgate::CallError>>(),
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::FixedLengthList(ty, size) => {
+            let values = (0..*size)
+                .map(|index| format_ident!("item_{index}"))
+                .collect::<Vec<_>>();
+            let items = values
+                .iter()
+                .map(|value| lift_value(resolve, type_names, *ty, quote!(#value), lockgate))
+                .collect::<syn::Result<Vec<_>>>()?;
+            quote!(match #value {
+                #lockgate::Value::FixedLengthList(values) => match values.as_slice() {
+                    [#(#values),*] => Ok([#((#items)?),*]),
+                    _ => #mismatch,
+                },
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Flags(flags) => {
+            let ty = required_named_type(resolve, type_names, id, "flags")?;
+            let cases = flags.flags.iter().map(|flag| {
+                let name = &flag.name;
+                let constant = format_ident!("{}", name.to_shouty_snake_case());
+                quote!(#name => lifted |= #ty::#constant)
+            });
+            quote!(match #value {
+                #lockgate::Value::Flags(names) => {
+                    let mut lifted = #ty::empty();
+                    for name in names {
+                        match name.as_str() {
+                            #(#cases,)*
+                            _ => Err(#lockgate::CallError::shape(#message))?,
+                        }
+                    }
+                    Ok(lifted)
+                }
+                _ => #mismatch,
+            })
+        }
+        TypeDefKind::Type(ty) => lift_value(resolve, type_names, *ty, value, lockgate)?,
+        TypeDefKind::Resource => return Err(unsupported_codegen_type("resource")),
+        TypeDefKind::Handle(_) => return Err(unsupported_codegen_type("resource handle")),
+        TypeDefKind::Future(_) => return Err(unsupported_codegen_type("future")),
+        TypeDefKind::Stream(_) => return Err(unsupported_codegen_type("stream")),
+        TypeDefKind::Unknown => return Err(unsupported_codegen_type("unknown")),
+    })
+}
+
+fn lift_optional_value(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    ty: Option<Type>,
+    value: TokenStream2,
+    lockgate: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    match ty {
+        Some(ty) => {
+            let lifted = lift_value(resolve, type_names, ty, value, lockgate)?;
+            Ok(quote!((#lifted)?))
+        }
+        None => Ok(quote!(())),
+    }
+}
+
+fn named_type(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    id: TypeId,
+) -> Option<Ident> {
+    type_names.get(&id).cloned().or_else(|| {
+        resolve.types[id]
+            .name
+            .as_deref()
+            .map(|name| format_ident!("{}", rust_type_ident(name)))
+    })
+}
+
+fn required_named_type(
+    resolve: &Resolve,
+    type_names: &BTreeMap<TypeId, Ident>,
+    id: TypeId,
+    kind: &str,
+) -> syn::Result<Ident> {
+    named_type(resolve, type_names, id).ok_or_else(|| unnamed_codegen_type(kind))
+}
+
+fn unnamed_codegen_type(kind: &str) -> syn::Error {
+    syn::Error::new(
+        proc_macro2::Span::call_site(),
+        format!("host role code generation requires {kind} types to be named"),
+    )
+}
+
+fn unsupported_codegen_type(kind: &str) -> syn::Error {
+    syn::Error::new(
+        proc_macro2::Span::call_site(),
+        format!("host role code generation does not support {kind} values"),
+    )
+}
+
 struct ImportedInterface {
     path: Vec<Ident>,
     public_module: Ident,
     public_types: Vec<Ident>,
+}
+
+struct ExportedInterface {
+    id: InterfaceId,
+    public_module: Ident,
+    interface_name: String,
 }
 
 fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
@@ -182,6 +1106,29 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         });
     }
 
+    let mut exported_interfaces = Vec::new();
+    for (key, item) in &resolve.worlds[world].exports {
+        let WorldItem::Interface { id, .. } = item else {
+            continue;
+        };
+        let interface = &resolve.interfaces[*id];
+        let Some(name) = interface.name.as_deref() else {
+            continue;
+        };
+        let public_module = format_ident!("{}", rust_ident(name));
+        if !module_names.insert(public_module.to_string()) {
+            return Err(syn::Error::new_spanned(
+                &input.world,
+                format!("two WIT interfaces map to module `{public_module}`"),
+            ));
+        }
+        exported_interfaces.push(ExportedInterface {
+            id: *id,
+            public_module,
+            interface_name: resolve.name_world_key(key),
+        });
+    }
+
     if input.imports.is_none() && !interfaces.is_empty() {
         return Err(syn::Error::new_spanned(
             &input.world,
@@ -199,9 +1146,11 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         ..Default::default()
     };
     options.wasmtime_crate = Some(format!("{lockgate}::__private::wasmtime"));
-    let generated = options
-        .generate(&mut resolve, world)
-        .map_err(|error| syn::Error::new_spanned(&input.world, error.to_string()))?;
+    let world_exports = std::mem::take(&mut resolve.worlds[world].exports);
+    let generated = options.generate(&mut resolve, world);
+    resolve.worlds[world].exports = world_exports;
+    let generated =
+        generated.map_err(|error| syn::Error::new_spanned(&input.world, error.to_string()))?;
     let mut generated = syn::parse_file(&generated).map_err(|error| {
         syn::Error::new_spanned(
             &input.world,
@@ -274,6 +1223,10 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let export_modules = exported_interfaces
+        .iter()
+        .map(|interface| export_module(&resolve, interface, &lockgate))
+        .collect::<syn::Result<Vec<_>>>()?;
     let host_imports_impl = input.imports.as_ref().map(|config| {
         let imports = &config.imports;
         let data = &config.data;
@@ -314,6 +1267,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         }
 
         #(#public_modules)*
+        #(#export_modules)*
         #host_imports_impl
     })
 }
@@ -335,7 +1289,7 @@ fn adapter_items(host: &ItemTrait, lockgate: &TokenStream2) -> syn::Result<Vec<I
             ));
         };
         let store_is_accessor = match store {
-            FnArg::Typed(store) => matches!(store.ty.as_ref(), Type::Reference(_)),
+            FnArg::Typed(store) => matches!(store.ty.as_ref(), SynType::Reference(_)),
             FnArg::Receiver(_) => false,
         };
         let inputs = inputs.cloned().collect::<Vec<_>>();
@@ -441,14 +1395,14 @@ fn adapter_items(host: &ItemTrait, lockgate: &TokenStream2) -> syn::Result<Vec<I
     .map(|file| file.items)
 }
 
-fn future_output(output: &ReturnType) -> syn::Result<Type> {
+fn future_output(output: &ReturnType) -> syn::Result<SynType> {
     let ReturnType::Type(_, ty) = output else {
         return Err(syn::Error::new_spanned(
             output,
             "generated host method is missing its Future return type",
         ));
     };
-    let Type::ImplTrait(TypeImplTrait { bounds, .. }) = ty.as_ref() else {
+    let SynType::ImplTrait(TypeImplTrait { bounds, .. }) = ty.as_ref() else {
         return Err(syn::Error::new_spanned(
             ty,
             "generated host method return type is not a Future",
@@ -586,6 +1540,20 @@ fn rust_type_ident(name: &str) -> String {
     }
 }
 
+fn lockgate_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2> {
+    match crate_name("lockgate") {
+        Ok(FoundCrate::Itself) => Ok(quote!(crate)),
+        Ok(FoundCrate::Name(name)) => {
+            let name = format_ident!("{name}");
+            Ok(quote!(::#name))
+        }
+        Err(error) => Err(syn::Error::new_spanned(
+            span,
+            format!("failed to resolve the lockgate crate: {error}"),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::HostBindingsInput;
@@ -616,19 +1584,5 @@ mod tests {
                 "lockgate::host_bindings! options `imports` and `data` must be specified together"
             ));
         }
-    }
-}
-
-fn lockgate_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2> {
-    match crate_name("lockgate") {
-        Ok(FoundCrate::Itself) => Ok(quote!(crate)),
-        Ok(FoundCrate::Name(name)) => {
-            let name = format_ident!("{name}");
-            Ok(quote!(::#name))
-        }
-        Err(error) => Err(syn::Error::new_spanned(
-            span,
-            format!("failed to resolve the lockgate crate: {error}"),
-        )),
     }
 }

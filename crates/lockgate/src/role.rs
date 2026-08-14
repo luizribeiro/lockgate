@@ -9,7 +9,7 @@ use crate::lifecycle::{BudgetClass, InvocationCtx, RuntimeLimits};
 ///
 /// Implementations name the interface and wrap the invocation capability in
 /// their typed client. Generated clients and readable cast extensions use this
-/// same trait in later code-generation steps.
+/// same trait.
 pub trait Role: 'static {
     const INTERFACE: &'static str;
 

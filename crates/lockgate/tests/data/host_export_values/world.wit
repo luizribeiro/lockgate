@@ -1,0 +1,38 @@
+package test:host-export-values;
+
+interface values {
+  type pair = tuple<u8, string>;
+  type fixed = list<u8, 3>;
+  type lookup = map<string, u32>;
+
+  variant choice {
+    none,
+    count(u32),
+    text(string),
+  }
+
+  enum color {
+    red,
+    blue,
+  }
+
+  flags permissions {
+    read,
+    write,
+  }
+
+  record payload {
+    pair: pair,
+    fixed: fixed,
+    lookup: lookup,
+    choice: choice,
+    color: color,
+    permissions: permissions,
+  }
+
+  round-trip: func(payload: payload) -> payload;
+}
+
+world fixture {
+  export values;
+}

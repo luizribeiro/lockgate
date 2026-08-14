@@ -20,6 +20,12 @@ impl lockgate_plugin::Plugin for Fixture {
 }
 
 impl exports::test::host_bindings::guest::Guest for Fixture {
+    fn round_trip(
+        payload: exports::test::host_bindings::guest::Payload,
+    ) -> exports::test::host_bindings::guest::Payload {
+        payload
+    }
+
     fn data() -> String {
         test::host_bindings::application::read_data()
     }
