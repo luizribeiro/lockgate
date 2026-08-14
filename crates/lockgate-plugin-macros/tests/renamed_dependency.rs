@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
-fn export_supports_a_renamed_facade_dependency() {
+fn export_supports_a_renamed_facade_with_its_runtime_disabled() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../lockgate/tests/fixtures/renamed-facade/Cargo.toml");
     let output = Command::new(env!("CARGO"))

@@ -1,10 +1,86 @@
 //! Guest authoring facade for Lockgate plugins.
+//!
+//! The default `runtime` feature supplies the allocator, canonical ABI realloc
+//! export, and trap-on-panic handler required by `no_std` WebAssembly guests.
+//! Disable it when the final guest supplies its own program-wide runtime floor,
+//! such as for a custom allocator or a future standard-library guest.
+//!
+//! A guest panic traps and fails only its current invocation. Capturing panic
+//! messages is intentionally deferred to a future runtime diagnostics feature.
 #![no_std]
 
 extern crate self as lockgate_plugin;
 
 #[doc(hidden)]
 pub use wit_bindgen as __wit_bindgen;
+
+#[cfg(all(feature = "runtime", target_arch = "wasm32"))]
+mod runtime {
+    extern crate alloc;
+
+    use alloc::alloc::{Layout, alloc, handle_alloc_error, realloc};
+    use core::panic::PanicInfo;
+
+    #[global_allocator]
+    static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
+
+    #[unsafe(export_name = "cabi_realloc")]
+    pub unsafe extern "C" fn cabi_realloc(
+        old_ptr: *mut u8,
+        old_len: usize,
+        align: usize,
+        new_len: usize,
+    ) -> *mut u8 {
+        let layout;
+        let pointer = unsafe {
+            if old_len == 0 {
+                if new_len == 0 {
+                    return align as *mut u8;
+                }
+                layout = Layout::from_size_align_unchecked(new_len, align);
+                alloc(layout)
+            } else {
+                layout = Layout::from_size_align_unchecked(old_len, align);
+                realloc(old_ptr, layout, new_len)
+            }
+        };
+        if pointer.is_null() {
+            if cfg!(debug_assertions) {
+                handle_alloc_error(layout);
+            } else {
+                core::arch::wasm32::unreachable()
+            }
+        }
+        pointer
+    }
+
+    #[panic_handler]
+    fn panic(_info: &PanicInfo<'_>) -> ! {
+        core::arch::wasm32::unreachable()
+    }
+}
+
+#[doc(hidden)]
+#[cfg(all(feature = "runtime", target_arch = "wasm32"))]
+#[macro_export]
+macro_rules! __lockgate_runtime_keepalive {
+    () => {
+        #[used]
+        static __LOCKGATE_CABI_REALLOC_KEEPALIVE: unsafe extern "C" fn(
+            *mut u8,
+            usize,
+            usize,
+            usize,
+        ) -> *mut u8 = $crate::__private::cabi_realloc;
+    };
+}
+
+#[doc(hidden)]
+#[cfg(not(all(feature = "runtime", target_arch = "wasm32")))]
+#[macro_export]
+macro_rules! __lockgate_runtime_keepalive {
+    () => {};
+}
 
 /// Generates guest bindings for one WIT world.
 ///
@@ -95,6 +171,9 @@ impl Needs {
 #[doc(hidden)]
 pub mod __private {
     use super::Needs;
+
+    #[cfg(all(feature = "runtime", target_arch = "wasm32"))]
+    pub use super::runtime::cabi_realloc;
 
     const NEEDS_BYTES: &[u8] = br#"{"format":1,"optional":{},"reasons":{},"required":{}}"#;
 

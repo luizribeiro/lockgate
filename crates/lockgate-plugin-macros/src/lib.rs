@@ -26,6 +26,7 @@ pub fn export(input: TokenStream) -> TokenStream {
 
     quote! {
         __lockgate_wit_export!(#plugin);
+        #facade::__lockgate_runtime_keepalive!();
 
         const __LOCKGATE_PLUGIN_MANIFEST: #facade::__private::Manifest =
             #facade::__private::Manifest {

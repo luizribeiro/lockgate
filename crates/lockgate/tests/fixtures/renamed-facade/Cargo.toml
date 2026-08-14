@@ -7,4 +7,5 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
-lgp = { package = "lockgate-plugin", path = "../../../../lockgate-plugin" }
+dlmalloc.workspace = true
+lgp = { package = "lockgate-plugin", path = "../../../../lockgate-plugin", default-features = false }

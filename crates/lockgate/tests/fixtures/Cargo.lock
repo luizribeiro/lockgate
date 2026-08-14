@@ -698,7 +698,6 @@ dependencies = [
 name = "lockgate-detached-jobs-fixture"
 version = "0.1.0"
 dependencies = [
- "dlmalloc",
  "lockgate-plugin",
 ]
 
@@ -731,7 +730,6 @@ dependencies = [
 name = "lockgate-host-bindings-fixture"
 version = "0.1.0"
 dependencies = [
- "dlmalloc",
  "futures",
  "lockgate-plugin",
 ]
@@ -747,7 +745,6 @@ dependencies = [
 name = "lockgate-host-export-values-guest"
 version = "0.1.0"
 dependencies = [
- "dlmalloc",
  "lockgate-plugin",
 ]
 
@@ -768,6 +765,7 @@ dependencies = [
 name = "lockgate-plugin"
 version = "0.1.0"
 dependencies = [
+ "dlmalloc",
  "lockgate-plugin-macros",
  "wit-bindgen",
 ]
@@ -786,7 +784,6 @@ dependencies = [
 name = "lockgate-public-fixture"
 version = "0.1.0"
 dependencies = [
- "dlmalloc",
  "lockgate-plugin",
 ]
 
@@ -794,6 +791,7 @@ dependencies = [
 name = "lockgate-renamed-facade-fixture"
 version = "0.1.0"
 dependencies = [
+ "dlmalloc",
  "lockgate-plugin",
 ]
 

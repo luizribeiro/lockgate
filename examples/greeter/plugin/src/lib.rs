@@ -2,8 +2,6 @@
 
 extern crate alloc;
 
-mod runtime;
-
 use alloc::format;
 
 lockgate_plugin::generate!({

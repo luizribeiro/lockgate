@@ -3,9 +3,16 @@ name = "lockgate-plugin"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["runtime"]
+runtime = ["dep:dlmalloc"]
+
 [dependencies]
 lockgate-plugin-macros = { path = "../lockgate-plugin-macros" }
 wit-bindgen = { workspace = true, default-features = false, features = ["async", "macros"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dlmalloc = { version = "0.2", features = ["global"], optional = true }
 
 [dev-dependencies]
 lockgate-schema = { path = "../lockgate-schema" }

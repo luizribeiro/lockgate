@@ -8,7 +8,6 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-dlmalloc = { version = "0.2", features = ["global"] }
 lockgate-plugin = { path = "../../../crates/lockgate-plugin" }
 
 [workspace]
