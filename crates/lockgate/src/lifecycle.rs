@@ -160,7 +160,6 @@ struct AdmittedPlugin<S: 'static> {
     handle: PluginHandle,
     artifact: LoadedComponent<S>,
     limits: RuntimeLimits,
-    interfaces: Vec<String>,
 }
 
 /// Identity and display metadata for an admitted plugin.
@@ -276,7 +275,6 @@ impl<S: Send + 'static> HostBuilder<S> {
             handle: handle.clone(),
             artifact: *artifact,
             limits,
-            interfaces: inspection.exported_interfaces().to_vec(),
         });
         Ok(handle)
     }
@@ -313,16 +311,8 @@ impl<S: Send + 'static> Host<S> {
         if plugin.host != self.id {
             return Err(RoleError::WrongHost);
         }
-        let admitted = self
-            .plugins
-            .get(plugin.index)
-            .filter(|admitted| &admitted.handle == plugin)
-            .ok_or(RoleError::WrongHost)?;
-        if !admitted
-            .interfaces
-            .iter()
-            .any(|interface| interface == R::INTERFACE)
-        {
+        let admitted = self.plugins.get(plugin.index).ok_or(RoleError::WrongHost)?;
+        if !admitted.artifact.exports_interface(R::INTERFACE) {
             return Err(RoleError::RoleNotExported {
                 interface: R::INTERFACE,
             });

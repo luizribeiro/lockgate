@@ -70,6 +70,13 @@ pub(crate) struct LoadedComponent<S: 'static> {
 }
 
 impl<S: Send + 'static> LoadedComponent<S> {
+    pub(crate) fn exports_interface(&self, interface: &str) -> bool {
+        self.instance_pre
+            .component()
+            .get_export_index(None, interface)
+            .is_some()
+    }
+
     pub(crate) fn export(&self, interface: &str, func: &str) -> Option<ExportRef> {
         let component = self.instance_pre.component();
         let interface = component.get_export_index(None, interface)?;
