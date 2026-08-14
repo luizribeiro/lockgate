@@ -1,0 +1,17 @@
+package test:public;
+
+interface greeter {
+  greet: func(name: string) -> string;
+}
+
+interface diagnostics {
+  value: func() -> u32;
+  pin: func() -> u32;
+  trap: func();
+  work: func(iterations: u32) -> u32;
+}
+
+world fixture {
+  export greeter;
+  export diagnostics;
+}

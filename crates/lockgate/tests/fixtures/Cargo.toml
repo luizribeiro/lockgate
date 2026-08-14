@@ -4,6 +4,7 @@ members = [
     "exec-concurrent-guest",
     "exec-fuel-guest",
     "exec-guest",
+    "public-guest",
 ]
 
 [workspace.dependencies]

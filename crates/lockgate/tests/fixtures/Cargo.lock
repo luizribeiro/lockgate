@@ -192,6 +192,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-public-fixture"
+version = "0.1.0"
+dependencies = [
+ "dlmalloc",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
