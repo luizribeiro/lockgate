@@ -238,13 +238,18 @@ async fn supervise(
         tokio::select! {
             command = receiver.recv() => match command {
                 Some(JobCommand::Start { metadata: job, permit, future }) => {
-                    let task = jobs.spawn(async move {
-                        let _permit = permit;
-                        future.await
-                    });
-                    metadata.insert(task.id(), job);
+                    spawn_job(&mut jobs, &mut metadata, job, permit, future);
                 }
-                Some(JobCommand::Shutdown) | None => break,
+                Some(JobCommand::Shutdown) => {
+                    receiver.close();
+                    while let Some(command) = receiver.recv().await {
+                        if let JobCommand::Start { metadata: job, permit, future } = command {
+                            spawn_job(&mut jobs, &mut metadata, job, permit, future);
+                        }
+                    }
+                    break;
+                }
+                None => break,
             },
             completion = jobs.join_next_with_id(), if !jobs.is_empty() => {
                 if let Some(completion) = completion {
@@ -258,6 +263,20 @@ async fn supervise(
     while let Some(completion) = jobs.join_next_with_id().await {
         report_completion(completion, &mut metadata, &sink);
     }
+}
+
+fn spawn_job(
+    jobs: &mut JoinSet<anyhow::Result<()>>,
+    metadata: &mut HashMap<TaskId, JobMetadata>,
+    job: JobMetadata,
+    permit: JobPermit,
+    future: JobFuture,
+) {
+    let task = jobs.spawn(async move {
+        let _permit = permit;
+        future.await
+    });
+    metadata.insert(task.id(), job);
 }
 
 fn report_completion(
@@ -290,4 +309,56 @@ fn report_completion(
     };
     let sink = Arc::clone(&sink.read().expect("detached-job sink lock poisoned"));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(report)));
+}
+
+#[cfg(test)]
+pub(crate) async fn assert_queued_start_after_shutdown_is_aborted() {
+    use std::task::{Context, Poll};
+
+    struct PendingDrop(Arc<AtomicBool>);
+
+    impl Future for PendingDrop {
+        type Output = anyhow::Result<()>;
+
+        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PendingDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let sink_calls = Arc::new(AtomicUsize::new(0));
+    let sink: Arc<RwLock<ErrorSink>> = Arc::new(RwLock::new({
+        let sink_calls = Arc::clone(&sink_calls);
+        Arc::new(move |_| {
+            sink_calls.fetch_add(1, Ordering::SeqCst);
+        })
+    }));
+    let active = Arc::new(AtomicUsize::new(0));
+    let permit = JobPermit::acquire(Arc::clone(&active), "race", 1).unwrap();
+    let dropped = Arc::new(AtomicBool::new(false));
+
+    sender.send(JobCommand::Shutdown).unwrap();
+    sender
+        .send(JobCommand::Start {
+            metadata: JobMetadata {
+                plugin_id: "race".into(),
+                job_id: JobId(1),
+            },
+            permit,
+            future: Box::pin(PendingDrop(Arc::clone(&dropped))),
+        })
+        .unwrap();
+    drop(sender);
+
+    supervise(receiver, sink).await;
+
+    assert!(dropped.load(Ordering::SeqCst));
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert_eq!(sink_calls.load(Ordering::SeqCst), 0);
 }

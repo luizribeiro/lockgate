@@ -97,10 +97,15 @@ pub mod __private {
 
 #[cfg(test)]
 mod tests {
-    use super::exec::ExecEngine;
+    use super::{exec::ExecEngine, jobs};
 
     #[test]
     fn creates_engine_with_pinned_configuration() {
         ExecEngine::new().expect("the pinned Wasmtime configuration should be valid");
+    }
+
+    #[tokio::test]
+    async fn queued_detach_after_shutdown_is_aborted_and_awaited() {
+        jobs::assert_queued_start_after_shutdown_is_aborted().await;
     }
 }
