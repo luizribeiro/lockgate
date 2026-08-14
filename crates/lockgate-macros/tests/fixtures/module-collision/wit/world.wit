@@ -1,0 +1,10 @@
+package test:module-collision;
+
+interface values {
+  ping: func();
+}
+
+world fixture {
+  import incoming: values;
+  export outgoing: values;
+}

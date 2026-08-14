@@ -1,0 +1,9 @@
+[package]
+name = "lockgate-unexported-type-fixture"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+lockgate = { path = "../../../../lockgate" }

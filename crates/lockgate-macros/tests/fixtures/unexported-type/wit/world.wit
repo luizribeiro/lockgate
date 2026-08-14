@@ -1,0 +1,17 @@
+package test:unexported-type;
+
+interface source {
+  record payload {
+    value: u32,
+  }
+}
+
+interface consumer {
+  use source.{payload};
+
+  round-trip: func(payload: payload) -> payload;
+}
+
+world fixture {
+  export consumer;
+}
