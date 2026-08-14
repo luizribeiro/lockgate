@@ -7,5 +7,4 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-dlmalloc.workspace = true
-wit-bindgen = { workspace = true, features = ["macros"] }
+lockgate-plugin = { path = "../../../../lockgate-plugin" }

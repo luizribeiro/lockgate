@@ -705,9 +705,8 @@ dependencies = [
 name = "lockgate-exec-concurrent-fixture"
 version = "0.1.0"
 dependencies = [
- "dlmalloc",
  "futures",
- "wit-bindgen",
+ "lockgate-plugin",
 ]
 
 [[package]]
@@ -722,8 +721,7 @@ dependencies = [
 name = "lockgate-exec-fuel-fixture"
 version = "0.1.0"
 dependencies = [
- "dlmalloc",
- "wit-bindgen",
+ "lockgate-plugin",
 ]
 
 [[package]]

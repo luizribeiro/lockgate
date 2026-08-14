@@ -1,16 +1,15 @@
 #![no_std]
 
-use core::panic::PanicInfo;
-
-#[global_allocator]
-static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
-
-wit_bindgen::generate!({
+lockgate_plugin::generate!({
     path: "wit",
     world: "fixture",
 });
 
 struct Fixture;
+
+impl lockgate_plugin::Plugin for Fixture {
+    const ID: &'static str = "exec-fuel";
+}
 
 impl exports::test::exec_fuel::guest::Guest for Fixture {
     fn run(iterations: u32) -> u32 {
@@ -29,9 +28,4 @@ impl exports::test::exec_fuel::guest::Guest for Fixture {
     }
 }
 
-export!(Fixture);
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    core::arch::wasm32::unreachable()
-}
+lockgate_plugin::export!(Fixture);

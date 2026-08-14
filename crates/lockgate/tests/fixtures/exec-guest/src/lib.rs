@@ -2,6 +2,9 @@
 
 use core::panic::PanicInfo;
 
+// This one low-level execution fixture deliberately stays facade-independent:
+// it proves Lockgate can host a raw wit-bindgen component, so it retains the
+// single hand-written allocator and panic floor used by the raw fixture set.
 #[global_allocator]
 static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
