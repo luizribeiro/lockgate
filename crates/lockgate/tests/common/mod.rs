@@ -74,22 +74,35 @@ pub(crate) fn sectioned_fixture(bytes: &[u8], metadata: &PluginMetadata) -> Vec<
 }
 
 pub(crate) fn embedded_lockgate_sections(bytes: &[u8]) -> (Option<&[u8]>, Option<&[u8]>) {
-    let mut depth = 0usize;
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ContainerKind {
+        Module,
+        Component,
+    }
+
+    let mut containers = Vec::new();
     let mut metadata = None;
     let mut needs = None;
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.expect("fixture must be valid WebAssembly") {
-            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
-            Payload::End(_) if depth > 0 => depth -= 1,
-            Payload::CustomSection(section) if depth <= 1 => match section.name() {
-                PLUGIN_METADATA_SECTION => {
-                    assert!(metadata.replace(section.data()).is_none());
+            Payload::ModuleSection { .. } => containers.push(ContainerKind::Module),
+            Payload::ComponentSection { .. } => containers.push(ContainerKind::Component),
+            Payload::End(_) if !containers.is_empty() => {
+                containers.pop();
+            }
+            Payload::CustomSection(section)
+                if matches!(containers.as_slice(), [] | [ContainerKind::Module]) =>
+            {
+                match section.name() {
+                    PLUGIN_METADATA_SECTION => {
+                        assert!(metadata.replace(section.data()).is_none());
+                    }
+                    PLUGIN_NEEDS_SECTION => {
+                        assert!(needs.replace(section.data()).is_none());
+                    }
+                    _ => {}
                 }
-                PLUGIN_NEEDS_SECTION => {
-                    assert!(needs.replace(section.data()).is_none());
-                }
-                _ => {}
-            },
+            }
             _ => {}
         }
     }

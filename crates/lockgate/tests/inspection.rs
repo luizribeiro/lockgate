@@ -89,6 +89,23 @@ fn deeply_nested_sectioned_component() -> Vec<u8> {
     outer.finish()
 }
 
+fn embedded_sectioned_subcomponent() -> Vec<u8> {
+    let metadata = PluginMetadata::new(PLUGIN_ID, "Inspection fixture", "1.0").unwrap();
+    let mut nested = wasm_encoder::Component::new();
+    nested.section(&CustomSection {
+        name: PLUGIN_METADATA_SECTION.into(),
+        data: metadata.to_section_bytes().unwrap().into(),
+    });
+    nested.section(&CustomSection {
+        name: PLUGIN_NEEDS_SECTION.into(),
+        data: NeedsManifest::empty().to_section_bytes().unwrap().into(),
+    });
+
+    let mut outer = wasm_encoder::ComponentBuilder::default();
+    outer.component_raw(None, &nested.finish());
+    outer.finish()
+}
+
 #[test]
 fn inspects_metadata_needs_digest_and_exports() {
     let bytes = sectioned_component(
@@ -120,6 +137,13 @@ fn inspects_manifest_sections_linked_inside_the_guest_module() {
 #[test]
 fn ignores_manifest_sections_buried_below_the_linked_guest_module() {
     let error = inspect(&deeply_nested_sectioned_component()).unwrap_err();
+
+    assert!(matches!(error, InspectError::MissingMetadata));
+}
+
+#[test]
+fn ignores_manifest_sections_on_an_embedded_subcomponent() {
+    let error = inspect(&embedded_sectioned_subcomponent()).unwrap_err();
 
     assert!(matches!(error, InspectError::MissingMetadata));
 }

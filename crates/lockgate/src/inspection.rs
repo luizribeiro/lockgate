@@ -69,9 +69,15 @@ pub(crate) struct Sections<'a> {
     needs: Option<&'a [u8]>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContainerKind {
+    Module,
+    Component,
+}
+
 pub(crate) fn decode_sections(bytes: &[u8]) -> Result<Sections<'_>, InspectError> {
     let mut encoding = None;
-    let mut depth = 0usize;
+    let mut containers = Vec::new();
     let mut metadata = None;
     let mut needs = None;
 
@@ -82,17 +88,24 @@ pub(crate) fn decode_sections(bytes: &[u8]) -> Result<Sections<'_>, InspectError
             Payload::Version {
                 encoding: found, ..
             } if encoding.is_none() => encoding = Some(found),
-            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
-            Payload::End(_) if depth > 0 => depth -= 1,
-            Payload::CustomSection(section) if depth <= 1 => match section.name() {
-                PLUGIN_METADATA_SECTION => {
-                    set_section(&mut metadata, section.data(), PLUGIN_METADATA_SECTION)?
+            Payload::ModuleSection { .. } => containers.push(ContainerKind::Module),
+            Payload::ComponentSection { .. } => containers.push(ContainerKind::Component),
+            Payload::End(_) if !containers.is_empty() => {
+                containers.pop();
+            }
+            Payload::CustomSection(section)
+                if matches!(containers.as_slice(), [] | [ContainerKind::Module]) =>
+            {
+                match section.name() {
+                    PLUGIN_METADATA_SECTION => {
+                        set_section(&mut metadata, section.data(), PLUGIN_METADATA_SECTION)?
+                    }
+                    PLUGIN_NEEDS_SECTION => {
+                        set_section(&mut needs, section.data(), PLUGIN_NEEDS_SECTION)?
+                    }
+                    _ => {}
                 }
-                PLUGIN_NEEDS_SECTION => {
-                    set_section(&mut needs, section.data(), PLUGIN_NEEDS_SECTION)?
-                }
-                _ => {}
-            },
+            }
             _ => {}
         }
     }
