@@ -7,4 +7,5 @@ fn builds_exec_guest_component() {
     assert!(common::EXEC_FUEL_FIXTURE.starts_with(b"\0asm"));
     assert!(common::PUBLIC_FIXTURE.starts_with(b"\0asm"));
     assert!(common::HOST_BINDINGS_FIXTURE.starts_with(b"\0asm"));
+    assert!(common::HOST_EXPORT_VALUES_FIXTURE.starts_with(b"\0asm"));
 }

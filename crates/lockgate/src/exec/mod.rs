@@ -36,6 +36,8 @@ impl ExecEngine {
         config
             .wasm_component_model(true)
             .wasm_component_model_async(true)
+            .wasm_component_model_fixed_length_lists(true)
+            .wasm_component_model_map(true)
             .concurrency_support(true)
             .consume_fuel(true)
             .epoch_interruption(true);

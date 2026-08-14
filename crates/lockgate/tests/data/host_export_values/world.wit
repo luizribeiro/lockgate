@@ -31,8 +31,21 @@ interface values {
   }
 
   round-trip: func(payload: payload) -> payload;
+  probe: func(ok: bool) -> result<u32, string>;
+}
+
+interface mirror {
+  use values.{payload};
+
+  round-trip: func(payload: payload) -> payload;
+}
+
+interface %type {
+  ping: func() -> u32;
 }
 
 world fixture {
   export values;
+  export mirror;
+  export %type;
 }

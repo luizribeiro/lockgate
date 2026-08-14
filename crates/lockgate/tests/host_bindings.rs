@@ -282,6 +282,14 @@ async fn generated_clients_round_trip_value_shapes_through_both_casts() {
 
     assert_payload(via_extension, Ok(99));
     assert_payload(via_generic, Err("guest-data".into()));
+
+    let mut no_optional = payload(Ok(7));
+    no_optional.maybe = None;
+    let no_optional = extension
+        .round_trip(context("call"), no_optional)
+        .await
+        .unwrap();
+    assert_eq!(no_optional.maybe, None);
 }
 
 #[tokio::test]
