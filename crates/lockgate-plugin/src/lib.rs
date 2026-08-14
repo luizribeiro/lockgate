@@ -1,6 +1,42 @@
 //! Guest authoring facade for Lockgate plugins.
 #![no_std]
 
+#[doc(hidden)]
+pub use wit_bindgen as __wit_bindgen;
+
+/// Generates guest bindings for one WIT world.
+///
+/// Automatic `lockgate:config` wiring and compile-time export-shape checks
+/// extend this wrapper in later facade steps.
+#[macro_export]
+macro_rules! generate {
+    ({ path: $path:literal, world: $world:literal $(,)? }) => {
+        $crate::__wit_bindgen::generate!({
+            path: $path,
+            world: $world,
+            export_macro_name: "__lockgate_wit_export",
+        });
+    };
+}
+
+/// Exports a generated guest implementation and embeds its plugin manifests.
+///
+/// The plugin identity is a required trait item, so omitting it is diagnosed
+/// by Rust as a missing trait item:
+///
+/// ```compile_fail,E0046
+/// use lockgate_plugin::{Plugin, export};
+///
+/// macro_rules! __lockgate_wit_export {
+///     ($plugin:ident) => {};
+/// }
+///
+/// struct MissingIdentity;
+/// impl Plugin for MissingIdentity {}
+/// export!(MissingIdentity);
+/// ```
+pub use lockgate_plugin_macros::export;
+
 /// Static declarations embedded into a plugin component by [`export!`](macro@export).
 ///
 /// Identity is always explicit. Optional metadata defaults to the corresponding
