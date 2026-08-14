@@ -4,6 +4,51 @@ use crate::exec::{ExecEngine, LoadError};
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
 
+/// Per-invocation execution budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BudgetClass {
+    /// A deterministic fuel ceiling for one invocation.
+    Bounded { fuel: u64 },
+}
+
+/// Application data and execution budget installed for one invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvocationCtx<S> {
+    pub data: S,
+    pub budget: BudgetClass,
+}
+
+impl InvocationCtx<()> {
+    /// Creates a context with no application data and a bounded fuel budget.
+    pub fn bounded(fuel: u64) -> Self {
+        Self::new((), BudgetClass::Bounded { fuel })
+    }
+}
+
+impl<S> InvocationCtx<S> {
+    /// Creates an invocation context from application data and a budget.
+    pub fn new(data: S, budget: BudgetClass) -> Self {
+        Self { data, budget }
+    }
+}
+
+/// Per-plugin limits applied to every fresh Store, including the smoke probe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeLimits {
+    pub instantiation_fuel: u64,
+    pub max_memory_bytes: usize,
+}
+
+impl Default for RuntimeLimits {
+    fn default() -> Self {
+        Self {
+            instantiation_fuel: 10_000_000,
+            max_memory_bytes: 64 * 1024 * 1024,
+        }
+    }
+}
+
 /// Symbolic root names and their host paths for later scope resolution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SymbolicRoots(BTreeMap<String, PathBuf>);

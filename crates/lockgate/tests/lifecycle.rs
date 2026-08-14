@@ -1,7 +1,8 @@
 mod common;
 
 use lockgate::{
-    AdmissionError, HostBuilder, InspectError, LimitSet, PluginConfig, SymbolicRoots, inspect,
+    AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet, PluginConfig,
+    RuntimeLimits, SymbolicRoots, inspect,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{NeedsDigest, NeedsManifest, PluginMetadata};
@@ -47,6 +48,24 @@ fn metadata() -> PluginMetadata {
 
 fn well_formed_fixture() -> Vec<u8> {
     common::sectioned_fixture(&value_component(), &metadata())
+}
+
+#[test]
+fn runtime_inputs_are_bounded_and_explicit() {
+    let limits = RuntimeLimits::default();
+    assert!(limits.instantiation_fuel > 0);
+    assert!(limits.instantiation_fuel < u64::MAX);
+    assert!(limits.max_memory_bytes > 0);
+    assert!(limits.max_memory_bytes < usize::MAX);
+
+    assert_eq!(
+        InvocationCtx::bounded(123),
+        InvocationCtx::new((), BudgetClass::Bounded { fuel: 123 })
+    );
+    assert_eq!(
+        InvocationCtx::new("startup", BudgetClass::Bounded { fuel: 456 }).data,
+        "startup"
+    );
 }
 
 #[tokio::test]

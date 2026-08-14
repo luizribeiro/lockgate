@@ -11,7 +11,8 @@ mod validate;
 
 pub use inspection::{InspectError, Inspection, inspect};
 pub use lifecycle::{
-    AdmissionError, EngineError, HostBuilder, LimitSet, PluginConfig, Prepared, SymbolicRoots,
+    AdmissionError, BudgetClass, EngineError, HostBuilder, InvocationCtx, LimitSet, PluginConfig,
+    Prepared, RuntimeLimits, SymbolicRoots,
 };
 pub use validate::ValidationError;
 
