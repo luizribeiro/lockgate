@@ -5,5 +5,5 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-lockgate = { path = "../../crates/lockgate" }
+lockgate = { path = "../../../crates/lockgate" }
 tokio = { workspace = true, features = ["macros", "rt"] }

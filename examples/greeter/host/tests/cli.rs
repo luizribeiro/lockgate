@@ -13,7 +13,7 @@ fn missing_component_reports_the_plugin_build_command() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("could not read plugin component"));
     assert!(stderr.contains(
-        "nix develop -c cargo build --manifest-path examples/greeter-plugin/Cargo.toml \
+        "nix develop -c cargo build --manifest-path examples/greeter/plugin/Cargo.toml \
          --target wasm32-wasip2 --release"
     ));
 }

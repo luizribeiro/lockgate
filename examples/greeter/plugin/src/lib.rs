@@ -7,7 +7,7 @@ mod runtime;
 use alloc::format;
 
 lockgate_plugin::generate!({
-    path: "wit",
+    path: "../wit",
     world: "plugin",
 });
 

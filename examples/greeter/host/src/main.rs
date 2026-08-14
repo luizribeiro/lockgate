@@ -9,9 +9,19 @@ use lockgate::{
 const PLUGIN_ID: &str = "example.greeter";
 const GREETER_INTERFACE: &str = "example:greeter/greeter";
 const DEFAULT_PLUGIN_PATH: &str =
-    "examples/greeter-plugin/target/wasm32-wasip2/release/greeter_plugin.wasm";
+    "examples/greeter/plugin/target/wasm32-wasip2/release/greeter_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
-examples/greeter-plugin/Cargo.toml --target wasm32-wasip2 --release";
+examples/greeter/plugin/Cargo.toml --target wasm32-wasip2 --release";
+
+#[derive(Clone, Copy)]
+struct HostImports;
+
+lockgate::host_bindings!({
+    path: "../wit",
+    world: "plugin",
+    imports: HostImports,
+    data: (),
+});
 
 struct GreeterRole;
 
@@ -62,7 +72,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_PLUGIN_PATH));
     let bytes = read_component(&path)?;
 
-    let mut builder = HostBuilder::<()>::new(())?;
+    let mut builder = HostBuilder::<()>::new(HostImports)?;
     // prepare validates the declared identity, needs, and supported WIT shape.
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
