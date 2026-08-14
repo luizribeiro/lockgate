@@ -680,6 +680,9 @@ version = "0.1.0"
 [[package]]
 name = "lockgate-plugin"
 version = "0.1.0"
+dependencies = [
+ "lockgate-schema",
+]
 
 [[package]]
 name = "lockgate-plugin-macros"
