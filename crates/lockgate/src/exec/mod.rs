@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 #[cfg(test)]
 use std::sync::{
     Arc,
@@ -43,12 +41,9 @@ impl ExecEngine {
 
     /// Compiles a component and prepares its host imports for later invocations.
     ///
-    /// `S` is the application's per-invocation data type: embedders will attach
-    /// a value of this type to each call for host-import implementations to
-    /// read. No `S` value exists yet because invocation data is not carried at
-    /// this stage. Keeping the type parameter here ensures that `Store`,
-    /// `Linker`, and `InstancePre` agree on the data type without retrofitting
-    /// every signature when that value is introduced.
+    /// `S` is the application's per-invocation data type. Each fresh Store
+    /// receives its own value before instantiation so constructor imports and
+    /// later guest calls observe the correct invocation context.
     ///
     /// `imports` is called exactly once to register host-import implementations
     /// in the `Linker` before the component is baked into an `InstancePre`.
@@ -93,15 +88,11 @@ impl<S: Send + 'static> LoadedComponent<S> {
         &self,
         export: ExportRef,
         args: &[Val],
+        data: S,
         limits: ExecLimits,
         invocation_fuel: u64,
     ) -> Result<Vec<Val>, ExecError> {
-        let mut store = Store::new(
-            self.instance_pre.engine(),
-            StoreCtx::new(limits.max_memory_bytes),
-        );
-        store.limiter(|ctx| &mut ctx.limiter);
-        store.set_epoch_deadline(u64::MAX);
+        let mut store = self.configured_store(data, limits.max_memory_bytes);
         store
             .set_fuel(limits.instantiation_fuel)
             .map_err(map_instantiate_error)?;
@@ -132,6 +123,50 @@ impl<S: Send + 'static> LoadedComponent<S> {
 
         Ok(results)
     }
+
+    pub(crate) async fn smoke(
+        &self,
+        data: S,
+        limits: ExecLimits,
+        startup_fuel: u64,
+    ) -> Result<(), ExecError> {
+        let store = self.configured_store(data, limits.max_memory_bytes);
+        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel))
+            .await
+    }
+
+    fn configured_store(&self, data: S, max_memory_bytes: usize) -> Store<StoreCtx<S>> {
+        let mut store = Store::new(
+            self.instance_pre.engine(),
+            StoreCtx::new(data, max_memory_bytes),
+        );
+        store.limiter(|ctx| &mut ctx.limiter);
+        store.set_epoch_deadline(u64::MAX);
+        store
+    }
+
+    async fn smoke_store(&self, mut store: Store<StoreCtx<S>>, fuel: u64) -> Result<(), ExecError> {
+        store.set_fuel(fuel).map_err(map_instantiate_error)?;
+        self.instance_pre
+            .instantiate_async(&mut store)
+            .await
+            .map_err(map_instantiate_error)?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn smoke_observing_drop(
+        &self,
+        data: S,
+        limits: ExecLimits,
+        startup_fuel: u64,
+        dropped: Arc<AtomicBool>,
+    ) -> Result<(), ExecError> {
+        let mut store = self.configured_store(data, limits.max_memory_bytes);
+        store.data_mut().observe_drop(dropped);
+        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel))
+            .await
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -148,24 +183,31 @@ pub(crate) struct ExecLimits {
 
 /// Data owned by every `Store` this module creates.
 ///
-/// Production stores currently carry only the memory limiter and the
-/// type-level link to `S`. This context will grow as the host side gains
-/// per-invocation data and other services for import implementations.
+/// The invocation data is installed before instantiation so constructor host
+/// imports see the same context as later guest calls.
 pub(crate) struct StoreCtx<S> {
     limiter: MemoryLimiter,
-    marker: PhantomData<fn() -> S>,
+    data: S,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
 }
 
 impl<S> StoreCtx<S> {
-    fn new(max_memory_bytes: usize) -> Self {
+    fn new(data: S, max_memory_bytes: usize) -> Self {
         Self {
             limiter: MemoryLimiter { max_memory_bytes },
-            marker: PhantomData,
+            data,
             #[cfg(test)]
             drop_probe: None,
         }
+    }
+
+    #[allow(
+        dead_code,
+        reason = "generated host-import adapters consume invocation data in the next step"
+    )]
+    pub(crate) fn data(&self) -> &S {
+        &self.data
     }
 
     #[cfg(test)]

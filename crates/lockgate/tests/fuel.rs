@@ -29,7 +29,7 @@ async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
     for iteration in &mut exhausted_at {
         reported.store(0, Ordering::SeqCst);
         let error = loaded
-            .invoke(run, &[Val::U32(ITERATIONS)], LIMITS, LOW_FUEL)
+            .invoke(run, &[Val::U32(ITERATIONS)], TestState, LIMITS, LOW_FUEL)
             .await
             .expect_err("the low fuel allowance should be exhausted");
         assert!(matches!(error, ExecError::OutOfBudget));
@@ -44,7 +44,7 @@ async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
 
     reported.store(0, Ordering::SeqCst);
     let result = loaded
-        .invoke(run, &[Val::U32(ITERATIONS)], LIMITS, HIGH_FUEL)
+        .invoke(run, &[Val::U32(ITERATIONS)], TestState, LIMITS, HIGH_FUEL)
         .await
         .expect("the higher fuel allowance should complete");
     assert!(matches!(result.as_slice(), [Val::U32(_)]));

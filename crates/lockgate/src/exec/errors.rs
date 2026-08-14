@@ -115,6 +115,9 @@ pub(super) fn map_instantiate_error(error: WasmtimeError) -> ExecError {
     if error.is::<MemoryLimitExceeded>() {
         return ExecError::Trap(memory_limit_detail(error));
     }
+    if error.downcast_ref::<Trap>() == Some(&Trap::OutOfFuel) {
+        return ExecError::OutOfBudget;
+    }
     ExecError::Instantiate(error.into())
 }
 

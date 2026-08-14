@@ -54,7 +54,7 @@ async fn guest_async_imports_run_concurrently() -> Result<()> {
 
     let results = timeout(
         REGRESSION_TIMEOUT,
-        loaded.invoke(export, &[], LIMITS, INVOCATION_FUEL),
+        loaded.invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL),
     )
     .await
     .expect("serialized async imports deadlocked at the barrier")?;

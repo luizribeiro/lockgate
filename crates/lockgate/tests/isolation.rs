@@ -24,8 +24,8 @@ async fn same_loaded_component_accepts_overlapping_invocations() {
 
     let pair = tokio::time::timeout(Duration::from_secs(5), async {
         tokio::join!(
-            loaded.invoke(suspend, &[], LIMITS, INVOCATION_FUEL),
-            loaded.invoke(suspend, &[], LIMITS, INVOCATION_FUEL),
+            loaded.invoke(suspend, &[], TestState, LIMITS, INVOCATION_FUEL),
+            loaded.invoke(suspend, &[], TestState, LIMITS, INVOCATION_FUEL),
         )
     })
     .await
@@ -48,7 +48,7 @@ async fn every_root_invocation_gets_fresh_guest_globals() {
 
     for _ in 0..2 {
         let result = loaded
-            .invoke(pin, &[], LIMITS, INVOCATION_FUEL)
+            .invoke(pin, &[], TestState, LIMITS, INVOCATION_FUEL)
             .await
             .unwrap();
         assert!(matches!(result.as_slice(), [Val::U32(1)]));
