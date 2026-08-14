@@ -36,7 +36,7 @@ impl HostImports<u32> for Imports {
             .instance("test:manual/host")?
             .func_wrap_async("echo", |mut host, (): ()| {
                 Box::new(async move {
-                    let (imports, data, _plugin) = host
+                    let (imports, data, _plugin, _jobs) = host
                         .data_mut()
                         .host_parts::<Imports, lockgate::PluginHandle>();
                     imports.calls.fetch_add(1, Ordering::SeqCst);

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "detached-jobs-guest",
     "exec-concurrent-guest",
     "exec-fuel-guest",
     "exec-guest",

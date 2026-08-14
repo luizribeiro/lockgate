@@ -10,11 +10,13 @@
 )]
 mod exec;
 mod inspection;
+mod jobs;
 mod lifecycle;
 mod role;
 mod validate;
 
 pub use inspection::{InspectError, Inspection, inspect};
+pub use jobs::{DetachError, DetachedJobFailure, JobId};
 pub use lifecycle::{
     Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, InvocationCtx,
     LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
@@ -48,16 +50,17 @@ impl<S> HostImports<S> for () {
 }
 
 /// Context supplied to every application host-import method.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct HostCtx<'a, S> {
     data: &'a S,
     plugin: &'a PluginHandle,
+    jobs: jobs::DetachedJobContext,
 }
 
 impl<'a, S> HostCtx<'a, S> {
     #[doc(hidden)]
-    pub fn new(data: &'a S, plugin: &'a PluginHandle) -> Self {
-        Self { data, plugin }
+    pub fn new(data: &'a S, plugin: &'a PluginHandle, jobs: jobs::DetachedJobContext) -> Self {
+        Self { data, plugin, jobs }
     }
 
     /// Returns the application data for this invocation.
@@ -69,11 +72,26 @@ impl<'a, S> HostCtx<'a, S> {
     pub fn plugin(&self) -> &PluginHandle {
         self.plugin
     }
+
+    /// Detaches a host-owned future so it may outlive this invocation.
+    ///
+    /// Detached jobs have no Lockgate wall-clock deadline: the host capability
+    /// owns their semantic lifetime. They are count-limited per admitted plugin
+    /// and are aborted and awaited when the [`Host`] is dropped.
+    pub fn detach<F, E>(&self, future: F) -> Result<JobId, DetachError>
+    where
+        F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+        E: Into<anyhow::Error> + Send + 'static,
+    {
+        self.jobs
+            .detach(Box::pin(async move { future.await.map_err(Into::into) }))
+    }
 }
 
 #[doc(hidden)]
 pub mod __private {
     pub use crate::exec::StoreCtx;
+    pub use crate::jobs::DetachedJobContext;
     pub use wasmtime;
 }
 

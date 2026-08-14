@@ -1,0 +1,11 @@
+[package]
+name = "lockgate-detached-jobs-fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dlmalloc.workspace = true
+lockgate-plugin = { path = "../../../../lockgate-plugin" }

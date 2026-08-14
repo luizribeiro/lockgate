@@ -14,6 +14,8 @@ use wasmtime::component::{
 use wasmtime::{Config, Engine, ResourceLimiter, Store};
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
 
+use super::jobs::DetachedJobContext;
+
 mod errors;
 
 pub(crate) use errors::{ExecError, LoadError};
@@ -73,6 +75,7 @@ impl ExecEngine {
             instance_pre,
             imports: Arc::new(UnitImports),
             plugin: None,
+            jobs: None,
         })
     }
 
@@ -92,6 +95,7 @@ impl ExecEngine {
             instance_pre,
             imports,
             plugin: None,
+            jobs: None,
         })
     }
 }
@@ -100,11 +104,17 @@ pub(crate) struct LoadedComponent<S: 'static> {
     instance_pre: InstancePre<StoreCtx<S>>,
     imports: Arc<dyn ImportsFactory<S>>,
     plugin: Option<Arc<dyn Any + Send + Sync>>,
+    jobs: Option<DetachedJobContext>,
 }
 
 impl<S: Send + Sync + 'static> LoadedComponent<S> {
-    pub(crate) fn set_plugin<P: Clone + Send + Sync + 'static>(&mut self, plugin: P) {
+    pub(crate) fn set_plugin<P: Clone + Send + Sync + 'static>(
+        &mut self,
+        plugin: P,
+        jobs: DetachedJobContext,
+    ) {
         self.plugin = Some(Arc::new(plugin));
+        self.jobs = Some(jobs);
     }
 
     pub(crate) fn exports_interface(&self, interface: &str) -> bool {
@@ -195,6 +205,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 data,
                 self.imports.create(),
                 self.plugin.clone(),
+                self.jobs.clone(),
                 max_memory_bytes,
             ),
         );
@@ -252,6 +263,7 @@ pub struct StoreCtx<S> {
     data: Arc<S>,
     imports: Box<dyn Any + Send>,
     plugin: Option<Arc<dyn Any + Send + Sync>>,
+    jobs: Option<DetachedJobContext>,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
 }
@@ -261,6 +273,7 @@ impl<S> StoreCtx<S> {
         data: S,
         imports: Box<dyn Any + Send>,
         plugin: Option<Arc<dyn Any + Send + Sync>>,
+        jobs: Option<DetachedJobContext>,
         max_memory_bytes: usize,
     ) -> Self {
         Self {
@@ -268,6 +281,7 @@ impl<S> StoreCtx<S> {
             data: Arc::new(data),
             imports,
             plugin,
+            jobs,
             #[cfg(test)]
             drop_probe: None,
         }
@@ -282,7 +296,7 @@ impl<S> StoreCtx<S> {
     }
 
     #[doc(hidden)]
-    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, Arc<P>)
+    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, Arc<P>, DetachedJobContext)
     where
         I: Clone + 'static,
         P: Send + Sync + 'static,
@@ -299,7 +313,11 @@ impl<S> StoreCtx<S> {
         )
         .downcast::<P>()
         .expect("Store plugin identity must be a PluginHandle");
-        (imports, Arc::clone(&self.data), plugin)
+        let jobs = self
+            .jobs
+            .clone()
+            .expect("public plugin Stores must carry detached-job context");
+        (imports, Arc::clone(&self.data), plugin, jobs)
     }
 
     #[cfg(test)]

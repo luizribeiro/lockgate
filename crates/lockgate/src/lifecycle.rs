@@ -13,6 +13,7 @@ use crate::exec::{
     ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError, LoadedComponent, TypedImports,
 };
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
+use crate::jobs::{DetachedJobContext, DetachedJobFailure, JobTracker};
 use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
 
@@ -61,6 +62,7 @@ impl<S> InvocationCtx<S> {
 pub struct RuntimeLimits {
     pub instantiation_fuel: u64,
     pub max_memory_bytes: usize,
+    pub max_detached_jobs: usize,
 }
 
 impl Default for RuntimeLimits {
@@ -68,6 +70,7 @@ impl Default for RuntimeLimits {
         Self {
             instantiation_fuel: 10_000_000,
             max_memory_bytes: 64 * 1024 * 1024,
+            max_detached_jobs: 32,
         }
     }
 }
@@ -176,6 +179,7 @@ pub struct HostBuilder<S: Send + Sync + 'static> {
     engine: ExecEngine,
     imports: std::sync::Arc<dyn ImportsFactory<S>>,
     admitted: Vec<AdmittedPlugin<S>>,
+    jobs: std::sync::Arc<JobTracker>,
 }
 
 struct AdmittedPlugin<S: 'static> {
@@ -211,14 +215,30 @@ impl<S: Send + Sync + 'static> HostBuilder<S> {
     /// Generated bindings implement [`crate::HostImports`] for the supplied
     /// value. Pass `()` when admitted plugins import no application functions.
     pub fn new<I: crate::HostImports<S>>(imports: I) -> Result<Self, EngineError> {
+        let engine = ExecEngine::new().map_err(EngineError::new)?;
+        let jobs = JobTracker::new().map_err(EngineError::new)?;
         Ok(Self {
             id: HostId::next(),
-            engine: ExecEngine::new().map_err(EngineError::new)?,
+            engine,
             imports: std::sync::Arc::new(TypedImports::new(imports, |imports, linker| {
                 crate::HostImports::add_to_linker(imports, linker)
             })),
             admitted: Vec::new(),
+            jobs,
         })
+    }
+
+    /// Installs the application callback for failed or panicked detached jobs.
+    ///
+    /// The default callback is a no-op because Lockgate has no logging
+    /// dependency. Applications that detach work should install a sink before
+    /// admitting plugins so asynchronous failures remain observable.
+    pub fn on_detached_job_error(
+        &mut self,
+        sink: impl Fn(DetachedJobFailure) + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.jobs.set_error_sink(sink);
+        self
     }
 
     /// Validates, compiles, and prelinks a plugin artifact for later admission.
@@ -290,7 +310,14 @@ impl<S: Send + Sync + 'static> HostBuilder<S> {
             index: self.admitted.len(),
             metadata: inspection.metadata().clone(),
         };
-        artifact.set_plugin(handle.clone());
+        artifact.set_plugin(
+            handle.clone(),
+            DetachedJobContext::new(
+                std::sync::Arc::clone(&self.jobs),
+                handle.id().to_owned(),
+                limits.max_detached_jobs,
+            ),
+        );
         let BudgetClass::Bounded { fuel } = startup_ctx.budget;
         artifact
             .smoke(startup_ctx.data, limits.into(), fuel)
@@ -311,6 +338,7 @@ impl<S: Send + Sync + 'static> HostBuilder<S> {
             id: self.id,
             engine: self.engine,
             plugins: self.admitted,
+            jobs: self.jobs,
         }
     }
 }
@@ -324,6 +352,13 @@ pub struct Host<S: Send + Sync + 'static> {
     )]
     engine: ExecEngine,
     plugins: Vec<AdmittedPlugin<S>>,
+    jobs: std::sync::Arc<JobTracker>,
+}
+
+impl<S: Send + Sync + 'static> Drop for Host<S> {
+    fn drop(&mut self) {
+        self.jobs.shutdown();
+    }
 }
 
 impl<S: Send + Sync + 'static> Host<S> {
@@ -380,7 +415,7 @@ pub struct EngineError {
 }
 
 impl EngineError {
-    fn new(error: wasmtime::Error) -> Self {
+    fn new(error: impl fmt::Display) -> Self {
         Self {
             message: error.to_string(),
         }

@@ -16,6 +16,8 @@ use wasmtime::component::Linker;
 
 #[path = "../../src/exec/mod.rs"]
 pub(crate) mod exec;
+#[path = "../../src/jobs.rs"]
+pub(crate) mod jobs;
 
 use exec::{ExecLimits, StoreCtx};
 
@@ -29,6 +31,8 @@ pub(crate) struct TestState;
 
 pub(crate) static EXEC_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("exec-guest", "lockgate_exec_fixture.wasm"));
+pub(crate) static DETACHED_JOBS_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("detached-jobs-guest", "lockgate_detached_jobs_fixture.wasm"));
 pub(crate) static EXEC_CONCURRENT_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
     build_fixture(
         "exec-concurrent-guest",

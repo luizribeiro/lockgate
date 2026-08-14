@@ -356,8 +356,8 @@ fn adapter_items(host: &ItemTrait, lockgate: &TokenStream2) -> syn::Result<Vec<I
                 #(#inputs),*
             ) -> impl ::core::future::Future<Output = #result> + Send {
                 async move {
-                    let (mut imports, data, plugin) = #host_parts;
-                    let cx = #lockgate::HostCtx::new(data.as_ref(), plugin.as_ref());
+                    let (mut imports, data, plugin, jobs) = #host_parts;
+                    let cx = #lockgate::HostCtx::new(data.as_ref(), plugin.as_ref(), jobs);
                     <#imports as __LockgateHost>::#name(
                         &mut imports,
                         cx,
