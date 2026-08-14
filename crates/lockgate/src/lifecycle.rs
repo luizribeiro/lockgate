@@ -236,9 +236,8 @@ impl<S: Send + Sync + 'static> HostBuilder<S> {
     pub fn on_detached_job_error(
         &mut self,
         sink: impl Fn(DetachedJobFailure) + Send + Sync + 'static,
-    ) -> &mut Self {
+    ) {
         self.jobs.set_error_sink(sink);
-        self
     }
 
     /// Validates, compiles, and prelinks a plugin artifact for later admission.
@@ -333,6 +332,10 @@ impl<S: Send + Sync + 'static> HostBuilder<S> {
     }
 
     /// Finishes configuration and transfers admitted plugins into a steady-state Host.
+    ///
+    /// Dropping the returned Host blocks the calling thread until its detached
+    /// jobs have been aborted and awaited. On an async runtime, perform that
+    /// drop in a blocking-safe context such as [`tokio::task::spawn_blocking`].
     pub fn finish(self) -> Host<S> {
         Host {
             id: self.id,
@@ -344,6 +347,10 @@ impl<S: Send + Sync + 'static> HostBuilder<S> {
 }
 
 /// Steady-state owner of the execution engine and admitted plugins.
+///
+/// Dropping a Host blocks the calling thread until all detached jobs have been
+/// aborted and awaited. On an async runtime, drop it in a blocking-safe context
+/// such as [`tokio::task::spawn_blocking`].
 pub struct Host<S: Send + Sync + 'static> {
     id: HostId,
     #[allow(

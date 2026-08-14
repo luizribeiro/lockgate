@@ -318,7 +318,7 @@ async fn panicking_job_is_reported_to_the_error_sink() {
 async fn host_drop_aborts_and_awaits_detached_jobs() {
     let control = Control::new();
     let failures = Arc::new(Mutex::new(Vec::new()));
-    let (host, plugin) = host(control.clone(), failures).await;
+    let (host, plugin) = host(control.clone(), Arc::clone(&failures)).await;
     {
         let client = host.client::<DetachedRole>(&plugin).unwrap();
         assert!(!client.start(NEVER).await.unwrap().starts_with("error:"));
@@ -333,6 +333,7 @@ async fn host_drop_aborts_and_awaits_detached_jobs() {
     .expect("Host drop hung while awaiting an aborted detached job")
     .unwrap();
     assert!(control.aborted.load(Ordering::SeqCst));
+    assert!(failures.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
