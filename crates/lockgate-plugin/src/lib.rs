@@ -7,6 +7,7 @@
 //!
 //! A guest panic traps and fails only its current invocation. Capturing panic
 //! messages is intentionally deferred to a future runtime diagnostics feature.
+//! Direct `cargo test --target wasm32-wasip2` fails for this crate by construction because the runtime feature's panic handler collides with std's in the test harness; test through the dependent fixtures instead.
 #![no_std]
 
 extern crate self as lockgate_plugin;
@@ -27,6 +28,15 @@ mod runtime {
     /// Reallocates guest memory for canonical ABI lifting and lowering.
     ///
     /// # Safety
+    ///
+    /// `align` must be a nonzero power of two, and rounding `new_len` up to
+    /// `align` must not overflow `isize::MAX`. Violating these requirements is
+    /// immediate undefined behavior because this function uses
+    /// [`Layout::from_size_align_unchecked`]. When `old_len` and `new_len` are
+    /// both zero, the function returns `align` as the pointer without touching
+    /// the allocator. Allocation failure calls [`handle_alloc_error`] in debug
+    /// builds and traps via [`core::arch::wasm32::unreachable`] in release
+    /// builds.
     ///
     /// A non-null `old_ptr` must denote an allocation made by this allocator
     /// with the supplied `old_len` and `align`. The canonical ABI is the only
@@ -67,6 +77,11 @@ mod runtime {
     }
 }
 
+/// Mirrors wit-bindgen's keep-alive pattern for `cabi_realloc`.
+///
+/// Current-toolchain builds are byte-identical without this reference, so it
+/// has not been observed to be load-bearing. It remains as cheap insurance
+/// against linker or toolchain behavior changes.
 #[doc(hidden)]
 #[cfg(all(feature = "runtime", target_arch = "wasm32"))]
 #[macro_export]
@@ -82,6 +97,7 @@ macro_rules! __lockgate_runtime_keepalive {
     };
 }
 
+/// No-op counterpart to the wit-bindgen-style `cabi_realloc` keep-alive.
 #[doc(hidden)]
 #[cfg(not(all(feature = "runtime", target_arch = "wasm32")))]
 #[macro_export]
