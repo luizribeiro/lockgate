@@ -33,6 +33,14 @@ fn facade_fixture_inspection_preserves_its_declarations() {
     );
 }
 
+#[test]
+fn facade_fixture_resolves_explicit_and_absent_metadata_sources() {
+    let inspection = inspect(&common::PUBLIC_FIXTURE).unwrap();
+
+    assert_eq!(inspection.metadata().name(), "Greeter");
+    assert_eq!(inspection.metadata().repository(), None);
+}
+
 fn expected_metadata() -> PluginMetadata {
     PluginMetadata::new("greeter", "Greeter", "1.0")
         .unwrap()

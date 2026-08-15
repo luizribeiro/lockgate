@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::string::String;
+use lockgate_plugin::MetadataSource;
 
 lockgate_plugin::generate!({
     path: "../../data/detached_jobs",
@@ -13,6 +14,10 @@ struct Fixture;
 
 impl lockgate_plugin::Plugin for Fixture {
     const ID: &'static str = "detached-jobs";
+    const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+    const LICENSE: MetadataSource = MetadataSource::Absent;
+    const REPOSITORY: MetadataSource = MetadataSource::Absent;
+    const HOMEPAGE: MetadataSource = MetadataSource::Absent;
 }
 
 impl exports::test::detached_jobs::guest::Guest for Fixture {

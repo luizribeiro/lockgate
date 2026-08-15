@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use lockgate::{Acceptance, HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
 
-const PLUGIN_ID: &str = "example.greeter";
+const PLUGIN_ID: &str = "greeter";
 const DEFAULT_PLUGIN_PATH: &str =
     "examples/greeter/plugin/target/wasm32-wasip2/release/greeter_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \

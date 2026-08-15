@@ -127,21 +127,26 @@ macro_rules! generate {
 /// by Rust as a missing trait item:
 ///
 /// ```compile_fail,E0046
-/// use lockgate_plugin::{Plugin, export};
+/// use lockgate_plugin::{MetadataSource, Plugin, export};
 ///
 /// macro_rules! __lockgate_wit_export {
 ///     ($plugin:ident) => {};
 /// }
 ///
 /// struct MissingIdentity;
-/// impl Plugin for MissingIdentity {}
+/// impl Plugin for MissingIdentity {
+///     const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+///     const LICENSE: MetadataSource = MetadataSource::Absent;
+///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
+///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+/// }
 /// export!(MissingIdentity);
 /// ```
 ///
 /// An explicitly empty identity is rejected during const evaluation:
 ///
 /// ```compile_fail,E0080
-/// use lockgate_plugin::{Plugin, export};
+/// use lockgate_plugin::{MetadataSource, Plugin, export};
 ///
 /// macro_rules! __lockgate_wit_export {
 ///     ($plugin:ident) => {};
@@ -150,27 +155,44 @@ macro_rules! generate {
 /// struct EmptyIdentity;
 /// impl Plugin for EmptyIdentity {
 ///     const ID: &'static str = "";
+///     const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+///     const LICENSE: MetadataSource = MetadataSource::Absent;
+///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
+///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
 /// }
 /// export!(EmptyIdentity);
 /// ```
 pub use lockgate_plugin_macros::export;
 
+/// Selects the source of one display-metadata field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetadataSource {
+    /// Read the corresponding Cargo package field at the [`export!`] call site.
+    Cargo,
+    /// Embed the supplied value.
+    Explicit(&'static str),
+    /// Deliberately omit an optional wire field.
+    Absent,
+}
+
 /// Static declarations embedded into a plugin component by [`export!`](macro@export).
 ///
-/// Identity is always explicit. Optional metadata defaults to the corresponding
-/// Cargo package field at the `export!` call site, and permission needs default
-/// to deny-by-default emptiness.
+/// Identity is always explicit. Every display-metadata const identifies its
+/// source, defaulting to the corresponding Cargo package field at the
+/// `export!` call site. Missing or empty Cargo fields are compile errors unless
+/// the source is explicitly changed; name and version cannot be absent.
+/// Permission needs currently default to deny-by-default emptiness.
 /// Display-string controls, format characters, and length limits are enforced
 /// at host admission in this version; compile-time checks arrive with the later
 /// const-needs validation work.
 pub trait Plugin {
     const ID: &'static str;
-    const NAME: Option<&'static str> = None;
-    const VERSION: Option<&'static str> = None;
-    const DESCRIPTION: Option<&'static str> = None;
-    const LICENSE: Option<&'static str> = None;
-    const REPOSITORY: Option<&'static str> = None;
-    const HOMEPAGE: Option<&'static str> = None;
+    const NAME: MetadataSource = MetadataSource::Cargo;
+    const VERSION: MetadataSource = MetadataSource::Cargo;
+    const DESCRIPTION: MetadataSource = MetadataSource::Cargo;
+    const LICENSE: MetadataSource = MetadataSource::Cargo;
+    const REPOSITORY: MetadataSource = MetadataSource::Cargo;
+    const HOMEPAGE: MetadataSource = MetadataSource::Cargo;
     const NEEDS: Needs = Needs::EMPTY;
 }
 
@@ -210,13 +232,6 @@ pub mod __private {
         pub repository: Option<&'static str>,
         pub homepage: Option<&'static str>,
         pub needs: Needs,
-    }
-
-    pub const fn cargo_optional(value: Option<&'static str>) -> Option<&'static str> {
-        match value {
-            Some(value) if !value.is_empty() => Some(value),
-            Some(_) | None => None,
-        }
     }
 
     pub const fn metadata_len(manifest: &Manifest) -> usize {

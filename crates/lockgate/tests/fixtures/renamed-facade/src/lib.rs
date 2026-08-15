@@ -18,6 +18,10 @@ struct RenamedFacade;
 
 impl lgp::Plugin for RenamedFacade {
     const ID: &'static str = "renamed-facade";
+    const DESCRIPTION: lgp::MetadataSource = lgp::MetadataSource::Absent;
+    const LICENSE: lgp::MetadataSource = lgp::MetadataSource::Absent;
+    const REPOSITORY: lgp::MetadataSource = lgp::MetadataSource::Absent;
+    const HOMEPAGE: lgp::MetadataSource = lgp::MetadataSource::Absent;
 }
 
 lgp::export!(RenamedFacade);

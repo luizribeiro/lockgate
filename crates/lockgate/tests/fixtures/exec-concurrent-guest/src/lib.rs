@@ -1,5 +1,7 @@
 #![no_std]
 
+use lockgate_plugin::MetadataSource;
+
 lockgate_plugin::generate!({
     path: "wit",
     world: "fixture",
@@ -9,6 +11,10 @@ struct Fixture;
 
 impl lockgate_plugin::Plugin for Fixture {
     const ID: &'static str = "exec-concurrent";
+    const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+    const LICENSE: MetadataSource = MetadataSource::Absent;
+    const REPOSITORY: MetadataSource = MetadataSource::Absent;
+    const HOMEPAGE: MetadataSource = MetadataSource::Absent;
 }
 
 impl exports::test::exec_concurrent::guest::Guest for Fixture {

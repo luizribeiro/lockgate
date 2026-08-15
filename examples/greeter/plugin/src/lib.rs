@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::format;
+use lockgate_plugin::MetadataSource;
 
 lockgate_plugin::generate!({
     path: "../wit",
@@ -12,7 +13,11 @@ lockgate_plugin::generate!({
 struct Greeter;
 
 impl lockgate_plugin::Plugin for Greeter {
-    const ID: &'static str = "example.greeter";
+    const ID: &'static str = "greeter";
+    // NAME, VERSION, and DESCRIPTION come from Cargo package metadata.
+    const LICENSE: MetadataSource = MetadataSource::Absent;
+    const REPOSITORY: MetadataSource = MetadataSource::Absent;
+    const HOMEPAGE: MetadataSource = MetadataSource::Absent;
 }
 
 impl exports::example::greeter::greeter::Guest for Greeter {

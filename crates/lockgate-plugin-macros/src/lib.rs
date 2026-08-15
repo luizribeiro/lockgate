@@ -36,36 +36,52 @@ pub fn export(input: TokenStream) -> TokenStream {
             #facade::__private::Manifest {
                 id: <#plugin as #facade::Plugin>::ID,
                 name: match <#plugin as #facade::Plugin>::NAME {
-                    ::core::option::Option::Some(value) => value,
-                    ::core::option::Option::None => env!("CARGO_PKG_NAME"),
+                    #facade::MetadataSource::Cargo => match option_env!("CARGO_PKG_NAME") {
+                        ::core::option::Option::Some(value) if !value.is_empty() => value,
+                        _ => panic!("Lockgate plugin Cargo name is missing or empty; set name in Cargo.toml, or declare MetadataSource::Explicit(...) or MetadataSource::Absent"),
+                    },
+                    #facade::MetadataSource::Explicit(value) => value,
+                    #facade::MetadataSource::Absent => panic!("Lockgate plugin name cannot use MetadataSource::Absent because name is required by the wire format"),
                 },
                 version: match <#plugin as #facade::Plugin>::VERSION {
-                    ::core::option::Option::Some(value) => value,
-                    ::core::option::Option::None => env!("CARGO_PKG_VERSION"),
+                    #facade::MetadataSource::Cargo => match option_env!("CARGO_PKG_VERSION") {
+                        ::core::option::Option::Some(value) if !value.is_empty() => value,
+                        _ => panic!("Lockgate plugin Cargo version is missing or empty; set version in Cargo.toml, or declare MetadataSource::Explicit(...) or MetadataSource::Absent"),
+                    },
+                    #facade::MetadataSource::Explicit(value) => value,
+                    #facade::MetadataSource::Absent => panic!("Lockgate plugin version cannot use MetadataSource::Absent because version is required by the wire format"),
                 },
                 description: match <#plugin as #facade::Plugin>::DESCRIPTION {
-                    ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => #facade::__private::cargo_optional(
-                        option_env!("CARGO_PKG_DESCRIPTION"),
-                    ),
+                    #facade::MetadataSource::Cargo => match option_env!("CARGO_PKG_DESCRIPTION") {
+                        ::core::option::Option::Some(value) if !value.is_empty() => ::core::option::Option::Some(value),
+                        _ => panic!("Lockgate plugin Cargo description is missing or empty; set description in Cargo.toml, or declare MetadataSource::Explicit(...) or MetadataSource::Absent"),
+                    },
+                    #facade::MetadataSource::Explicit(value) => ::core::option::Option::Some(value),
+                    #facade::MetadataSource::Absent => ::core::option::Option::None,
                 },
                 license: match <#plugin as #facade::Plugin>::LICENSE {
-                    ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => #facade::__private::cargo_optional(
-                        option_env!("CARGO_PKG_LICENSE"),
-                    ),
+                    #facade::MetadataSource::Cargo => match option_env!("CARGO_PKG_LICENSE") {
+                        ::core::option::Option::Some(value) if !value.is_empty() => ::core::option::Option::Some(value),
+                        _ => panic!("Lockgate plugin Cargo license is missing or empty; set license in Cargo.toml, or declare MetadataSource::Explicit(...) or MetadataSource::Absent"),
+                    },
+                    #facade::MetadataSource::Explicit(value) => ::core::option::Option::Some(value),
+                    #facade::MetadataSource::Absent => ::core::option::Option::None,
                 },
                 repository: match <#plugin as #facade::Plugin>::REPOSITORY {
-                    ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => #facade::__private::cargo_optional(
-                        option_env!("CARGO_PKG_REPOSITORY"),
-                    ),
+                    #facade::MetadataSource::Cargo => match option_env!("CARGO_PKG_REPOSITORY") {
+                        ::core::option::Option::Some(value) if !value.is_empty() => ::core::option::Option::Some(value),
+                        _ => panic!("Lockgate plugin Cargo repository is missing or empty; set repository in Cargo.toml, or declare MetadataSource::Explicit(...) or MetadataSource::Absent"),
+                    },
+                    #facade::MetadataSource::Explicit(value) => ::core::option::Option::Some(value),
+                    #facade::MetadataSource::Absent => ::core::option::Option::None,
                 },
                 homepage: match <#plugin as #facade::Plugin>::HOMEPAGE {
-                    ::core::option::Option::Some(value) => ::core::option::Option::Some(value),
-                    ::core::option::Option::None => #facade::__private::cargo_optional(
-                        option_env!("CARGO_PKG_HOMEPAGE"),
-                    ),
+                    #facade::MetadataSource::Cargo => match option_env!("CARGO_PKG_HOMEPAGE") {
+                        ::core::option::Option::Some(value) if !value.is_empty() => ::core::option::Option::Some(value),
+                        _ => panic!("Lockgate plugin Cargo homepage is missing or empty; set homepage in Cargo.toml, or declare MetadataSource::Explicit(...) or MetadataSource::Absent"),
+                    },
+                    #facade::MetadataSource::Explicit(value) => ::core::option::Option::Some(value),
+                    #facade::MetadataSource::Absent => ::core::option::Option::None,
                 },
                 needs: <#plugin as #facade::Plugin>::NEEDS,
             };
