@@ -8,7 +8,8 @@ answer rather than a failure. A single plugin can serve several roles at once.
 The host-owned `wit/` directory publishes the formatter, linter, and stats interfaces
 plus the host's superset world; `host/` admits both compiled components and discovers
 their roles at cast time. Each plugin directory declares its own subset world over a
-vendored copy of that contract, exactly as an out-of-tree plugin author would.
+vendored copy of that contract, exactly as an out-of-tree plugin author would. A host
+test keeps those vendored copies byte-identical to the contract you publish.
 
 From the repository root, build both plugins:
 
