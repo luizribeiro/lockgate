@@ -1,6 +1,6 @@
 #![no_std]
 
-use lockgate_plugin::MetadataSource;
+use lockgate_plugin::{MetadataSource, Needs};
 
 lockgate_plugin::generate!({
     path: "wit",
@@ -15,6 +15,7 @@ impl lockgate_plugin::Plugin for Fixture {
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
 }
 
 impl exports::test::exec_fuel::guest::Guest for Fixture {

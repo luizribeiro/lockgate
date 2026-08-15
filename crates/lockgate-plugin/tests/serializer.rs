@@ -10,12 +10,12 @@ const MANIFEST: Manifest = Manifest {
     license: Some("MIT OR Apache-2.0"),
     repository: Some("https://example.com/a\\b"),
     homepage: Some("https://example.com/?q=\"hello\""),
-    needs: Needs::EMPTY,
+    needs: Needs::NOTHING,
 };
 const METADATA_LEN: usize = metadata_len(&MANIFEST);
 const METADATA: [u8; METADATA_LEN] = metadata_bytes(&MANIFEST);
-const NEEDS_LEN: usize = needs_len(&Needs::EMPTY);
-const NEEDS: [u8; NEEDS_LEN] = needs_bytes(&Needs::EMPTY);
+const NEEDS_LEN: usize = needs_len(&Needs::NOTHING);
+const NEEDS: [u8; NEEDS_LEN] = needs_bytes(&Needs::NOTHING);
 
 #[test]
 fn const_serializer_matches_host_wire_encoding() {

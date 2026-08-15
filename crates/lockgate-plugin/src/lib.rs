@@ -127,7 +127,7 @@ macro_rules! generate {
 /// by Rust as a missing trait item:
 ///
 /// ```compile_fail,E0046
-/// use lockgate_plugin::{MetadataSource, Plugin, export};
+/// use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
 ///
 /// macro_rules! __lockgate_wit_export {
 ///     ($plugin:ident) => {};
@@ -139,6 +139,7 @@ macro_rules! generate {
 ///     const LICENSE: MetadataSource = MetadataSource::Absent;
 ///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
 ///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+///     const NEEDS: Needs = Needs::NOTHING;
 /// }
 /// export!(MissingIdentity);
 /// ```
@@ -146,7 +147,7 @@ macro_rules! generate {
 /// An explicitly empty identity is rejected during const evaluation:
 ///
 /// ```compile_fail,E0080
-/// use lockgate_plugin::{MetadataSource, Plugin, export};
+/// use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
 ///
 /// macro_rules! __lockgate_wit_export {
 ///     ($plugin:ident) => {};
@@ -159,8 +160,25 @@ macro_rules! generate {
 ///     const LICENSE: MetadataSource = MetadataSource::Absent;
 ///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
 ///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+///     const NEEDS: Needs = Needs::NOTHING;
 /// }
 /// export!(EmptyIdentity);
+/// ```
+///
+/// Permission needs are also a required trait item, so every manifest states
+/// its authority posture:
+///
+/// ```compile_fail,E0046
+/// use lockgate_plugin::{MetadataSource, Plugin};
+///
+/// struct MissingNeeds;
+/// impl Plugin for MissingNeeds {
+///     const ID: &'static str = "missing-needs";
+///     const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+///     const LICENSE: MetadataSource = MetadataSource::Absent;
+///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
+///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+/// }
 /// ```
 pub use lockgate_plugin_macros::export;
 
@@ -181,7 +199,8 @@ pub enum MetadataSource {
 /// source, defaulting to the corresponding Cargo package field at the
 /// `export!` call site. Missing or empty Cargo fields are compile errors unless
 /// the source is explicitly changed; name and version cannot be absent.
-/// Permission needs currently default to deny-by-default emptiness.
+/// Permission needs have no default so every manifest explicitly states its
+/// maximum authority, including [`Needs::NOTHING`].
 /// Display-string controls, format characters, and length limits are enforced
 /// at host admission in this version; compile-time checks arrive with the later
 /// const-needs validation work.
@@ -193,12 +212,12 @@ pub trait Plugin {
     const LICENSE: MetadataSource = MetadataSource::Cargo;
     const REPOSITORY: MetadataSource = MetadataSource::Cargo;
     const HOMEPAGE: MetadataSource = MetadataSource::Cargo;
-    const NEEDS: Needs = Needs::EMPTY;
+    const NEEDS: Needs;
 }
 
 /// A const-constructible guest permission declaration.
 ///
-/// This first facade version intentionally exposes only [`Needs::EMPTY`].
+/// This first facade version intentionally exposes only [`Needs::NOTHING`].
 /// Required and optional need constructors arrive with the grant declaration
 /// surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,7 +226,8 @@ pub struct Needs {
 }
 
 impl Needs {
-    pub const EMPTY: Self = Self { format: 1 };
+    /// Declares that a plugin requests no host capabilities.
+    pub const NOTHING: Self = Self { format: 1 };
 }
 
 /// Implementation details shared with the facade's generated code.

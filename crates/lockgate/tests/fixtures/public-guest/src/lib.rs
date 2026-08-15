@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::string::String;
-use lockgate_plugin::MetadataSource;
+use lockgate_plugin::{MetadataSource, Needs};
 
 lockgate_plugin::generate!({
     path: "wit",
@@ -18,6 +18,7 @@ impl lockgate_plugin::Plugin for Fixture {
     const VERSION: MetadataSource = MetadataSource::Explicit("1.0");
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
 }
 
 static mut PIN_COUNT: u32 = 0;

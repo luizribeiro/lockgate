@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::format;
-use lockgate_plugin::MetadataSource;
+use lockgate_plugin::{MetadataSource, Needs};
 
 lockgate_plugin::generate!({
     path: "../wit",
@@ -18,6 +18,8 @@ impl lockgate_plugin::Plugin for Greeter {
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    // Explicit authority claim: this plugin requests no host capabilities.
+    const NEEDS: Needs = Needs::NOTHING;
 }
 
 impl exports::example::greeter::greeter::Guest for Greeter {

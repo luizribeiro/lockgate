@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::string::String;
-use lockgate_plugin::MetadataSource;
+use lockgate_plugin::{MetadataSource, Needs};
 
 lockgate_plugin::generate!({
     path: "../../data/detached_jobs",
@@ -18,6 +18,7 @@ impl lockgate_plugin::Plugin for Fixture {
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
 }
 
 impl exports::test::detached_jobs::guest::Guest for Fixture {

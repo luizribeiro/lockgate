@@ -7,7 +7,7 @@ fn metadata_source_failures_have_field_specific_diagnostics() {
     check_compile_failure(
         "missing-description",
         r#"
-use lockgate_plugin::{MetadataSource, Plugin, export};
+use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
 
 macro_rules! __lockgate_wit_export {
     ($plugin:ident) => {};
@@ -22,6 +22,7 @@ impl Plugin for MissingDescription {
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
 }
 
 export!(MissingDescription);
@@ -31,7 +32,7 @@ export!(MissingDescription);
     check_compile_failure(
         "absent-name",
         r#"
-use lockgate_plugin::{MetadataSource, Plugin, export};
+use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
 
 macro_rules! __lockgate_wit_export {
     ($plugin:ident) => {};
@@ -47,6 +48,7 @@ impl Plugin for AbsentName {
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
 }
 
 export!(AbsentName);

@@ -4,7 +4,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use core::ffi::c_void;
-use lockgate_plugin::MetadataSource;
+use lockgate_plugin::{MetadataSource, Needs};
 
 lockgate_plugin::generate!({
     path: "../../data/host_export_values",
@@ -19,6 +19,7 @@ impl lockgate_plugin::Plugin for Fixture {
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
 }
 
 impl exports::test::host_export_values::values::Guest for Fixture {

@@ -22,6 +22,7 @@ impl lgp::Plugin for RenamedFacade {
     const LICENSE: lgp::MetadataSource = lgp::MetadataSource::Absent;
     const REPOSITORY: lgp::MetadataSource = lgp::MetadataSource::Absent;
     const HOMEPAGE: lgp::MetadataSource = lgp::MetadataSource::Absent;
+    const NEEDS: lgp::Needs = lgp::Needs::NOTHING;
 }
 
 lgp::export!(RenamedFacade);
