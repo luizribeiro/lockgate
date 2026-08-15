@@ -13,6 +13,7 @@ members = [
     "crates/lockgate-schema",
     "crates/lockgate-plugin",
     "crates/lockgate-plugin-macros",
+    "examples/audit/host",
     "examples/greeter/host",
 ]
 
