@@ -5,6 +5,7 @@ exclude = [
     "crates/lockgate/tests/fixtures/exec-fuel-guest",
     "crates/lockgate/tests/fixtures/exec-guest",
     "examples/audit/plugin",
+    "examples/dispatch/plugin",
     "examples/greeter/plugin",
 ]
 members = [
@@ -14,6 +15,7 @@ members = [
     "crates/lockgate-plugin",
     "crates/lockgate-plugin-macros",
     "examples/audit/host",
+    "examples/dispatch/host",
     "examples/greeter/host",
 ]
 

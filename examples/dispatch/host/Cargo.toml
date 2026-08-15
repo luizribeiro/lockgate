@@ -1,0 +1,9 @@
+[package]
+name = "dispatch-host"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+lockgate = { path = "../../../crates/lockgate" }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

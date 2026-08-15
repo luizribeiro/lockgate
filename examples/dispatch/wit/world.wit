@@ -1,0 +1,14 @@
+package example:dispatch;
+
+interface dispatch {
+  send: func(report: string);
+}
+
+interface tasks {
+  run: func(task: string) -> string;
+}
+
+world plugin {
+  import dispatch;
+  export tasks;
+}
