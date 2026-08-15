@@ -42,10 +42,10 @@ pub trait HostImports<S>: Clone + Send + Sync + 'static {
     ) -> wasmtime::Result<()>;
 }
 
-impl<S> HostImports<S> for () {
+impl HostImports<()> for () {
     fn add_to_linker(
         &self,
-        _linker: &mut wasmtime::component::Linker<exec::StoreCtx<S>>,
+        _linker: &mut wasmtime::component::Linker<exec::StoreCtx<()>>,
     ) -> wasmtime::Result<()> {
         Ok(())
     }

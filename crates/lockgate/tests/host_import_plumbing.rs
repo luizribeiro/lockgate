@@ -121,7 +121,7 @@ fn component() -> Vec<u8> {
 async fn handwritten_imports_receive_data_and_clone_per_call() {
     let clones = Arc::new(AtomicUsize::new(0));
     let calls = Arc::new(AtomicUsize::new(0));
-    let mut builder = HostBuilder::<u32>::new(Imports {
+    let mut builder = HostBuilder::new(Imports {
         clones: Arc::clone(&clones),
         calls: Arc::clone(&calls),
     })

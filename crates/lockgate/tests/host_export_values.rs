@@ -14,7 +14,7 @@ use type_::HostExt as _;
 use values::HostExt as _;
 
 async fn host() -> (lockgate::Host<()>, lockgate::PluginHandle) {
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
             "host-export-values",

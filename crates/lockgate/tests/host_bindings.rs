@@ -87,7 +87,7 @@ async fn host() -> (
         entries: Arc::clone(&entries),
         startups: Arc::clone(&startups),
     };
-    let mut builder = HostBuilder::<CallData>::new(imports).unwrap();
+    let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
         .prepare(
             "host-caller",
@@ -191,7 +191,7 @@ async fn smoke_imports_observe_startup_data() {
     let metadata =
         lockgate_schema::PluginMetadata::new("smoke-caller", "Smoke caller", "1.0").unwrap();
     let component = common::sectioned_fixture(&component, &metadata);
-    let mut builder = HostBuilder::<CallData>::new(imports).unwrap();
+    let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
         .prepare("smoke-caller", &component, PluginConfig::default())
         .await
@@ -299,7 +299,7 @@ async fn generated_role_fails_at_the_cast_when_not_exported() {
         entries: Arc::new(AtomicUsize::new(0)),
         startups: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    let mut builder = HostBuilder::<CallData>::new(imports).unwrap();
+    let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
         .prepare("greeter", &common::PUBLIC_FIXTURE, PluginConfig::default())
         .await
@@ -334,7 +334,7 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         entries: Arc::new(AtomicUsize::new(0)),
         startups: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
-    let mut builder = HostBuilder::<CallData>::new(imports).unwrap();
+    let mut builder = HostBuilder::new(imports).unwrap();
     let first = builder
         .prepare(
             "host-caller",

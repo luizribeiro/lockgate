@@ -52,7 +52,7 @@ async fn minimal_embedder_calls_a_greeter() {
     let metadata = PluginMetadata::new(PLUGIN_ID, "Greeter", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&common::PUBLIC_FIXTURE, &metadata);
 
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await

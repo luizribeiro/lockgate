@@ -73,7 +73,7 @@ impl<S: Send + Sync + 'static> DiagnosticsClient<'_, S> {
 async fn admitted_fixture() -> (Host<()>, PluginHandle) {
     let metadata = PluginMetadata::new(PLUGIN_ID, "Diagnostics", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&common::PUBLIC_FIXTURE, &metadata);
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await

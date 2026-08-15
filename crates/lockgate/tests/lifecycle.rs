@@ -133,7 +133,7 @@ fn runtime_inputs_are_bounded_and_explicit() {
 #[tokio::test]
 async fn empty_needs_accept_both_consent_paths_and_ignore_stale_grants() {
     let bytes = well_formed_fixture();
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -171,7 +171,7 @@ async fn empty_needs_accept_both_consent_paths_and_ignore_stale_grants() {
 #[tokio::test]
 async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
     let bytes = well_formed_fixture();
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -196,7 +196,7 @@ async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
 #[tokio::test]
 async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
     let bytes = well_formed_fixture();
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -222,7 +222,7 @@ async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
     ));
     assert!(error.to_string().contains("test:lifecycle/missing"));
 
-    let other_host = HostBuilder::<()>::new(()).unwrap().finish();
+    let other_host = HostBuilder::new(()).unwrap().finish();
     let error = other_host.client::<GuestRole>(&handle).unwrap_err();
     assert!(matches!(error, RoleError::WrongHost));
     assert!(error.to_string().contains("different Lockgate Host"));
@@ -233,7 +233,7 @@ async fn unregistered_declared_capability_fails_before_smoke() {
     let atom: AtomKey = "http.request".parse().unwrap();
     let needs = NeedsManifest::new(vec![NeedEntry::flag(atom.clone())], vec![]).unwrap();
     let bytes = fixture_with_needs(&needs);
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -259,7 +259,7 @@ async fn unregistered_declared_capability_fails_before_smoke() {
 #[tokio::test]
 async fn smoke_instantiation_budget_exhaustion_is_typed() {
     let bytes = well_formed_fixture();
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -285,7 +285,7 @@ async fn smoke_instantiation_budget_exhaustion_is_typed() {
 #[tokio::test]
 async fn smoke_instantiation_applies_the_store_memory_cap() {
     let bytes = common::sectioned_fixture(&memory_growing_component(), &metadata());
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -313,7 +313,7 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
 async fn prepares_a_well_formed_sectioned_fixture() {
     let bytes = well_formed_fixture();
     let free = inspect(&bytes).unwrap();
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -344,7 +344,7 @@ async fn preparation_reports_each_pre_compilation_failure() {
         b"not JSON",
     );
     let well_formed = well_formed_fixture();
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
 
     let error = builder
         .prepare(PLUGIN_ID, &missing_metadata, PluginConfig::default())
@@ -421,7 +421,7 @@ async fn forbidden_exports_keep_the_stable_teaching_error() {
     let engine = wasmtime::Engine::new(&config).unwrap();
     assert!(wasmtime::component::Component::new(&engine, &bytes).is_err());
 
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let error = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -440,7 +440,7 @@ async fn forbidden_exports_keep_the_stable_teaching_error() {
 #[tokio::test]
 async fn validator_passing_unwired_import_fails_linker_preflight() {
     let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let error = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -452,7 +452,7 @@ async fn validator_passing_unwired_import_fails_linker_preflight() {
 
 #[tokio::test]
 async fn non_default_config_is_rejected_instead_of_ignored() {
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let mut roots = SymbolicRoots::default();
     roots.insert("workspace", "/tmp/workspace");
     let cases = [
@@ -498,7 +498,7 @@ async fn non_default_config_is_rejected_instead_of_ignored() {
 
 #[tokio::test]
 async fn artifact_validation_precedes_temporary_config_rejection() {
-    let mut builder = HostBuilder::<()>::new(()).unwrap();
+    let mut builder = HostBuilder::new(()).unwrap();
     let config = PluginConfig {
         settings: Some(serde_json::json!({ "enabled": true })),
         ..PluginConfig::default()
