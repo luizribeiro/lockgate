@@ -15,7 +15,8 @@ use wit_parser::{InterfaceId, Resolve, Type, TypeDefKind, TypeId, TypeOwner, Wor
 /// Generates typed application bindings for a WIT world.
 ///
 /// The macro takes `path` and `world` options. Worlds with imported interfaces
-/// also provide `imports` and `data` as a pair; export-only worlds omit both.
+/// also provide `imports` and `data` as a pair; `data` names the call-context
+/// type, and export-only worlds omit both.
 /// Each imported WIT interface becomes a top-level Rust module with a `Host`
 /// trait; an implementation may use `async fn` methods whose second parameter
 /// is `HostCtx<'_, data>`.
@@ -170,7 +171,7 @@ fn export_module(
             pub struct Role;
 
             /// Typed client for one admitted plugin's exported WIT interface.
-            pub struct Client<'a, S: Send + Sync + 'static> {
+            pub struct Client<'a, S: #lockgate::CallContext> {
                 invocation: #lockgate::RoleInvocation<'a, S>,
             }
 
@@ -180,31 +181,31 @@ fn export_module(
                 type Client<'a, S>
                     = Client<'a, S>
                 where
-                    S: Send + Sync + 'static;
+                    S: #lockgate::CallContext;
 
                 fn client<'a, S>(
                     invocation: #lockgate::RoleInvocation<'a, S>,
                 ) -> Self::Client<'a, S>
                 where
-                    S: Send + Sync + 'static,
+                    S: #lockgate::CallContext,
                 {
                     Client { invocation }
                 }
             }
 
-            impl<S: Send + Sync + 'static> Client<'_, S> {
+            impl<S: #lockgate::CallContext> Client<'_, S> {
                 #(#methods)*
             }
 
             /// Readable cast extension for this exported WIT interface.
-            pub trait HostExt<S: Send + Sync + 'static> {
+            pub trait HostExt<S: #lockgate::CallContext> {
                 fn #extension_method(
                     &self,
                     plugin: &#lockgate::PluginHandle,
                 ) -> Result<Client<'_, S>, #lockgate::RoleError>;
             }
 
-            impl<S: Send + Sync + 'static> HostExt<S> for #lockgate::Host<S> {
+            impl<S: #lockgate::CallContext> HostExt<S> for #lockgate::Host<S> {
                 fn #extension_method(
                     &self,
                     plugin: &#lockgate::PluginHandle,

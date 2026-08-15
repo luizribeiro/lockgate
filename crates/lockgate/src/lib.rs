@@ -21,9 +21,33 @@ pub use lifecycle::{
     Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, InvocationCtx,
     LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
+
+/// Generates typed application bindings for a WIT world.
+///
+/// For worlds with imported interfaces, the `data` option names the
+/// [`CallContext`] type.
 pub use lockgate_macros::host_bindings;
 pub use role::{CallError, Role, RoleError, RoleInvocation, Value};
 pub use validate::ValidationError;
+
+/// The application value that travels with one plugin invocation — past the
+/// plugin — from the host's call site to the host's import handlers.
+///
+/// The host sets it when invoking an export (the value given to
+/// [`InvocationCtx::new`]) and reads it back inside its own generated import
+/// implementations ([`HostCtx::data`]). The plugin in between can never
+/// observe or forge it: it appears nowhere in the WIT and never enters guest
+/// memory. That makes it the right carrier for facts about who a call is for —
+/// the originating session, the requesting user — which import implementations
+/// use to answer relative questions ("the current session") and to attribute
+/// effects. It lives exactly as long as the invocation: supplied at the call,
+/// dropped with the call's Store.
+///
+/// Any `Send + Sync + 'static` type qualifies through the blanket impl; never
+/// implement this trait manually. Use `()` when calls carry no context.
+pub trait CallContext: Send + Sync + 'static {}
+
+impl<T: Send + Sync + 'static> CallContext for T {}
 
 /// An application value whose generated host imports can be linked into a Store.
 ///
@@ -65,7 +89,7 @@ impl<'a, S> HostCtx<'a, S> {
         Self { data, plugin, jobs }
     }
 
-    /// Returns the application data for this invocation.
+    /// Returns the [call context](CallContext) for this invocation.
     pub fn data(&self) -> &S {
         self.data
     }

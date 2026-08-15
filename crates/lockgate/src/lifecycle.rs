@@ -9,6 +9,7 @@ use std::{
 
 use lockgate_schema::{AtomKey, GrantSet, NeedsManifest, PluginMetadata};
 
+use crate::CallContext;
 use crate::exec::{
     ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError, LoadedComponent, TypedImports,
 };
@@ -36,7 +37,7 @@ pub enum BudgetClass {
     Bounded { fuel: u64 },
 }
 
-/// Application data and execution budget installed for one invocation.
+/// A [`CallContext`] and execution budget installed for one invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvocationCtx<S> {
     pub data: S,
@@ -51,7 +52,8 @@ impl InvocationCtx<()> {
 }
 
 impl<S> InvocationCtx<S> {
-    /// Creates an invocation context from application data and a budget.
+    /// Creates an invocation context with `data` as its [`CallContext`] and the
+    /// supplied budget.
     pub fn new(data: S, budget: BudgetClass) -> Self {
         Self { data, budget }
     }
@@ -174,7 +176,7 @@ impl PluginConfig {
 }
 
 /// Retained engine and linker state for preparing plugins with invocation data `S`.
-pub struct HostBuilder<S: Send + Sync + 'static> {
+pub struct HostBuilder<S: CallContext> {
     id: HostId,
     engine: ExecEngine,
     imports: std::sync::Arc<dyn ImportsFactory<S>>,
@@ -208,7 +210,7 @@ impl PluginHandle {
     }
 }
 
-impl<S: Send + Sync + 'static> HostBuilder<S> {
+impl<S: CallContext> HostBuilder<S> {
     /// Creates a builder with application host imports and Lockgate's pinned
     /// component-engine configuration.
     ///
@@ -351,7 +353,7 @@ impl<S: Send + Sync + 'static> HostBuilder<S> {
 /// Dropping a Host blocks the calling thread until all detached jobs have been
 /// aborted and awaited. On an async runtime, drop it in a blocking-safe context
 /// such as [`tokio::task::spawn_blocking`].
-pub struct Host<S: Send + Sync + 'static> {
+pub struct Host<S: CallContext> {
     id: HostId,
     #[allow(
         dead_code,
@@ -362,13 +364,13 @@ pub struct Host<S: Send + Sync + 'static> {
     jobs: std::sync::Arc<JobTracker>,
 }
 
-impl<S: Send + Sync + 'static> Drop for Host<S> {
+impl<S: CallContext> Drop for Host<S> {
     fn drop(&mut self) {
         self.jobs.shutdown();
     }
 }
 
-impl<S: Send + Sync + 'static> Host<S> {
+impl<S: CallContext> Host<S> {
     /// Iterates over admitted plugins in admission order.
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
         self.plugins.iter().map(|plugin| &plugin.handle)
