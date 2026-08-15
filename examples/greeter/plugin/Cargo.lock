@@ -164,6 +164,7 @@ version = "0.1.0"
 dependencies = [
  "lockgate-schema",
  "proc-macro-crate",
+ "proc-macro2",
  "quote",
  "syn 2.0.119",
 ]

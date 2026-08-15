@@ -55,6 +55,32 @@ export!(AbsentName);
 "#,
         "Lockgate plugin name cannot use MetadataSource::Absent because name is required by the wire format",
     );
+    check_compile_failure(
+        "absent-version",
+        r#"
+use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
+
+macro_rules! __lockgate_wit_export {
+    ($plugin:ident) => {};
+}
+
+struct AbsentVersion;
+
+impl Plugin for AbsentVersion {
+    const ID: &'static str = "absent-version";
+    const NAME: MetadataSource = MetadataSource::Explicit("Absent version");
+    const VERSION: MetadataSource = MetadataSource::Absent;
+    const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+    const LICENSE: MetadataSource = MetadataSource::Absent;
+    const REPOSITORY: MetadataSource = MetadataSource::Absent;
+    const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
+}
+
+export!(AbsentVersion);
+"#,
+        "Lockgate plugin version cannot use MetadataSource::Absent because version is required by the wire format",
+    );
 }
 
 fn check_compile_failure(case: &str, source: &str, expected: &str) {
