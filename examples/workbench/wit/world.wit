@@ -1,0 +1,28 @@
+package example:workbench;
+
+interface formatter {
+  format: func(text: string) -> string;
+}
+
+interface linter {
+  lint: func(text: string) -> list<string>;
+}
+
+interface stats {
+  measure: func(text: string) -> u32;
+}
+
+world host {
+  export formatter;
+  export linter;
+  export stats;
+}
+
+world tidy {
+  export formatter;
+  export linter;
+}
+
+world counter {
+  export stats;
+}

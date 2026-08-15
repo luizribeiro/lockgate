@@ -7,6 +7,8 @@ exclude = [
     "examples/audit/plugin",
     "examples/dispatch/plugin",
     "examples/greeter/plugin",
+    "examples/workbench/plugins/counter",
+    "examples/workbench/plugins/tidy",
 ]
 members = [
     "crates/lockgate",
@@ -17,6 +19,7 @@ members = [
     "examples/audit/host",
     "examples/dispatch/host",
     "examples/greeter/host",
+    "examples/workbench/host",
 ]
 
 [workspace.package]

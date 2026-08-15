@@ -1,0 +1,14 @@
+[package]
+name = "tidy-plugin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Formats text and reports simple style findings."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lockgate-plugin = { path = "../../../../crates/lockgate-plugin" }
+
+[workspace]

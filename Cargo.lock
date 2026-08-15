@@ -1912,6 +1912,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "workbench-host"
+version = "0.1.0"
+dependencies = [
+ "lockgate",
+ "tokio",
+]
+
+[[package]]
 name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
