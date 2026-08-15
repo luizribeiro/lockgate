@@ -1,18 +1,16 @@
 # Audit
 
-The WIT in `wit/world.wit` is the host application's interface contract. The host defines
-the audit interface that plugins may import and the tasks interface they may implement.
-Both the host and plugin point to this shared contract through `../wit`.
+Your application runs one plugin on behalf of different users, and your own services
+need to know who each call is for. That identity cannot come from the plugin: the plugin
+must not be able to see it or lie about it. The host supplies it as call context so its
+audit service can attribute each effect to the right user.
 
-The plugin reports task progress through the host's audit import and explicitly declares
-`Needs::NOTHING`: application imports are the host's own surface, not requested host
-capabilities. The host admits that component once and invokes it twice on behalf of two
-different users.
-
-`CallOrigin` is the per-call value that tunnels past the plugin, from the host's call site
-to the host's import handlers. It is absent from the WIT and the plugin's arguments, so the
-guest cannot observe or forge it. The audit handler reads this call data through
-`HostCtx::data()` and appends attributed messages to storage shared by the cloned imports.
+The `wit/` directory holds the shared contract: an audit interface plugins may import
+and a tasks interface they may implement. The `plugin/` directory implements tasks and
+reports progress through the audit import; the `host/` directory admits that component
+once and invokes it for two users. `CallOrigin` is this example's call-context type, and
+the audit handler reads it through `HostCtx::data()` before appending attributed messages
+to shared storage.
 
 From the repository root, build the plugin:
 

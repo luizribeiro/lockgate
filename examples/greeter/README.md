@@ -1,11 +1,14 @@
 # Greeter
 
-The WIT in `wit/world.wit` is the host application's interface contract. The host defines
-the interfaces that plugins may implement, and plugin authors build against the host's
-published WIT. Both the host and plugin point to this shared contract through `../wit`.
+You have an application that you want third-party code to extend, but that code should
+not become trusted application code. You publish a contract for the extension points,
+plugin authors implement it, and Lockgate's kernel keeps their plugins contained while
+your host calls them.
 
-The plugin exports the greeter interface through the guest facade. The host admits that
-component and invokes it through the generated typed role client.
+The `wit/` directory holds that shared WIT contract. The `plugin/` directory implements
+its greeter interface through the guest facade, and the `host/` directory admits the
+component and invokes it through the generated typed role client. Both sides build
+against the contract in `wit/`.
 
 From the repository root, build the plugin:
 
