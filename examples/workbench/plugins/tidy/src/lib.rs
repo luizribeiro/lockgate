@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use lockgate_plugin::{MetadataSource, Needs};
 
 lockgate_plugin::generate!({
-    path: "../../wit",
+    path: "wit",
     world: "tidy",
 });
 

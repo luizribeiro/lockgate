@@ -1,0 +1,6 @@
+package example:tidy;
+
+world tidy {
+  export example:workbench/formatter;
+  export example:workbench/linter;
+}

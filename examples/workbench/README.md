@@ -5,11 +5,10 @@ ones they care about. You do not require every plugin to fill every slot: the ho
 each admitted plugin which roles it serves, and `not implemented` is an ordinary typed
 answer rather than a failure. A single plugin can serve several roles at once.
 
-The `wit/` directory defines the host world's superset vocabulary of formatter, linter,
-and stats roles, plus a subset world for each plugin. The `plugins/tidy/` directory
-targets the formatter-and-linter world, while `plugins/counter/` targets the stats world;
-the `host/` directory admits both components and tries every plugin-role pairing. Role
-discovery happens at cast time against each compiled component, before any plugin call.
+The host-owned `wit/` directory publishes the formatter, linter, and stats interfaces
+plus the host's superset world; `host/` admits both compiled components and discovers
+their roles at cast time. Each plugin directory declares its own subset world over a
+vendored copy of that contract, exactly as an out-of-tree plugin author would.
 
 From the repository root, build both plugins:
 

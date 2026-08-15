@@ -1,0 +1,5 @@
+package example:counter;
+
+world counter {
+  export example:workbench/stats;
+}
