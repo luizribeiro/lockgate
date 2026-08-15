@@ -1,0 +1,14 @@
+package example:audit;
+
+interface audit {
+  log: func(message: string);
+}
+
+interface tasks {
+  run: func(task: string) -> string;
+}
+
+world plugin {
+  import audit;
+  export tasks;
+}
