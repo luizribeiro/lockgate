@@ -44,6 +44,40 @@ impl Plugin for OpenPlugin {
     type Settings = DocumentedSettings;
 }
 
+#[derive(Debug, JsonSchema)]
+#[schemars(crate = "lockgate_plugin::schemars")]
+struct MismatchedSettings;
+
+impl<'de> lockgate_plugin::serde::Deserialize<'de> for MismatchedSettings {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where
+        D: lockgate_plugin::serde::Deserializer<'de>,
+    {
+        Err(lockgate_plugin::serde::de::Error::custom(
+            "deliberate schema mismatch",
+        ))
+    }
+}
+
+struct MismatchedPlugin;
+
+impl Plugin for MismatchedPlugin {
+    const ID: &'static str = "mismatched";
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Explicit("Mismatched");
+    const VERSION: MetadataSource = MetadataSource::Explicit("1.0");
+    const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+    const LICENSE: MetadataSource = MetadataSource::Absent;
+    const REPOSITORY: MetadataSource = MetadataSource::Absent;
+    const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
+    type Settings = MismatchedSettings;
+}
+
+#[unsafe(no_mangle)]
+extern "Rust" fn __lockgate_settings_json() -> String {
+    "{}".into()
+}
+
 #[test]
 fn no_settings_accepts_only_an_empty_object() {
     assert_eq!(
@@ -90,6 +124,19 @@ fn open_policy_is_an_explicit_top_level_opt_out() {
         serde_json::from_str(&lockgate_plugin::__private::settings_schema::<OpenPlugin>()).unwrap();
 
     assert!(schema.get("unevaluatedProperties").is_none());
+}
+
+#[test]
+fn deserialize_mismatches_trap_with_the_type_and_serde_error() {
+    let panic = std::panic::catch_unwind(MismatchedPlugin::settings).unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+
+    assert!(message.contains("MismatchedSettings"), "{message}");
+    assert!(message.contains("deliberate schema mismatch"), "{message}");
 }
 
 #[test]

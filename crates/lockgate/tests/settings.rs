@@ -9,6 +9,7 @@ use lockgate_schema::PluginMetadata;
 const PLUGIN_ID: &str = "config-fixture";
 
 struct SettingsRole;
+struct TypedSettingsRole;
 
 struct SettingsClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>);
 
@@ -28,8 +29,35 @@ impl Role for SettingsRole {
     }
 }
 
+impl Role for TypedSettingsRole {
+    const INTERFACE: &'static str = "test:typed-settings/guest";
+
+    type Client<'a, S>
+        = SettingsClient<'a, S>
+    where
+        S: Send + Sync + 'static;
+
+    fn client<'a, S>(invocation: RoleInvocation<'a, S>) -> Self::Client<'a, S>
+    where
+        S: Send + Sync + 'static,
+    {
+        SettingsClient(invocation)
+    }
+}
+
 impl SettingsClient<'_, ()> {
     async fn observed_settings(&self) -> Result<String, CallError> {
+        let values = self
+            .0
+            .invoke("observed-settings", &[], InvocationCtx::bounded(1_000_000))
+            .await?;
+        match values.as_slice() {
+            [Value::String(value)] => Ok(value.clone()),
+            _ => Err(CallError::shape("expected one string result")),
+        }
+    }
+
+    async fn typed_observed_settings(&self) -> Result<String, CallError> {
         let values = self
             .0
             .invoke("observed-settings", &[], InvocationCtx::bounded(1_000_000))
@@ -72,6 +100,38 @@ async fn guest_observes_exactly_the_validated_settings_json() {
 
     let guest = host.client::<SettingsRole>(&plugin).unwrap();
     assert_eq!(guest.observed_settings().await.unwrap(), expected);
+}
+
+#[tokio::test]
+async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
+    let mut builder = HostBuilder::new(()).unwrap();
+    let prepared = builder
+        .prepare(
+            "typed-settings",
+            &common::TYPED_SETTINGS_FIXTURE,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "required": "from-host" })),
+                ..PluginConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+    let plugin = builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+    let host = builder.finish();
+
+    let guest = host.client::<TypedSettingsRole>(&plugin).unwrap();
+    assert_eq!(
+        guest.typed_observed_settings().await.unwrap(),
+        "from-host:guest-default"
+    );
 }
 
 #[tokio::test]

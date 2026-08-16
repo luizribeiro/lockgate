@@ -15,8 +15,8 @@ pub extern crate alloc;
 extern crate self as lockgate_plugin;
 
 pub use schemars::{self, JsonSchema};
-pub use serde::Deserialize;
 use serde::de::{DeserializeOwned, Error as _, MapAccess, Visitor};
+pub use serde::{self, Deserialize};
 #[doc(hidden)]
 pub use wit_bindgen as __wit_bindgen;
 
@@ -222,6 +222,19 @@ pub trait Plugin {
     const NEEDS: Needs;
     const SETTINGS_POLICY: SettingsPolicy = SettingsPolicy::Closed;
     type Settings: DeserializeOwned + JsonSchema;
+
+    /// Reads and deserializes this invocation's retained validated settings.
+    ///
+    /// Validation and retention happen during host preparation. A mismatch
+    /// between the generated schema and a custom `Deserialize` implementation
+    /// is therefore a plugin construction bug and traps with the settings type
+    /// and serde error rather than entering every call site as a `Result`.
+    fn settings() -> Self::Settings
+    where
+        Self: Sized,
+    {
+        __private::deserialize_settings::<Self>()
+    }
 }
 
 /// Controls whether a plugin's top-level settings object accepts unknown keys.
@@ -404,6 +417,22 @@ pub mod __private {
         serde_json::to_string(&schema).unwrap_or_else(|error| {
             panic!(
                 "failed to serialize settings schema for {}: {error}",
+                core::any::type_name::<P::Settings>()
+            )
+        })
+    }
+
+    pub fn deserialize_settings<P: Plugin>() -> P::Settings {
+        unsafe extern "Rust" {
+            fn __lockgate_settings_json() -> String;
+        }
+
+        // `generate!` defines this bridge exactly once in the final guest and
+        // forwards it to the facade-added configuration import.
+        let json = unsafe { __lockgate_settings_json() };
+        serde_json::from_str(&json).unwrap_or_else(|error| {
+            panic!(
+                "failed to deserialize validated Lockgate settings as {}: {error}",
                 core::any::type_name::<P::Settings>()
             )
         })

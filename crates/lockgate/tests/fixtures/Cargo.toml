@@ -12,6 +12,7 @@ members = [
     "public-guest",
     "renamed-facade",
     "renamed-host-facade",
+    "typed-settings-guest",
 ]
 
 [workspace.dependencies]

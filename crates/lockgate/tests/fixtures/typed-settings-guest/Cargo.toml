@@ -1,0 +1,12 @@
+[package]
+name = "lockgate-typed-settings-fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Exercises the typed guest settings accessor."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lockgate-plugin = { path = "../../../../lockgate-plugin" }

@@ -1,0 +1,9 @@
+package test:typed-settings;
+
+interface guest {
+  observed-settings: func() -> string;
+}
+
+world plugin {
+  export guest;
+}

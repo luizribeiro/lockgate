@@ -122,6 +122,19 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
             const _: &[u8] = include_bytes!(#file);
         ));
     }
+    let facade = format_ident!("{facade_name}");
+    output.extend(quote! {
+        #[doc(hidden)]
+        #[unsafe(no_mangle)]
+        pub extern "Rust" fn __lockgate_settings_json() -> #facade::alloc::string::String {
+            match lockgate::config::settings::get_json() {
+                ::core::result::Result::Ok(json) => json,
+                ::core::result::Result::Err(error) => {
+                    panic!("Lockgate validated settings are unavailable: {error:?}")
+                }
+            }
+        }
+    });
     Ok(output)
 }
 

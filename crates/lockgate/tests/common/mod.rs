@@ -35,6 +35,12 @@ pub(crate) static EXEC_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("exec-guest", "lockgate_exec_fixture.wasm"));
 pub(crate) static CONFIG_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("config-guest", "lockgate_config_fixture.wasm"));
+pub(crate) static TYPED_SETTINGS_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    build_fixture(
+        "typed-settings-guest",
+        "lockgate_typed_settings_fixture.wasm",
+    )
+});
 pub(crate) static DETACHED_JOBS_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("detached-jobs-guest", "lockgate_detached_jobs_fixture.wasm"));
 pub(crate) static EXEC_CONCURRENT_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
