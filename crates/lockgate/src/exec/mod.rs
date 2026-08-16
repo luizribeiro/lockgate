@@ -47,6 +47,18 @@ impl ExecEngine {
         })
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "the config probe consumes this in the next grain")
+    )]
+    pub(crate) fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    pub(crate) fn compile(&self, bytes: &[u8]) -> Result<Component, LoadError> {
+        Component::new(&self.engine, bytes).map_err(LoadError::compile)
+    }
+
     /// Compiles a component and prepares its host imports for later invocations.
     ///
     /// `S` is the application's per-invocation data type. Each fresh Store
@@ -66,7 +78,7 @@ impl ExecEngine {
         bytes: &[u8],
         imports: impl FnOnce(&mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>,
     ) -> Result<LoadedComponent<S>, LoadError> {
-        let component = Component::new(&self.engine, bytes).map_err(LoadError::compile)?;
+        let component = self.compile(bytes)?;
         let mut linker = Linker::new(&self.engine);
         imports(&mut linker).map_err(LoadError::link)?;
         let instance_pre = linker
@@ -86,7 +98,7 @@ impl ExecEngine {
         bytes: &[u8],
         imports: Arc<dyn ImportsFactory<S>>,
     ) -> Result<LoadedComponent<S>, LoadError> {
-        let component = Component::new(&self.engine, bytes).map_err(LoadError::compile)?;
+        let component = self.compile(bytes)?;
         let mut linker = Linker::new(&self.engine);
         imports.register(&mut linker).map_err(LoadError::link)?;
         let instance_pre = linker
