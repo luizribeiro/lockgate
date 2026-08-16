@@ -14,6 +14,37 @@ use wasm_encoder::{ComponentSection, CustomSection};
 use wasmparser::{Parser, Payload};
 use wasmtime::component::Linker;
 
+pub(crate) mod config {
+    use std::sync::Arc;
+
+    use wasmtime::component::Linker;
+
+    use super::exec::StoreCtx;
+
+    #[derive(Clone)]
+    pub(crate) enum SettingsState {
+        NotReady,
+        Ready(Arc<str>),
+    }
+
+    pub(crate) struct ValidatedSettings(Arc<str>);
+
+    impl ValidatedSettings {
+        pub(crate) fn into_state(self) -> SettingsState {
+            SettingsState::Ready(self.0)
+        }
+    }
+
+    pub(crate) fn add_settings_to_linker<S>(
+        _linker: &mut Linker<StoreCtx<S>>,
+    ) -> wasmtime::Result<()>
+    where
+        S: Send + Sync + 'static,
+    {
+        Ok(())
+    }
+}
+
 #[path = "../../src/exec/mod.rs"]
 pub(crate) mod exec;
 #[path = "../../src/jobs.rs"]
@@ -31,6 +62,8 @@ pub(crate) struct TestState;
 
 pub(crate) static EXEC_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("exec-guest", "lockgate_exec_fixture.wasm"));
+pub(crate) static CONFIG_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("config-guest", "lockgate_config_fixture.wasm"));
 pub(crate) static DETACHED_JOBS_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("detached-jobs-guest", "lockgate_detached_jobs_fixture.wasm"));
 pub(crate) static EXEC_CONCURRENT_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {

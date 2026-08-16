@@ -1,9 +1,11 @@
 //! Framework-owned configuration bindings and context-free schema probing.
 
+use std::sync::Arc;
+
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{ResourceLimiter, Store};
 
-use crate::exec::{ExecEngine, ExecLimits};
+use crate::exec::{ExecEngine, ExecLimits, StoreCtx};
 
 const MAX_SCHEMA_BYTES: usize = 256 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 64;
@@ -74,9 +76,31 @@ pub(crate) struct ValidatedSettings {
 }
 
 impl ValidatedSettings {
-    pub(crate) fn json(&self) -> &str {
-        &self.json
+    pub(crate) fn into_state(self) -> SettingsState {
+        SettingsState::Ready(self.json.into())
     }
+}
+
+#[derive(Clone)]
+pub(crate) enum SettingsState {
+    NotReady,
+    Ready(Arc<str>),
+}
+
+impl<S: Send + Sync + 'static> lockgate::config::settings::Host for StoreCtx<S> {
+    async fn get_json(&mut self) -> Result<String, lockgate::config::settings::GetError> {
+        match self.settings() {
+            SettingsState::NotReady => Err(lockgate::config::settings::GetError::NotReady),
+            SettingsState::Ready(json) => Ok(json.to_string()),
+        }
+    }
+}
+
+pub(crate) fn add_settings_to_linker<S>(linker: &mut Linker<StoreCtx<S>>) -> wasmtime::Result<()>
+where
+    S: Send + Sync + 'static,
+{
+    lockgate::config::settings::add_to_linker::<_, HasSelf<_>>(linker, |store| store)
 }
 
 #[derive(Debug)]
@@ -198,6 +222,11 @@ mod tests {
 
     #[test]
     fn owned_config_package_has_the_framework_contract() {
+        assert_eq!(
+            include_str!("../wit/config.wit"),
+            include_str!("../tests/fixtures/config-guest/wit/deps/lockgate-config/config.wit"),
+            "the raw guest fixture must vendor the owned config contract exactly"
+        );
         let mut resolve = Resolve::new();
         let (package, _) = resolve
             .push_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/wit"))

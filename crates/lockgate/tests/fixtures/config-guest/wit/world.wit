@@ -1,0 +1,11 @@
+package test:config-fixture;
+
+interface guest {
+  observed-settings: func() -> string;
+}
+
+world fixture {
+  import lockgate:config/settings;
+  export lockgate:config/schema;
+  export guest;
+}

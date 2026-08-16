@@ -1003,6 +1003,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-config-fixture"
+version = "0.1.0"
+dependencies = [
+ "dlmalloc",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "lockgate-detached-jobs-fixture"
 version = "0.1.0"
 dependencies = [

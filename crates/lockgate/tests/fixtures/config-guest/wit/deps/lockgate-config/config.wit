@@ -1,0 +1,24 @@
+package lockgate:config;
+
+/// Provides the validated settings object retained by Lockgate.
+interface settings {
+  /// Settings are deliberately unavailable while Lockgate probes the schema.
+  enum get-error {
+    not-ready,
+  }
+
+  /// Returns the validated settings object as JSON.
+  get-json: func() -> result<string, get-error>;
+}
+
+/// Publishes the JSON Schema for the plugin's settings object.
+interface schema {
+  /// Returns a JSON Schema Draft 2020-12 document.
+  settings-schema: func() -> string;
+}
+
+/// The framework-owned configuration surface automatically added to plugins.
+world plugin {
+  import settings;
+  export schema;
+}

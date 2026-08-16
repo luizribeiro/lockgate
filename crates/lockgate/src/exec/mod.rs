@@ -14,6 +14,7 @@ use wasmtime::component::{
 use wasmtime::{Config, Engine, ResourceLimiter, Store};
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
 
+use super::config::{SettingsState, ValidatedSettings, add_settings_to_linker};
 use super::jobs::DetachedJobContext;
 
 mod errors;
@@ -76,6 +77,7 @@ impl ExecEngine {
     ) -> Result<LoadedComponent<S>, LoadError> {
         let component = self.compile(bytes)?;
         let mut linker = Linker::new(&self.engine);
+        add_settings_to_linker(&mut linker).map_err(LoadError::link)?;
         imports(&mut linker).map_err(LoadError::link)?;
         let instance_pre = linker
             .instantiate_pre(&component)
@@ -86,6 +88,7 @@ impl ExecEngine {
             imports: Arc::new(UnitImports),
             plugin: None,
             jobs: None,
+            settings: SettingsState::NotReady,
         })
     }
 
@@ -95,6 +98,7 @@ impl ExecEngine {
         imports: Arc<dyn ImportsFactory<S>>,
     ) -> Result<LoadedComponent<S>, LoadError> {
         let mut linker = Linker::new(&self.engine);
+        add_settings_to_linker(&mut linker).map_err(LoadError::link)?;
         imports.register(&mut linker).map_err(LoadError::link)?;
         let instance_pre = linker.instantiate_pre(component).map_err(LoadError::link)?;
 
@@ -103,6 +107,7 @@ impl ExecEngine {
             imports,
             plugin: None,
             jobs: None,
+            settings: SettingsState::NotReady,
         })
     }
 }
@@ -112,6 +117,7 @@ pub(crate) struct LoadedComponent<S: 'static> {
     imports: Arc<dyn ImportsFactory<S>>,
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     jobs: Option<DetachedJobContext>,
+    settings: SettingsState,
 }
 
 impl<S: Send + Sync + 'static> LoadedComponent<S> {
@@ -122,6 +128,10 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
     ) {
         self.plugin = Some(Arc::new(plugin));
         self.jobs = Some(jobs);
+    }
+
+    pub(crate) fn set_settings(&mut self, settings: ValidatedSettings) {
+        self.settings = settings.into_state();
     }
 
     pub(crate) fn exports_interface(&self, interface: &str) -> bool {
@@ -215,6 +225,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 self.imports.create(),
                 self.plugin.clone(),
                 self.jobs.clone(),
+                self.settings.clone(),
                 max_memory_bytes,
             ),
         );
@@ -273,6 +284,7 @@ pub struct StoreCtx<S> {
     imports: Box<dyn Any + Send>,
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     jobs: Option<DetachedJobContext>,
+    settings: SettingsState,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
 }
@@ -283,6 +295,7 @@ impl<S> StoreCtx<S> {
         imports: Box<dyn Any + Send>,
         plugin: Option<Arc<dyn Any + Send + Sync>>,
         jobs: Option<DetachedJobContext>,
+        settings: SettingsState,
         max_memory_bytes: usize,
     ) -> Self {
         Self {
@@ -291,6 +304,7 @@ impl<S> StoreCtx<S> {
             imports,
             plugin,
             jobs,
+            settings,
             #[cfg(test)]
             drop_probe: None,
         }
@@ -302,6 +316,10 @@ impl<S> StoreCtx<S> {
     )]
     pub(crate) fn data(&self) -> &S {
         self.data.as_ref()
+    }
+
+    pub(crate) fn settings(&self) -> &SettingsState {
+        &self.settings
     }
 
     #[doc(hidden)]
