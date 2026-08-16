@@ -5,6 +5,8 @@ use lockgate::{
     RoleInvocation, RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
+use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
+use wit_parser::{ManglingAndAbi, Resolve};
 
 const PLUGIN_ID: &str = "diagnostics";
 const CALL_FUEL: u64 = 25_000_000;
@@ -71,14 +73,19 @@ impl<S: Send + Sync + 'static> DiagnosticsClient<'_, S> {
 }
 
 async fn admitted_fixture() -> (Host<()>, PluginHandle) {
-    let metadata = PluginMetadata::new(PLUGIN_ID, "Diagnostics", "1.0").unwrap();
-    let bytes = common::sectioned_fixture(&common::PUBLIC_FIXTURE, &metadata);
     let mut builder = HostBuilder::new(()).unwrap();
+    let plugin = admit(&mut builder, PLUGIN_ID, &common::PUBLIC_FIXTURE).await;
+    (builder.finish(), plugin)
+}
+
+async fn admit(builder: &mut HostBuilder<()>, id: &str, component: &[u8]) -> PluginHandle {
+    let metadata = PluginMetadata::new(id, "Enumeration fixture", "1.0").unwrap();
+    let bytes = common::sectioned_fixture(component, &metadata);
     let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .prepare(id, &bytes, PluginConfig::default())
         .await
         .unwrap();
-    let plugin = builder
+    builder
         .admit(
             prepared,
             Acceptance::all_declared(),
@@ -86,8 +93,69 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
             InvocationCtx::bounded(1_000_000),
         )
         .await
+        .unwrap()
+}
+
+fn unrelated_component() -> Vec<u8> {
+    let mut resolve = Resolve::new();
+    let package = resolve
+        .push_str(
+            "unrelated.wit",
+            "package test:unrelated; interface other { ping: func(); } world fixture { export other; }",
+        )
         .unwrap();
-    (builder.finish(), plugin)
+    let world = resolve.select_world(&[package], None).unwrap();
+    let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+    embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+    ComponentEncoder::default()
+        .module(&module)
+        .unwrap()
+        .encode()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn role_clients_skip_non_exporters_and_yield_invokable_clients() {
+    let mut builder = HostBuilder::new(()).unwrap();
+    let skipped = admit(&mut builder, "unrelated", &unrelated_component()).await;
+    let implementing = admit(&mut builder, "diagnostics", &common::PUBLIC_FIXTURE).await;
+    let host = builder.finish();
+
+    let mut clients = host.clients::<DiagnosticsRole>();
+    let (plugin, diagnostics) = clients.next().expect("the implementing plugin was skipped");
+    assert_ne!(plugin, &skipped);
+    assert_eq!(plugin, &implementing);
+    assert!(clients.next().is_none());
+    assert_eq!(
+        diagnostics
+            .value(InvocationCtx::bounded(CALL_FUEL))
+            .await
+            .unwrap(),
+        42
+    );
+}
+
+#[tokio::test]
+async fn role_clients_are_empty_when_no_plugin_exports_the_role() {
+    let mut builder = HostBuilder::new(()).unwrap();
+    admit(&mut builder, "unrelated", &unrelated_component()).await;
+    let host = builder.finish();
+
+    assert_eq!(host.clients::<DiagnosticsRole>().count(), 0);
+}
+
+#[tokio::test]
+async fn role_clients_follow_admission_order() {
+    let mut builder = HostBuilder::new(()).unwrap();
+    let first = admit(&mut builder, "first", &common::PUBLIC_FIXTURE).await;
+    let second = admit(&mut builder, "second", &common::PUBLIC_FIXTURE).await;
+    let host = builder.finish();
+
+    let plugins = host
+        .clients::<DiagnosticsRole>()
+        .map(|(plugin, _)| plugin)
+        .collect::<Vec<_>>();
+    assert_eq!(plugins, [&first, &second]);
 }
 
 #[tokio::test]

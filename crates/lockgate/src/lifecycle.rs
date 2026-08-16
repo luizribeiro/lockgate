@@ -393,6 +393,21 @@ impl<S: CallContext> Host<S> {
             R::INTERFACE,
         )))
     }
+
+    /// Clients for every admitted plugin whose compiled component exports
+    /// `R`'s interface, in admission order.
+    ///
+    /// Use this to invoke every plugin implementing a role. Admission order
+    /// makes sequential fan-out deterministic; applications wanting another
+    /// order should collect and sort the results. Each item is produced by the
+    /// single-plugin [`Host::client`] cast.
+    pub fn clients<R: Role>(&self) -> impl Iterator<Item = (&PluginHandle, R::Client<'_, S>)> + '_ {
+        self.plugins.iter().filter_map(|plugin| {
+            self.client::<R>(&plugin.handle)
+                .ok()
+                .map(|client| (&plugin.handle, client))
+        })
+    }
 }
 
 /// A validated, compiled, and prelinked plugin artifact.
