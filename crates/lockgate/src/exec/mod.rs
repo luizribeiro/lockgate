@@ -196,6 +196,8 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         startup_fuel: u64,
     ) -> Result<(), ExecError> {
         let store = self.configured_store(data, limits.max_memory_bytes);
+        // Admission charges constructor work to the app-chosen startup budget;
+        // `HostBuilder::admit` documents the deliberate steady-state asymmetry.
         self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel))
             .await
     }

@@ -278,6 +278,10 @@ impl<S: CallContext> HostBuilder<S> {
 
     /// Rejects declared needs before consulting acceptance while no capability
     /// registry exists, then smoke-instantiates the prepared plugin.
+    /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
+    /// `startup_ctx`'s fuel, so an application-chosen startup budget may reject
+    /// a constructor that steady-state calls would instantiate under the full
+    /// limit.
     pub async fn admit(
         &mut self,
         prepared: Prepared,
