@@ -328,6 +328,53 @@ async fn generated_role_fails_at_the_cast_when_not_exported() {
 }
 
 #[tokio::test]
+async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface() {
+    let imports = Imports {
+        barrier: Arc::new(Barrier::new(2)),
+        entries: Arc::new(AtomicUsize::new(0)),
+        startups: Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let mut builder = HostBuilder::new(imports).unwrap();
+    let skipped = builder
+        .prepare("greeter", &common::PUBLIC_FIXTURE, PluginConfig::default())
+        .await
+        .unwrap();
+    builder
+        .admit(
+            skipped,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            context("startup"),
+        )
+        .await
+        .unwrap();
+    let implementing = builder
+        .prepare(
+            "host-caller",
+            &common::HOST_BINDINGS_FIXTURE,
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+    let implementing = builder
+        .admit(
+            implementing,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            context("startup"),
+        )
+        .await
+        .unwrap();
+    let host = builder.finish();
+
+    let mut guests = host.guest_clients();
+    let (plugin, guest) = guests.next().expect("the implementing guest was skipped");
+    assert_eq!(plugin, &implementing);
+    assert!(guests.next().is_none());
+    assert_eq!(guest.caller(context("call")).await.unwrap(), "host-caller");
+}
+
+#[tokio::test]
 async fn each_admitted_plugin_is_named_by_its_own_host_context() {
     let imports = Imports {
         barrier: Arc::new(Barrier::new(2)),

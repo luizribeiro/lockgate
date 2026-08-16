@@ -138,6 +138,7 @@ fn export_module(
     let interface = &resolve.interfaces[exported.id];
     let module = &exported.public_module;
     let extension_method = module;
+    let clients_method = format_ident!("{module}_clients");
     let interface_name = &exported.interface_name;
     let type_names = interface
         .types
@@ -203,6 +204,13 @@ fn export_module(
                     &self,
                     plugin: &#lockgate::PluginHandle,
                 ) -> Result<Client<'_, S>, #lockgate::RoleError>;
+
+                /// Typed clients for every admitted plugin implementing this role.
+                ///
+                /// Delegates to [`Host::clients`](lockgate::Host::clients).
+                fn #clients_method(
+                    &self,
+                ) -> impl Iterator<Item = (&#lockgate::PluginHandle, Client<'_, S>)> + '_;
             }
 
             impl<S: #lockgate::CallContext> HostExt<S> for #lockgate::Host<S> {
@@ -211,6 +219,12 @@ fn export_module(
                     plugin: &#lockgate::PluginHandle,
                 ) -> Result<Client<'_, S>, #lockgate::RoleError> {
                     self.client::<Role>(plugin)
+                }
+
+                fn #clients_method(
+                    &self,
+                ) -> impl Iterator<Item = (&#lockgate::PluginHandle, Client<'_, S>)> + '_ {
+                    self.clients::<Role>()
                 }
             }
         }
