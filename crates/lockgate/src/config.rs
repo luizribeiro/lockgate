@@ -334,6 +334,18 @@ mod tests {
     }
 
     #[test]
+    fn invalid_json_schema_reports_the_offending_value() {
+        let error = validate_settings(Some(r#"{"type":"not-a-real-type"}"#), None)
+            .err()
+            .unwrap();
+        assert!(matches!(
+            error,
+            SettingsValidationError::InvalidSchema { ref message }
+                if message.contains("not-a-real-type")
+        ));
+    }
+
+    #[test]
     fn schema_size_and_depth_have_explicit_limits() {
         let error = validate_settings(Some(&" ".repeat(MAX_SCHEMA_BYTES + 1)), None)
             .err()
