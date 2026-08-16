@@ -453,6 +453,19 @@ async fn settings_follow_the_schema_presence_matrix() {
         .prepare(PLUGIN_ID, &empty_schema, PluginConfig::default())
         .await
         .unwrap();
+
+    let error = builder
+        .prepare(PLUGIN_ID, &configured_schema, PluginConfig::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::SettingsValidation { .. }));
+    assert!(
+        error
+            .to_string()
+            .contains("\"enabled\" is a required property"),
+        "{error}"
+    );
+
     builder
         .prepare(
             PLUGIN_ID,
