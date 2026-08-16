@@ -85,6 +85,70 @@ fn memory_growing_component() -> Vec<u8> {
     component.finish()
 }
 
+fn settings_checked_during_instantiation_component() -> Vec<u8> {
+    wat::parse_str(
+        r#"(component
+            (import "lockgate:config/settings" (instance $settings
+                (type $get-error' (enum "not-ready"))
+                (export "get-error" (type $get-error (eq $get-error')))
+                (export "get-json" (func
+                    (result (result string (error $get-error)))
+                ))
+            ))
+
+            (core module $libc
+                (memory (export "memory") 1)
+                (func (export "realloc")
+                    (param i32 i32 i32 i32)
+                    (result i32)
+                    (if (result i32) (i32.eqz (local.get 3))
+                        (then (i32.const 0))
+                        (else (i32.const 128))
+                    )
+                )
+            )
+            (core instance $libc (instantiate $libc))
+            (core func $get-json
+                (canon lower (func $settings "get-json")
+                    (memory (core memory $libc "memory"))
+                    (realloc (core func $libc "realloc"))
+                )
+            )
+
+            (core module $checker
+                (import "" "memory" (memory 1))
+                (import "" "get-json" (func $get-json (param i32)))
+                (func $start
+                    (call $get-json (i32.const 32))
+                    (if (i32.ne
+                            (i32.load8_u (i32.const 32))
+                            (i32.const 0))
+                        (then unreachable)
+                    )
+                    (if (i32.ne
+                            (i32.load (i32.const 40))
+                            (i32.const 2))
+                        (then unreachable)
+                    )
+                    (if (i32.ne
+                            (i32.load16_u (i32.load (i32.const 36)))
+                            (i32.const 0x7d7b))
+                        (then unreachable)
+                    )
+                )
+                (start $start)
+            )
+            (core instance $checker (instantiate $checker
+                (with "" (instance
+                    (export "memory" (memory $libc "memory"))
+                    (export "get-json" (func $get-json))
+                ))
+            ))
+        )"#,
+    )
+    .unwrap()
+}
+
 fn schema_component(schema_body: &str) -> Vec<u8> {
     wat::parse_str(format!(
         r#"(component
@@ -367,6 +431,29 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
     assert!(matches!(error, AdmissionError::SmokeFailure { .. }));
     assert!(error.to_string().contains("linear memory growth"));
     assert!(error.to_string().contains("0-byte limit"));
+}
+
+#[tokio::test]
+async fn smoke_instantiation_observes_ready_validated_settings() {
+    let bytes = common::sectioned_fixture(
+        &settings_checked_during_instantiation_component(),
+        &metadata(),
+    );
+    let mut builder = HostBuilder::new(()).unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+
+    builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
