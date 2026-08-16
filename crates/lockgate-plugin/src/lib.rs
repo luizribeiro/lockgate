@@ -39,8 +39,9 @@ mod runtime {
     /// builds.
     ///
     /// A non-null `old_ptr` must denote an allocation made by this allocator
-    /// with the supplied `old_len` and `align`. The canonical ABI is the only
-    /// intended caller.
+    /// with the supplied `old_len` and `align`. When `old_len` is nonzero,
+    /// `new_len` must also be nonzero. The canonical ABI is the only intended
+    /// caller.
     #[unsafe(export_name = "cabi_realloc")]
     pub unsafe extern "C" fn cabi_realloc(
         old_ptr: *mut u8,
@@ -57,6 +58,10 @@ mod runtime {
                 layout = Layout::from_size_align_unchecked(new_len, align);
                 alloc(layout)
             } else {
+                debug_assert_ne!(
+                    new_len, 0,
+                    "the canonical ABI never shrinks an allocation to zero"
+                );
                 layout = Layout::from_size_align_unchecked(old_len, align);
                 realloc(old_ptr, layout, new_len)
             }
