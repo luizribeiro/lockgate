@@ -99,6 +99,9 @@ macro_rules! generate {
 }
 
 /// Exports a generated guest implementation and embeds its plugin manifests.
+/// Call `export!` exactly once per plugin. A second invocation in the same
+/// module deliberately fails at compile time with duplicate-definition errors
+/// for the generated statics: one plugin has one manifest.
 ///
 /// The plugin identity is a required trait item, so omitting it is diagnosed
 /// by Rust as a missing trait item:
