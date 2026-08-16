@@ -10,7 +10,8 @@
 //! Direct `cargo test --target wasm32-wasip2` fails for this crate by construction because the runtime feature's panic handler collides with std's in the test harness; test through the dependent fixtures instead.
 #![no_std]
 
-extern crate alloc;
+#[doc(hidden)]
+pub extern crate alloc;
 extern crate self as lockgate_plugin;
 
 pub use schemars::{self, JsonSchema};
@@ -84,23 +85,36 @@ mod runtime {
     fn panic(_info: &PanicInfo<'_>) -> ! {
         core::arch::wasm32::unreachable()
     }
+
+    /// Compares two byte regions for dependencies used by generated schemas.
+    ///
+    /// # Safety
+    ///
+    /// Both pointers must be valid to read for `len` bytes.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn memcmp(
+        left: *const core::ffi::c_void,
+        right: *const core::ffi::c_void,
+        len: usize,
+    ) -> i32 {
+        let left = left.cast::<u8>();
+        let right = right.cast::<u8>();
+        let mut index = 0;
+        while index < len {
+            let left_byte = unsafe { left.add(index).read() };
+            let right_byte = unsafe { right.add(index).read() };
+            if left_byte != right_byte {
+                return i32::from(left_byte) - i32::from(right_byte);
+            }
+            index += 1;
+        }
+        0
+    }
 }
 
-/// Generates guest bindings for one WIT world.
-///
-/// Automatic `lockgate:config` wiring and compile-time export-shape checks
-/// extend this wrapper in later facade steps.
-#[macro_export]
-macro_rules! generate {
-    ({ path: $path:literal, world: $world:literal $(,)? }) => {
-        $crate::__wit_bindgen::generate!({
-            path: $path,
-            world: $world,
-            export_macro_name: "__lockgate_wit_export",
-            runtime_path: "::lockgate_plugin::__wit_bindgen::rt",
-        });
-    };
-}
+/// Generates guest bindings for one WIT world and automatically adds the
+/// framework-owned `lockgate:config` settings import and schema export.
+pub use lockgate_plugin_macros::generate;
 
 /// Exports a generated guest implementation and embeds its plugin manifests.
 /// Call `export!` exactly once per plugin. A second invocation in the same
@@ -295,6 +309,7 @@ impl Needs {
 #[doc(hidden)]
 pub mod __private {
     use super::{Needs, Plugin, SettingsPolicy};
+    use alloc::string::String;
 
     const NEEDS_BYTES: &[u8] = br#"{"format":1,"optional":{},"reasons":{},"required":{}}"#;
 
@@ -376,6 +391,22 @@ pub mod __private {
                 "Lockgate NoSettings cannot use SettingsPolicy::Open; remove the policy override or declare a settings struct"
             );
         }
+    }
+
+    pub fn settings_schema<P: Plugin>() -> String {
+        let generator = schemars::generate::SchemaSettings::draft2020_12()
+            .for_deserialize()
+            .into_generator();
+        let mut schema = generator.into_root_schema_for::<P::Settings>();
+        if matches!(P::SETTINGS_POLICY, SettingsPolicy::Closed) {
+            schema.insert("unevaluatedProperties".into(), false.into());
+        }
+        serde_json::to_string(&schema).unwrap_or_else(|error| {
+            panic!(
+                "failed to serialize settings schema for {}: {error}",
+                core::any::type_name::<P::Settings>()
+            )
+        })
     }
 
     const fn validate_manifest(manifest: &Manifest) {

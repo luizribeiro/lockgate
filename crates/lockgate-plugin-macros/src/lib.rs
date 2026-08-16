@@ -5,7 +5,125 @@ use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
-use syn::{Ident, LitStr, parse_macro_input};
+use std::path::PathBuf;
+use syn::parse::{Parse, ParseStream};
+use syn::{Ident, LitStr, Token, braced, parse_macro_input};
+use wit_bindgen_core::wit_parser::{Resolve, UnresolvedPackageGroup};
+use wit_bindgen_core::{Files, WorldGenerator};
+use wit_bindgen_rust::Opts;
+
+const CONFIG_WIT: &str = include_str!("../../lockgate/wit/config.wit");
+
+#[proc_macro]
+pub fn generate(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as GenerateInput);
+    generate_bindings(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+struct GenerateInput {
+    path: LitStr,
+    world: LitStr,
+}
+
+impl Parse for GenerateInput {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let content;
+        braced!(content in input);
+        let mut path = None;
+        let mut world = None;
+        while !content.is_empty() {
+            let field: Ident = content.parse()?;
+            content.parse::<Token![:]>()?;
+            let value: LitStr = content.parse()?;
+            match field.to_string().as_str() {
+                "path" if path.is_none() => path = Some(value),
+                "world" if world.is_none() => world = Some(value),
+                "path" | "world" => {
+                    return Err(syn::Error::new(field.span(), "duplicate generate! field"));
+                }
+                _ => return Err(syn::Error::new(field.span(), "unknown generate! field")),
+            }
+            if content.is_empty() {
+                break;
+            }
+            content.parse::<Token![,]>()?;
+        }
+        Ok(Self {
+            path: path.ok_or_else(|| input.error("generate! requires `path`"))?,
+            world: world.ok_or_else(|| input.error("generate! requires `world`"))?,
+        })
+    }
+}
+
+fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
+    let manifest_dir = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR")
+            .map_err(|error| syn::Error::new(input.path.span(), error))?,
+    );
+    let source_path = manifest_dir.join(input.path.value());
+    let mut resolve = Resolve::default();
+    let (plugin_package, sources) = resolve
+        .push_path(&source_path)
+        .map_err(|error| syn::Error::new(input.path.span(), format!("{error:#}")))?;
+    let plugin_world = resolve
+        .select_world(&[plugin_package], Some(&input.world.value()))
+        .map_err(|error| syn::Error::new(input.world.span(), format!("{error:#}")))?;
+    let plugin_world_name = resolve.worlds[plugin_world].name.clone();
+    let plugin_package_name = resolve.packages[plugin_package].name.to_string();
+
+    resolve
+        .push_group(
+            UnresolvedPackageGroup::parse("lockgate-config.wit", CONFIG_WIT)
+                .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?,
+        )
+        .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
+    let wrapper = format!(
+        "package lockgate:generated;\nworld plugin {{\n  include {plugin_package_name}/{plugin_world_name};\n  import lockgate:config/settings;\n  export lockgate:config/schema;\n}}"
+    );
+    let wrapper_package = resolve
+        .push_group(
+            UnresolvedPackageGroup::parse("lockgate-generated.wit", &wrapper)
+                .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?,
+        )
+        .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
+    let world = resolve
+        .select_world(&[wrapper_package], Some("plugin"))
+        .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
+
+    let facade_name = match crate_name("lockgate-plugin") {
+        Ok(FoundCrate::Itself) => "lockgate_plugin".to_string(),
+        Ok(FoundCrate::Name(name)) => name,
+        Err(error) => return Err(syn::Error::new(Span::call_site(), error.to_string())),
+    };
+    let options = Opts {
+        export_macro_name: Some("__lockgate_wit_export".into()),
+        runtime_path: Some(format!("::{facade_name}::__wit_bindgen::rt")),
+        generate_all: true,
+        ..Opts::default()
+    };
+    let mut files = Files::default();
+    options
+        .build()
+        .generate(&mut resolve, world, &mut files)
+        .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
+    let (_, generated) = files
+        .iter()
+        .next()
+        .ok_or_else(|| syn::Error::new(Span::call_site(), "guest binding generation was empty"))?;
+    let mut output = std::str::from_utf8(generated)
+        .map_err(|error| syn::Error::new(Span::call_site(), error))?
+        .parse::<TokenStream2>()
+        .map_err(|error| syn::Error::new(Span::call_site(), error))?;
+    for file in sources.paths() {
+        let file = LitStr::new(&file.to_string_lossy(), Span::call_site());
+        output.extend(quote!(
+            const _: &[u8] = include_bytes!(#file);
+        ));
+    }
+    Ok(output)
+}
 
 #[proc_macro]
 pub fn export(input: TokenStream) -> TokenStream {
@@ -45,6 +163,12 @@ pub fn export(input: TokenStream) -> TokenStream {
         resolve_metadata_source(&facade, &plugin, "homepage", "CARGO_PKG_HOMEPAGE", false);
 
     quote! {
+        impl exports::lockgate::config::schema::Guest for #plugin {
+            fn settings_schema() -> #facade::alloc::string::String {
+                #facade::__private::settings_schema::<#plugin>()
+            }
+        }
+
         __lockgate_wit_export!(#plugin);
 
         const __LOCKGATE_SETTINGS_POLICY_CHECK: () =

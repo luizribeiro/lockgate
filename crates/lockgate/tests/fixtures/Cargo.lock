@@ -1089,6 +1089,7 @@ dependencies = [
  "lockgate-plugin-macros",
  "schemars",
  "serde",
+ "serde_json",
  "wit-bindgen",
 ]
 
@@ -1101,6 +1102,8 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+ "wit-bindgen-core",
+ "wit-bindgen-rust",
 ]
 
 [[package]]

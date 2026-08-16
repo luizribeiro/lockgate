@@ -2,7 +2,47 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use lockgate_plugin::{NoSettings, schemars};
+use lockgate_plugin::{
+    Deserialize, JsonSchema, MetadataSource, Needs, NoSettings, Plugin, SettingsPolicy, schemars,
+};
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(crate = "lockgate_plugin::schemars")]
+#[allow(dead_code)]
+struct DocumentedSettings {
+    /// Text shown before the configured name.
+    prefix: String,
+    count: u32,
+}
+
+struct ClosedPlugin;
+
+impl Plugin for ClosedPlugin {
+    const ID: &'static str = "closed";
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Explicit("Closed");
+    const VERSION: MetadataSource = MetadataSource::Explicit("1.0");
+    const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+    const LICENSE: MetadataSource = MetadataSource::Absent;
+    const REPOSITORY: MetadataSource = MetadataSource::Absent;
+    const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
+    type Settings = DocumentedSettings;
+}
+
+struct OpenPlugin;
+
+impl Plugin for OpenPlugin {
+    const ID: &'static str = "open";
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Explicit("Open");
+    const VERSION: MetadataSource = MetadataSource::Explicit("1.0");
+    const DESCRIPTION: MetadataSource = MetadataSource::Absent;
+    const LICENSE: MetadataSource = MetadataSource::Absent;
+    const REPOSITORY: MetadataSource = MetadataSource::Absent;
+    const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+    const NEEDS: Needs = Needs::NOTHING;
+    const SETTINGS_POLICY: SettingsPolicy = SettingsPolicy::Open;
+    type Settings = DocumentedSettings;
+}
 
 #[test]
 fn no_settings_accepts_only_an_empty_object() {
@@ -26,13 +66,38 @@ fn no_settings_schema_is_a_closed_empty_object() {
 }
 
 #[test]
+fn generated_schema_uses_deserialize_shape_and_closes_the_top_level() {
+    let schema: serde_json::Value =
+        serde_json::from_str(&lockgate_plugin::__private::settings_schema::<ClosedPlugin>())
+            .unwrap();
+
+    assert_eq!(
+        schema["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["required"], serde_json::json!(["prefix", "count"]));
+    assert_eq!(schema["unevaluatedProperties"], false);
+    assert_eq!(
+        schema["properties"]["prefix"]["description"],
+        "Text shown before the configured name."
+    );
+}
+
+#[test]
+fn open_policy_is_an_explicit_top_level_opt_out() {
+    let schema: serde_json::Value =
+        serde_json::from_str(&lockgate_plugin::__private::settings_schema::<OpenPlugin>()).unwrap();
+
+    assert!(schema.get("unevaluatedProperties").is_none());
+}
+
+#[test]
 fn no_settings_cannot_opt_out_of_closed_policy() {
     let source = r#"
 use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, SettingsPolicy, export};
 
-macro_rules! __lockgate_wit_export {
-    ($plugin:ident) => {};
-}
+lockgate_plugin::generate!({ path: "wit", world: "fixture" });
 
 struct Invalid;
 
@@ -65,8 +130,14 @@ fn check_compile_failure(case: &str, source: &str, expected: &str) {
     let target = fixture.join("target");
     let _ = fs::remove_dir_all(&fixture);
     fs::create_dir_all(fixture.join("src")).unwrap();
+    fs::create_dir_all(fixture.join("wit")).unwrap();
     fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
     fs::write(fixture.join("src/lib.rs"), source).unwrap();
+    fs::write(
+        fixture.join("wit/world.wit"),
+        "package test:settings-contract; world fixture {}",
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO"))
         .args([
@@ -76,6 +147,8 @@ fn check_compile_failure(case: &str, source: &str, expected: &str) {
             path_str(&fixture.join("Cargo.toml")),
             "--target-dir",
             path_str(&target),
+            "--target",
+            "wasm32-wasip2",
         ])
         .output()
         .expect("failed to check settings contract fixture");

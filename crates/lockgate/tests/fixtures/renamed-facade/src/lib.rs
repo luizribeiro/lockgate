@@ -10,9 +10,7 @@ use core::panic::PanicInfo;
 #[global_allocator]
 static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
-macro_rules! __lockgate_wit_export {
-    ($plugin:ident) => {};
-}
+lgp::generate!({ path: "wit", world: "fixture" });
 
 struct RenamedFacade;
 

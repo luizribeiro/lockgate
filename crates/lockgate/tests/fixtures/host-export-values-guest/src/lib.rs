@@ -3,7 +3,6 @@
 extern crate alloc;
 
 use alloc::string::String;
-use core::ffi::c_void;
 use lockgate_plugin::{MetadataSource, Needs, NoSettings};
 
 lockgate_plugin::generate!({
@@ -56,17 +55,3 @@ impl exports::test::host_export_values::union::Guest for Fixture {
 }
 
 lockgate_plugin::export!(Fixture);
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn memcmp(left: *const c_void, right: *const c_void, len: usize) -> i32 {
-    let left = left.cast::<u8>();
-    let right = right.cast::<u8>();
-    for offset in 0..len {
-        let left = unsafe { *left.add(offset) };
-        let right = unsafe { *right.add(offset) };
-        if left != right {
-            return i32::from(left) - i32::from(right);
-        }
-    }
-    0
-}

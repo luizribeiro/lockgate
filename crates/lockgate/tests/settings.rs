@@ -73,3 +73,40 @@ async fn guest_observes_exactly_the_validated_settings_json() {
     let guest = host.client::<SettingsRole>(&plugin).unwrap();
     assert_eq!(guest.observed_settings().await.unwrap(), expected);
 }
+
+#[tokio::test]
+async fn facade_no_settings_accepts_absent_and_empty_configuration() {
+    for settings in [None, Some(serde_json::json!({}))] {
+        let mut builder = HostBuilder::new(()).unwrap();
+        builder
+            .prepare(
+                "greeter",
+                &common::PUBLIC_FIXTURE,
+                PluginConfig {
+                    settings,
+                    ..PluginConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn facade_no_settings_rejects_every_supplied_key_by_name() {
+    let mut builder = HostBuilder::new(()).unwrap();
+    let error = builder
+        .prepare(
+            "greeter",
+            &common::PUBLIC_FIXTURE,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "surprise": true })),
+                ..PluginConfig::default()
+            },
+        )
+        .await
+        .err()
+        .unwrap();
+
+    assert!(error.to_string().contains("surprise"), "{error}");
+}
