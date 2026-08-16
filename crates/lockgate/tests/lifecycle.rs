@@ -581,16 +581,23 @@ async fn preparation_reports_each_early_failure() {
         .prepare(PLUGIN_ID, b"not a component", PluginConfig::default())
         .await
         .unwrap_err();
-    assert!(matches!(error, AdmissionError::Compilation { .. }));
-    assert!(error.to_string().contains("component compilation failed"));
+    assert!(matches!(
+        error,
+        AdmissionError::Inspection(InspectError::InvalidComponent { .. })
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("not a valid WebAssembly component")
+    );
 }
 
 #[tokio::test]
-async fn compilation_precedes_export_validation() {
+async fn forbidden_exports_keep_the_stable_teaching_error() {
     let bytes = common::sectioned_fixture(&engine_rejected_component(), &metadata());
 
-    // This fixture demonstrates the engine rejects this component shape before
-    // Lockgate's validator can provide its stable teaching diagnostic.
+    // The fixture fails Wasmtime compilation, so receiving the stable teaching
+    // error below explicitly guards validation-before-compilation ordering.
     let mut config = wasmtime::Config::new();
     config
         .wasm_component_model(true)
@@ -604,7 +611,14 @@ async fn compilation_precedes_export_validation() {
         .await
         .unwrap_err();
 
-    assert!(matches!(error, AdmissionError::Compilation { .. }));
+    assert!(matches!(error, AdmissionError::UnsupportedExport(_)));
+    assert_eq!(error.code(), Some("admission.unsupported-export"));
+    assert!(
+        error
+            .to_string()
+            .starts_with("[admission.unsupported-export] ")
+    );
+    assert!(error.to_string().contains("offending type `error-context`"));
 }
 
 #[tokio::test]

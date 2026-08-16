@@ -241,7 +241,7 @@ impl<S: CallContext> HostBuilder<S> {
         self.jobs.set_error_sink(sink);
     }
 
-    /// Compiles and validates the artifact, preflights its complete linker,
+    /// Validates and compiles the artifact, preflights its complete linker,
     /// then probes and validates its settings contract for later admission.
     ///
     /// A schema export is invoked once in a capped internal Store that has no
@@ -256,10 +256,6 @@ impl<S: CallContext> HostBuilder<S> {
         config: PluginConfig,
     ) -> Result<Prepared, AdmissionError> {
         let unavailable_field = config.unavailable_field();
-        let component = self
-            .engine
-            .compile(bytes)
-            .map_err(AdmissionError::from_load)?;
         let sections = decode_sections(bytes).map_err(AdmissionError::from_inspection)?;
         let metadata = decode_metadata(&sections).map_err(AdmissionError::from_inspection)?;
         if metadata.id() != id {
@@ -272,6 +268,10 @@ impl<S: CallContext> HostBuilder<S> {
             decode_needs(&sections).map_err(AdmissionError::from_inspection)?;
         let exported_interfaces = validate_and_collect_exported_interfaces(bytes)
             .map_err(AdmissionError::from_validation)?;
+        let component = self
+            .engine
+            .compile(bytes)
+            .map_err(AdmissionError::from_load)?;
         let mut artifact = self
             .engine
             .load_hosted_component::<S>(&component, std::sync::Arc::clone(&self.imports))
