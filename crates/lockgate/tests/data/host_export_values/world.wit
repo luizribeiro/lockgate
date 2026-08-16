@@ -44,8 +44,13 @@ interface %type {
   ping: func() -> u32;
 }
 
+interface %union {
+  ping: func() -> u32;
+}
+
 world fixture {
   export values;
   export mirror;
   export %type;
+  export %union;
 }

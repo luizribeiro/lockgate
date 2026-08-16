@@ -6,4 +6,5 @@ lg::host_bindings!({
 #[allow(dead_code)]
 fn keyword_interface_is_sanitized() {
     let _: Option<type_::Role> = None;
+    let _: Option<union_::Role> = None;
 }

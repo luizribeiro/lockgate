@@ -48,6 +48,12 @@ impl exports::test::host_export_values::type_::Guest for Fixture {
     }
 }
 
+impl exports::test::host_export_values::union::Guest for Fixture {
+    fn ping() -> u32 {
+        17
+    }
+}
+
 lockgate_plugin::export!(Fixture);
 
 #[unsafe(no_mangle)]

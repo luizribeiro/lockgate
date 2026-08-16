@@ -11,6 +11,7 @@ lockgate::host_bindings!({
 
 use mirror::HostExt as _;
 use type_::HostExt as _;
+use union_::HostExt as _;
 use values::HostExt as _;
 
 async fn host() -> (lockgate::Host<()>, lockgate::PluginHandle) {
@@ -125,7 +126,7 @@ async fn top_level_result_keeps_its_wit_data_channel() {
 }
 
 #[tokio::test]
-async fn rust_keyword_interface_uses_its_sanitized_module() {
+async fn rust_keyword_interfaces_use_their_sanitized_modules() {
     let (host, plugin) = host().await;
     assert_eq!(
         host.type_(&plugin)
@@ -134,5 +135,13 @@ async fn rust_keyword_interface_uses_its_sanitized_module() {
             .await
             .unwrap(),
         13,
+    );
+    assert_eq!(
+        host.union_(&plugin)
+            .unwrap()
+            .ping(InvocationCtx::bounded(common::INVOCATION_FUEL))
+            .await
+            .unwrap(),
+        17,
     );
 }

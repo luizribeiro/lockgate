@@ -1579,6 +1579,7 @@ fn rust_ident(name: &str) -> String {
             | "trait"
             | "true"
             | "type"
+            | "union"
             | "unsafe"
             | "use"
             | "where"
