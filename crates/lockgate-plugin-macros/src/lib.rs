@@ -46,11 +46,6 @@ pub fn export(input: TokenStream) -> TokenStream {
 
     quote! {
         __lockgate_wit_export!(#plugin);
-        // This mirrors wit-bindgen's keep-alive pattern for `cabi_realloc`.
-        // Builds on the current toolchain are byte-identical without it, so it
-        // is retained only as cheap insurance against linker or toolchain
-        // behavior changes.
-        #facade::__lockgate_runtime_keepalive!();
 
         const __LOCKGATE_PLUGIN_MANIFEST: #facade::__private::Manifest =
             #facade::__private::Manifest {

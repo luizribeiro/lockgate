@@ -82,34 +82,6 @@ mod runtime {
     }
 }
 
-/// Mirrors wit-bindgen's keep-alive pattern for `cabi_realloc`.
-///
-/// Current-toolchain builds are byte-identical without this reference, so it
-/// has not been observed to be load-bearing. It remains as cheap insurance
-/// against linker or toolchain behavior changes.
-#[doc(hidden)]
-#[cfg(all(feature = "runtime", target_arch = "wasm32"))]
-#[macro_export]
-macro_rules! __lockgate_runtime_keepalive {
-    () => {
-        #[used]
-        static __LOCKGATE_CABI_REALLOC_KEEPALIVE: unsafe extern "C" fn(
-            *mut u8,
-            usize,
-            usize,
-            usize,
-        ) -> *mut u8 = $crate::__private::cabi_realloc;
-    };
-}
-
-/// No-op counterpart to the wit-bindgen-style `cabi_realloc` keep-alive.
-#[doc(hidden)]
-#[cfg(not(all(feature = "runtime", target_arch = "wasm32")))]
-#[macro_export]
-macro_rules! __lockgate_runtime_keepalive {
-    () => {};
-}
-
 /// Generates guest bindings for one WIT world.
 ///
 /// Automatic `lockgate:config` wiring and compile-time export-shape checks
@@ -241,9 +213,6 @@ impl Needs {
 #[doc(hidden)]
 pub mod __private {
     use super::Needs;
-
-    #[cfg(all(feature = "runtime", target_arch = "wasm32"))]
-    pub use super::runtime::cabi_realloc;
 
     const NEEDS_BYTES: &[u8] = br#"{"format":1,"optional":{},"reasons":{},"required":{}}"#;
 
