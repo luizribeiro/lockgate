@@ -1,0 +1,10 @@
+[package]
+name = "configuration-host"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+lockgate = { path = "../../../crates/lockgate" }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

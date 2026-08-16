@@ -135,6 +135,24 @@ async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
 }
 
 #[tokio::test]
+async fn missing_required_typed_settings_fail_during_preparation() {
+    let mut builder = HostBuilder::new(()).unwrap();
+    let error = builder
+        .prepare(
+            "typed-settings",
+            &common::TYPED_SETTINGS_FIXTURE,
+            PluginConfig::default(),
+        )
+        .await
+        .err()
+        .unwrap();
+    let message = error.to_string();
+
+    assert!(message.contains("plugin settings do not match their schema"));
+    assert!(message.contains("required"), "{message}");
+}
+
+#[tokio::test]
 async fn facade_no_settings_accepts_absent_and_empty_configuration() {
     for settings in [None, Some(serde_json::json!({}))] {
         let mut builder = HostBuilder::new(()).unwrap();

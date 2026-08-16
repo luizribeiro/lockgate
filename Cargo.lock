@@ -162,6 +162,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "configuration-host"
+version = "0.1.0"
+dependencies = [
+ "lockgate",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cpp_demangle"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

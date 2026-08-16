@@ -1,0 +1,14 @@
+[package]
+name = "configuration-plugin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Formats output from host-supplied settings."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lockgate-plugin = { path = "../../../crates/lockgate-plugin" }
+
+[workspace]

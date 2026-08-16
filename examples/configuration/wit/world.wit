@@ -1,0 +1,9 @@
+package example:configuration;
+
+interface formatter {
+  format: func(value: string) -> string;
+}
+
+world plugin {
+  export formatter;
+}
