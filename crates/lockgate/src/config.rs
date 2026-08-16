@@ -42,8 +42,7 @@ impl ExecEngine {
 
         let mut linker = Linker::new(self.engine());
         Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |store| store)?;
-        // Application imports are deliberately replaced by trap stubs. They
-        // can satisfy typechecking, but can never reach application code.
+        // Every non-settings import, including baseline WASI, is trap-stubbed so this pre-admission call has the narrowest possible surface.
         linker.define_unknown_imports_as_traps(component)?;
 
         let mut store = Store::new(
@@ -137,6 +136,7 @@ pub(crate) fn validate_settings(
         serde_json::from_str(schema).map_err(|error| SettingsValidationError::SchemaMalformed {
             message: error.to_string(),
         })?;
+    // serde_json rejects depth beyond its 128-level recursion limit as malformed first; this error covers the band above our lower cap.
     if json_depth(&schema) > MAX_SCHEMA_DEPTH {
         return Err(SettingsValidationError::SchemaTooDeep {
             maximum: MAX_SCHEMA_DEPTH,
