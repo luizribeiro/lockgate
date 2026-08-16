@@ -268,6 +268,9 @@ impl<S: CallContext> HostBuilder<S> {
             decode_needs(&sections).map_err(AdmissionError::from_inspection)?;
         let exported_interfaces = validate_and_collect_exported_interfaces(bytes)
             .map_err(AdmissionError::from_validation)?;
+        if let Some(field) = unavailable_field {
+            return Err(AdmissionError::ConfigFeatureUnavailable { field });
+        }
         let component = self
             .engine
             .compile(bytes)
@@ -283,9 +286,6 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(AdmissionError::from_schema_fetch)?;
         let settings = validate_settings(schema.as_deref(), config.settings)
             .map_err(AdmissionError::from_settings_validation)?;
-        if let Some(field) = unavailable_field {
-            return Err(AdmissionError::ConfigFeatureUnavailable { field });
-        }
         artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {

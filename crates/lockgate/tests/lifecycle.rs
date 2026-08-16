@@ -674,6 +674,7 @@ async fn unresolved_config_fields_are_rejected_instead_of_ignored() {
     let cases = [
         (
             PluginConfig {
+                settings: Some(serde_json::json!({ "would": "lack a schema" })),
                 roots,
                 ..PluginConfig::default()
             },
@@ -681,16 +682,18 @@ async fn unresolved_config_fields_are_rejected_instead_of_ignored() {
         ),
         (
             PluginConfig {
+                settings: Some(serde_json::json!({ "would": "lack a schema" })),
                 limits: LimitSet::Constrained,
                 ..PluginConfig::default()
             },
             "grant limits",
         ),
     ];
+    let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
 
     for (config, field) in cases {
         let error = builder
-            .prepare(PLUGIN_ID, &well_formed_fixture(), config)
+            .prepare(PLUGIN_ID, &bytes, config)
             .await
             .unwrap_err();
         assert!(matches!(
@@ -706,7 +709,7 @@ async fn unresolved_config_fields_are_rejected_instead_of_ignored() {
 }
 
 #[tokio::test]
-async fn artifact_failures_precede_unresolved_config_rejection() {
+async fn artifact_validation_precedes_unresolved_config_rejection() {
     let mut builder = HostBuilder::new(()).unwrap();
     let mut roots = SymbolicRoots::default();
     roots.insert("workspace", "/tmp/workspace");
@@ -716,11 +719,18 @@ async fn artifact_failures_precede_unresolved_config_rejection() {
     };
 
     let error = builder
-        .prepare(PLUGIN_ID, &value_component(), config)
+        .prepare(PLUGIN_ID, &value_component(), config.clone())
         .await
         .unwrap_err();
     assert!(matches!(
         error,
         AdmissionError::Inspection(InspectError::MissingMetadata)
     ));
+
+    let bytes = common::sectioned_fixture(&engine_rejected_component(), &metadata());
+    let error = builder
+        .prepare(PLUGIN_ID, &bytes, config)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::UnsupportedExport(_)));
 }
