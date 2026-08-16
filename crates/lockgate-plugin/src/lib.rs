@@ -53,7 +53,7 @@ mod runtime {
         let pointer = unsafe {
             if old_len == 0 {
                 if new_len == 0 {
-                    return align as *mut u8;
+                    return core::ptr::without_provenance_mut(align);
                 }
                 layout = Layout::from_size_align_unchecked(new_len, align);
                 alloc(layout)
