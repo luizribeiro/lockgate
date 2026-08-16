@@ -249,6 +249,10 @@ impl<S: CallContext> HostBuilder<S> {
         bytes: &[u8],
         config: PluginConfig,
     ) -> Result<Prepared, AdmissionError> {
+        let component = self
+            .engine
+            .compile(bytes)
+            .map_err(AdmissionError::from_load)?;
         let sections = decode_sections(bytes).map_err(AdmissionError::from_inspection)?;
         let metadata = decode_metadata(&sections).map_err(AdmissionError::from_inspection)?;
         if metadata.id() != id {
@@ -267,8 +271,12 @@ impl<S: CallContext> HostBuilder<S> {
 
         let artifact = self
             .engine
-            .load_hosted::<S>(bytes, std::sync::Arc::clone(&self.imports))
+            .load_hosted_component::<S>(&component, std::sync::Arc::clone(&self.imports))
             .map_err(AdmissionError::from_load)?;
+        self.engine
+            .fetch_settings_schema(&component, RuntimeLimits::default().into())
+            .await
+            .map_err(AdmissionError::from_schema_fetch)?;
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             inspection,
@@ -488,6 +496,10 @@ pub enum AdmissionError {
     SmokeFailure {
         message: String,
     },
+    SchemaFetchOutOfBudget,
+    SchemaFetchFailure {
+        message: String,
+    },
 }
 
 impl AdmissionError {
@@ -534,6 +546,16 @@ impl AdmissionError {
             },
         }
     }
+
+    fn from_schema_fetch(error: wasmtime::Error) -> Self {
+        if error.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::OutOfFuel) {
+            Self::SchemaFetchOutOfBudget
+        } else {
+            Self::SchemaFetchFailure {
+                message: error.to_string(),
+            }
+        }
+    }
 }
 
 impl fmt::Display for AdmissionError {
@@ -566,6 +588,12 @@ impl fmt::Display for AdmissionError {
                 .write_str("plugin exhausted its startup budget during smoke instantiation"),
             Self::SmokeFailure { message } => {
                 write!(formatter, "plugin smoke instantiation failed: {message}")
+            }
+            Self::SchemaFetchOutOfBudget => {
+                formatter.write_str("plugin exhausted the internal schema-fetch budget")
+            }
+            Self::SchemaFetchFailure { message } => {
+                write!(formatter, "plugin settings schema fetch failed: {message}")
             }
         }
     }

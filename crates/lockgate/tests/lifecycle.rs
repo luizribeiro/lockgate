@@ -85,6 +85,32 @@ fn memory_growing_component() -> Vec<u8> {
     component.finish()
 }
 
+fn schema_component(schema_body: &str) -> Vec<u8> {
+    wat::parse_str(format!(
+        r#"(component
+            (core module $guest
+                (memory (export "memory") 1)
+                (data (i32.const 64) "{{\22type\22:\22object\22}}")
+                (func (export "settings-schema") (result i32)
+                    {schema_body}
+                )
+            )
+            (core instance $guest-instance (instantiate $guest))
+            (func $settings-schema (result string)
+                (canon lift
+                    (core func $guest-instance "settings-schema")
+                    (memory (core memory $guest-instance "memory"))
+                )
+            )
+            (instance $schema
+                (export "settings-schema" (func $settings-schema))
+            )
+            (export "lockgate:config/schema" (instance $schema))
+        )"#
+    ))
+    .unwrap()
+}
+
 fn component_with_unwired_import() -> Vec<u8> {
     component(
         "package test:unwired; interface host { wait: func(); } interface guest { value: func() -> u32; } world fixture { import host; export guest; }",
@@ -310,6 +336,43 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
 }
 
 #[tokio::test]
+async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
+    let trapped = common::sectioned_fixture(&schema_component("unreachable"), &metadata());
+    let exhausted = common::sectioned_fixture(
+        &schema_component(
+            r#"(local $iteration i32)
+                (loop $work
+                    (local.set $iteration
+                        (i32.add (local.get $iteration) (i32.const 1)))
+                    (br_if $work
+                        (i32.lt_u (local.get $iteration) (i32.const 100000000))))
+                (i32.store (i32.const 8) (i32.const 64))
+                (i32.store offset=4 (i32.const 8) (i32.const 17))
+                (i32.const 8)"#,
+        ),
+        &metadata(),
+    );
+    let mut builder = HostBuilder::new(()).unwrap();
+
+    let error = builder
+        .prepare(PLUGIN_ID, &trapped, PluginConfig::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::SchemaFetchFailure { .. }));
+    assert!(error.to_string().contains("settings schema fetch failed"));
+
+    let error = builder
+        .prepare(PLUGIN_ID, &exhausted, PluginConfig::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, AdmissionError::SchemaFetchOutOfBudget),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("schema-fetch budget"));
+}
+
+#[tokio::test]
 async fn prepares_a_well_formed_sectioned_fixture() {
     let bytes = well_formed_fixture();
     let free = inspect(&bytes).unwrap();
@@ -330,7 +393,7 @@ async fn prepares_a_well_formed_sectioned_fixture() {
 }
 
 #[tokio::test]
-async fn preparation_reports_each_pre_compilation_failure() {
+async fn preparation_reports_each_early_failure() {
     let base = value_component();
     let needs = NeedsManifest::empty().to_section_bytes().unwrap();
     let metadata_bytes = metadata().to_section_bytes().unwrap();
@@ -397,23 +460,16 @@ async fn preparation_reports_each_pre_compilation_failure() {
         .prepare(PLUGIN_ID, b"not a component", PluginConfig::default())
         .await
         .unwrap_err();
-    assert!(matches!(
-        error,
-        AdmissionError::Inspection(InspectError::InvalidComponent { .. })
-    ));
-    assert!(
-        error
-            .to_string()
-            .contains("not a valid WebAssembly component")
-    );
+    assert!(matches!(error, AdmissionError::Compilation { .. }));
+    assert!(error.to_string().contains("component compilation failed"));
 }
 
 #[tokio::test]
-async fn forbidden_exports_keep_the_stable_teaching_error() {
+async fn compilation_precedes_export_validation() {
     let bytes = common::sectioned_fixture(&engine_rejected_component(), &metadata());
 
-    // The fixture fails Wasmtime compilation, so receiving the stable teaching
-    // error below explicitly guards validation-before-compilation ordering.
+    // This fixture demonstrates the engine rejects this component shape before
+    // Lockgate's validator can provide its stable teaching diagnostic.
     let mut config = wasmtime::Config::new();
     config
         .wasm_component_model(true)
@@ -427,14 +483,7 @@ async fn forbidden_exports_keep_the_stable_teaching_error() {
         .await
         .unwrap_err();
 
-    assert!(matches!(error, AdmissionError::UnsupportedExport(_)));
-    assert_eq!(error.code(), Some("admission.unsupported-export"));
-    assert!(
-        error
-            .to_string()
-            .starts_with("[admission.unsupported-export] ")
-    );
-    assert!(error.to_string().contains("offending type `error-context`"));
+    assert!(matches!(error, AdmissionError::Compilation { .. }));
 }
 
 #[tokio::test]

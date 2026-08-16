@@ -47,10 +47,6 @@ impl ExecEngine {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the config probe consumes this in the next grain")
-    )]
     pub(crate) fn engine(&self) -> &Engine {
         &self.engine
     }
@@ -93,17 +89,14 @@ impl ExecEngine {
         })
     }
 
-    pub(crate) fn load_hosted<S: Send + Sync + 'static>(
+    pub(crate) fn load_hosted_component<S: Send + Sync + 'static>(
         &self,
-        bytes: &[u8],
+        component: &Component,
         imports: Arc<dyn ImportsFactory<S>>,
     ) -> Result<LoadedComponent<S>, LoadError> {
-        let component = self.compile(bytes)?;
         let mut linker = Linker::new(&self.engine);
         imports.register(&mut linker).map_err(LoadError::link)?;
-        let instance_pre = linker
-            .instantiate_pre(&component)
-            .map_err(LoadError::link)?;
+        let instance_pre = linker.instantiate_pre(component).map_err(LoadError::link)?;
 
         Ok(LoadedComponent {
             instance_pre,

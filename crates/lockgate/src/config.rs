@@ -12,22 +12,8 @@ wasmtime::component::bindgen!({
     exports: { default: async },
 });
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the lifecycle consumes this probe in the next grain"
-    )
-)]
 pub(crate) const SCHEMA_INTERFACE: &str = "lockgate:config/schema";
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the lifecycle consumes this probe in the next grain"
-    )
-)]
 struct SchemaStore {
     limiter: SchemaMemoryLimiter,
 }
@@ -40,13 +26,6 @@ impl lockgate::config::settings::Host for SchemaStore {
 
 impl ExecEngine {
     /// Runs the one pre-admission guest call without application data or imports.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the lifecycle consumes this probe in the next grain"
-        )
-    )]
     pub(crate) async fn fetch_settings_schema(
         &self,
         component: &Component,
@@ -83,13 +62,6 @@ impl ExecEngine {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the lifecycle consumes this probe in the next grain"
-    )
-)]
 struct SchemaMemoryLimiter {
     max_memory_bytes: usize,
 }
