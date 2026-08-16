@@ -178,7 +178,8 @@ pub enum MetadataSource {
 /// Identity is always explicit. Every display-metadata const identifies its
 /// source, defaulting to the corresponding Cargo package field at the
 /// `export!` call site. Missing or empty Cargo fields are compile errors unless
-/// the source is explicitly changed; name and version cannot be absent.
+/// the source is explicitly changed; display name and version cannot be
+/// absent.
 /// Permission needs have no default so every manifest explicitly states its
 /// maximum authority, including [`Needs::NOTHING`].
 /// Display-string controls, format characters, and length limits are enforced
@@ -186,7 +187,12 @@ pub enum MetadataSource {
 /// const-needs validation work.
 pub trait Plugin {
     const ID: &'static str;
-    const NAME: MetadataSource = MetadataSource::Cargo;
+    /// The human-facing label used in consent screens and listings.
+    ///
+    /// This defaults to Cargo's package name at the [`export!`] call site and
+    /// maps to the frozen `name` wire field. [`Plugin::ID`] alone is stable
+    /// plugin identity.
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Cargo;
     const VERSION: MetadataSource = MetadataSource::Cargo;
     const DESCRIPTION: MetadataSource = MetadataSource::Cargo;
     const LICENSE: MetadataSource = MetadataSource::Cargo;

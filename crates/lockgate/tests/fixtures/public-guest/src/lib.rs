@@ -14,7 +14,7 @@ struct Fixture;
 
 impl lockgate_plugin::Plugin for Fixture {
     const ID: &'static str = "greeter";
-    const NAME: MetadataSource = MetadataSource::Explicit("Greeter");
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Explicit("Greeter");
     const VERSION: MetadataSource = MetadataSource::Explicit("1.0");
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;

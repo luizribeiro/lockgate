@@ -17,7 +17,7 @@ struct MissingDescription;
 
 impl Plugin for MissingDescription {
     const ID: &'static str = "missing-description";
-    const NAME: MetadataSource = MetadataSource::Explicit("Missing description");
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Explicit("Missing description");
     const VERSION: MetadataSource = MetadataSource::Explicit("1.0");
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
@@ -42,7 +42,7 @@ struct AbsentName;
 
 impl Plugin for AbsentName {
     const ID: &'static str = "absent-name";
-    const NAME: MetadataSource = MetadataSource::Absent;
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Absent;
     const VERSION: MetadataSource = MetadataSource::Explicit("1.0");
     const DESCRIPTION: MetadataSource = MetadataSource::Absent;
     const LICENSE: MetadataSource = MetadataSource::Absent;
@@ -53,7 +53,7 @@ impl Plugin for AbsentName {
 
 export!(AbsentName);
 "#,
-        "Lockgate plugin name cannot use MetadataSource::Absent because name is required by the wire format",
+        "Lockgate plugin display name cannot use MetadataSource::Absent because name is required by the wire format",
     );
     check_compile_failure(
         "absent-version",
@@ -68,7 +68,7 @@ struct AbsentVersion;
 
 impl Plugin for AbsentVersion {
     const ID: &'static str = "absent-version";
-    const NAME: MetadataSource = MetadataSource::Explicit("Absent version");
+    const DISPLAY_NAME: MetadataSource = MetadataSource::Explicit("Absent version");
     const VERSION: MetadataSource = MetadataSource::Absent;
     const DESCRIPTION: MetadataSource = MetadataSource::Absent;
     const LICENSE: MetadataSource = MetadataSource::Absent;

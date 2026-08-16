@@ -14,7 +14,7 @@ struct Dispatch;
 
 impl lockgate_plugin::Plugin for Dispatch {
     const ID: &'static str = "dispatch";
-    // NAME, VERSION, and DESCRIPTION come from Cargo package metadata.
+    // DISPLAY_NAME, VERSION, and DESCRIPTION come from Cargo package metadata.
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;

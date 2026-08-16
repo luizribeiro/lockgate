@@ -24,7 +24,7 @@ pub fn export(input: TokenStream) -> TokenStream {
                 .into();
         }
     };
-    let name = resolve_metadata_source(&facade, &plugin, "name", "CARGO_PKG_NAME", true);
+    let name = resolve_metadata_source(&facade, &plugin, "display_name", "CARGO_PKG_NAME", true);
     let version = resolve_metadata_source(&facade, &plugin, "version", "CARGO_PKG_VERSION", true);
     let description = resolve_metadata_source(
         &facade,
@@ -84,10 +84,23 @@ fn resolve_metadata_source(
     required: bool,
 ) -> TokenStream2 {
     let associated_const = format_ident!("{}", field.to_ascii_uppercase());
+    let (authoring_field, wire_field, source_help) = if field == "display_name" {
+        (
+            "display name",
+            "name",
+            "Plugin::DISPLAY_NAME = MetadataSource::Explicit(...) or Plugin::DISPLAY_NAME = MetadataSource::Absent",
+        )
+    } else {
+        (
+            field,
+            field,
+            "MetadataSource::Explicit(...) or MetadataSource::Absent",
+        )
+    };
     let env_var = LitStr::new(env_var, Span::call_site());
     let cargo_error = LitStr::new(
         &format!(
-            "Lockgate plugin Cargo {field} is missing or empty; set {field} in Cargo.toml, or declare MetadataSource::Explicit(...) or MetadataSource::Absent"
+            "Lockgate plugin Cargo {wire_field} is missing or empty; set {wire_field} in Cargo.toml, or declare {source_help}"
         ),
         Span::call_site(),
     );
@@ -99,7 +112,7 @@ fn resolve_metadata_source(
     let absent = if required {
         let absent_error = LitStr::new(
             &format!(
-                "Lockgate plugin {field} cannot use MetadataSource::Absent because {field} is required by the wire format"
+                "Lockgate plugin {authoring_field} cannot use MetadataSource::Absent because {wire_field} is required by the wire format"
             ),
             Span::call_site(),
         );

@@ -13,7 +13,7 @@ struct Counter;
 
 impl lockgate_plugin::Plugin for Counter {
     const ID: &'static str = "counter";
-    // NAME, VERSION, and DESCRIPTION come from Cargo package metadata.
+    // DISPLAY_NAME, VERSION, and DESCRIPTION come from Cargo package metadata.
     const LICENSE: MetadataSource = MetadataSource::Absent;
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
