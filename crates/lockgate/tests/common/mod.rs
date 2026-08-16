@@ -14,37 +14,8 @@ use wasm_encoder::{ComponentSection, CustomSection};
 use wasmparser::{Parser, Payload};
 use wasmtime::component::Linker;
 
-pub(crate) mod config {
-    use std::sync::Arc;
-
-    use wasmtime::component::Linker;
-
-    use super::exec::StoreCtx;
-
-    #[derive(Clone)]
-    pub(crate) enum SettingsState {
-        NotReady,
-        Ready(Arc<str>),
-    }
-
-    pub(crate) struct ValidatedSettings(Arc<str>);
-
-    impl ValidatedSettings {
-        pub(crate) fn into_state(self) -> SettingsState {
-            SettingsState::Ready(self.0)
-        }
-    }
-
-    pub(crate) fn add_settings_to_linker<S>(
-        _linker: &mut Linker<StoreCtx<S>>,
-    ) -> wasmtime::Result<()>
-    where
-        S: Send + Sync + 'static,
-    {
-        Ok(())
-    }
-}
-
+#[path = "../../src/config.rs"]
+pub(crate) mod config;
 #[path = "../../src/exec/mod.rs"]
 pub(crate) mod exec;
 #[path = "../../src/jobs.rs"]

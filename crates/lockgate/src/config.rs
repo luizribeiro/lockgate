@@ -5,7 +5,7 @@ use std::sync::Arc;
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{ResourceLimiter, Store};
 
-use crate::exec::{ExecEngine, ExecLimits, StoreCtx};
+use super::exec::{ExecEngine, ExecLimits, StoreCtx};
 
 const MAX_SCHEMA_BYTES: usize = 256 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 64;
@@ -214,10 +214,10 @@ impl ResourceLimiter for SchemaMemoryLimiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{
+    use super::super::config::{
         MAX_SCHEMA_BYTES, MAX_SCHEMA_DEPTH, SettingsValidationError, validate_settings,
     };
-    use crate::exec::{ExecEngine, ExecLimits};
+    use super::super::exec::{ExecEngine, ExecLimits};
     use wit_parser::Resolve;
 
     #[test]
