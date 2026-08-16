@@ -389,7 +389,14 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
     let mut builder = HostBuilder::new(()).unwrap();
 
     let error = builder
-        .prepare(PLUGIN_ID, &trapped, PluginConfig::default())
+        .prepare(
+            PLUGIN_ID,
+            &trapped,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "ignored": true })),
+                ..PluginConfig::default()
+            },
+        )
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SchemaFetchFailure { .. }));
@@ -614,6 +621,25 @@ async fn validator_passing_unwired_import_fails_linker_preflight() {
 }
 
 #[tokio::test]
+async fn linker_preflight_precedes_settings_matrix_validation() {
+    let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
+    let mut builder = HostBuilder::new(()).unwrap();
+    let error = builder
+        .prepare(
+            PLUGIN_ID,
+            &bytes,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "would": "lack a schema" })),
+                ..PluginConfig::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AdmissionError::Preflight { .. }));
+}
+
+#[tokio::test]
 async fn unresolved_config_fields_are_rejected_instead_of_ignored() {
     let mut builder = HostBuilder::new(()).unwrap();
     let mut roots = SymbolicRoots::default();
@@ -653,7 +679,7 @@ async fn unresolved_config_fields_are_rejected_instead_of_ignored() {
 }
 
 #[tokio::test]
-async fn artifact_validation_precedes_temporary_config_rejection() {
+async fn artifact_failures_precede_unresolved_config_rejection() {
     let mut builder = HostBuilder::new(()).unwrap();
     let mut roots = SymbolicRoots::default();
     roots.insert("workspace", "/tmp/workspace");

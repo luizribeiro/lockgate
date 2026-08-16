@@ -298,6 +298,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(schema.as_deref(), Some(r#"{"type":"object"}"#));
+
+        let error = engine
+            .fetch_settings_schema(
+                &component,
+                ExecLimits {
+                    instantiation_fuel: 1_000_000,
+                    max_memory_bytes: 0,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("memory"));
     }
 
     #[test]

@@ -241,7 +241,14 @@ impl<S: CallContext> HostBuilder<S> {
         self.jobs.set_error_sink(sink);
     }
 
-    /// Validates, compiles, and prelinks a plugin artifact for later admission.
+    /// Compiles and validates the artifact, preflights its complete linker,
+    /// then probes and validates its settings contract for later admission.
+    ///
+    /// A schema export is invoked once in a capped internal Store that has no
+    /// application call context or application import implementations. The
+    /// framework settings import reports `not-ready` during that probe. Once
+    /// the supplied settings (or `{}` when absent) pass the plugin's Draft
+    /// 2020-12 schema, their JSON is retained for smoke and steady-state Stores.
     pub async fn prepare(
         &mut self,
         id: &str,
