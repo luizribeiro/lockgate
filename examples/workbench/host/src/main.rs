@@ -1,10 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use lockgate::{
-    Acceptance, Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, RoleError,
-    RuntimeLimits,
-};
+use lockgate::{Acceptance, HostBuilder, InvocationCtx, PluginConfig, RoleError, RuntimeLimits};
 
 const TIDY_ID: &str = "tidy";
 const COUNTER_ID: &str = "counter";
@@ -71,64 +68,47 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let host = builder.finish();
 
     for plugin in host.plugins() {
-        run_formatter(&host, plugin).await?;
-        run_linter(&host, plugin).await?;
-        run_stats(&host, plugin).await?;
+        let formatter = role_status(formatter::HostExt::formatter(&host, plugin))?;
+        let linter = role_status(linter::HostExt::linter(&host, plugin))?;
+        let stats = role_status(stats::HostExt::stats(&host, plugin))?;
+        println!(
+            "{} roles: formatter={formatter}, linter={linter}, stats={stats}",
+            plugin.id()
+        );
+    }
+
+    for (plugin, formatter) in formatter::HostExt::formatter_clients(&host) {
+        let result = formatter
+            .format(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
+            .await?;
+        println!("formatter fan-out: {} -> {result}", plugin.id());
+    }
+    for (plugin, linter) in linter::HostExt::linter_clients(&host) {
+        let findings = linter
+            .lint(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
+            .await?;
+        let result = if findings.is_empty() {
+            "no findings".to_owned()
+        } else {
+            findings.join(", ")
+        };
+        println!("linter fan-out: {} -> {result}", plugin.id());
+    }
+    for (plugin, stats) in stats::HostExt::stats_clients(&host) {
+        let result = stats
+            .measure(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
+            .await?;
+        println!("stats fan-out: {} -> {result}", plugin.id());
     }
     Ok(())
 }
 
-async fn run_formatter(host: &Host<()>, plugin: &PluginHandle) -> Result<(), Box<dyn Error>> {
-    match formatter::HostExt::formatter(host, plugin) {
-        Ok(formatter) => {
-            let result = formatter
-                .format(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
-                .await?;
-            println!("{} formatter: {result}", plugin.id());
-        }
-        Err(RoleError::RoleNotExported { .. }) => {
-            println!("{} formatter: not implemented", plugin.id());
-        }
-        Err(error) => return Err(error.into()),
+fn role_status<T>(cast: Result<T, RoleError>) -> Result<&'static str, RoleError> {
+    match cast {
+        Ok(_) => Ok("implemented"),
+        Err(RoleError::RoleNotExported { .. }) => Ok("not implemented"),
+        Err(error) => Err(error),
     }
-    Ok(())
-}
-
-async fn run_linter(host: &Host<()>, plugin: &PluginHandle) -> Result<(), Box<dyn Error>> {
-    match linter::HostExt::linter(host, plugin) {
-        Ok(linter) => {
-            let findings = linter
-                .lint(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
-                .await?;
-            let result = if findings.is_empty() {
-                "no findings".to_owned()
-            } else {
-                findings.join(", ")
-            };
-            println!("{} linter: {result}", plugin.id());
-        }
-        Err(RoleError::RoleNotExported { .. }) => {
-            println!("{} linter: not implemented", plugin.id());
-        }
-        Err(error) => return Err(error.into()),
-    }
-    Ok(())
-}
-
-async fn run_stats(host: &Host<()>, plugin: &PluginHandle) -> Result<(), Box<dyn Error>> {
-    match stats::HostExt::stats(host, plugin) {
-        Ok(stats) => {
-            let result = stats
-                .measure(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
-                .await?;
-            println!("{} stats: {result}", plugin.id());
-        }
-        Err(RoleError::RoleNotExported { .. }) => {
-            println!("{} stats: not implemented", plugin.id());
-        }
-        Err(error) => return Err(error.into()),
-    }
-    Ok(())
 }
 
 fn read_component(path: &Path, build_command: &str) -> Result<Vec<u8>, std::io::Error> {

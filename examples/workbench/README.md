@@ -9,7 +9,9 @@ The host-owned `wit/` directory publishes the formatter, linter, and stats inter
 plus the host's superset world; `host/` admits both compiled components and discovers
 their roles at cast time. Each plugin directory declares its own subset world over a
 vendored copy of that contract, exactly as an out-of-tree plugin author would. A host
-test keeps those vendored copies byte-identical to the contract you publish.
+test keeps those vendored copies byte-identical to the contract you publish. The host
+uses per-plugin casts for feature detection, then generated `*_clients` fan-out methods
+to invoke every implementer of each role in admission order.
 
 From the repository root, build both plugins:
 
@@ -27,10 +29,9 @@ nix develop -c cargo run -p workbench-host -- examples/workbench/plugins/tidy/ta
 The host prints:
 
 ```text
-tidy formatter: alpha beta gamma
-tidy linter: line 2 has trailing whitespace
-tidy stats: not implemented
-counter formatter: not implemented
-counter linter: not implemented
-counter stats: 3
+tidy roles: formatter=implemented, linter=implemented, stats=not implemented
+counter roles: formatter=not implemented, linter=not implemented, stats=implemented
+formatter fan-out: tidy -> alpha beta gamma
+linter fan-out: tidy -> line 2 has trailing whitespace
+stats fan-out: counter -> 3
 ```
