@@ -111,6 +111,40 @@ fn schema_component(schema_body: &str) -> Vec<u8> {
     .unwrap()
 }
 
+fn constant_schema_component(schema: &str) -> Vec<u8> {
+    let encoded = schema
+        .as_bytes()
+        .iter()
+        .map(|byte| format!(r"\{byte:02x}"))
+        .collect::<String>();
+    wat::parse_str(format!(
+        r#"(component
+            (core module $guest
+                (memory (export "memory") 1)
+                (data (i32.const 64) "{encoded}")
+                (func (export "settings-schema") (result i32)
+                    (i32.store (i32.const 8) (i32.const 64))
+                    (i32.store offset=4 (i32.const 8) (i32.const {length}))
+                    (i32.const 8)
+                )
+            )
+            (core instance $guest-instance (instantiate $guest))
+            (func $settings-schema (result string)
+                (canon lift
+                    (core func $guest-instance "settings-schema")
+                    (memory (core memory $guest-instance "memory"))
+                )
+            )
+            (instance $schema
+                (export "settings-schema" (func $settings-schema))
+            )
+            (export "lockgate:config/schema" (instance $schema))
+        )"#,
+        length = schema.len(),
+    ))
+    .unwrap()
+}
+
 fn component_with_unwired_import() -> Vec<u8> {
     component(
         "package test:unwired; interface host { wait: func(); } interface guest { value: func() -> u32; } world fixture { import host; export guest; }",
@@ -373,6 +407,86 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
 }
 
 #[tokio::test]
+async fn settings_follow_the_schema_presence_matrix() {
+    let without_schema = well_formed_fixture();
+    let empty_schema = common::sectioned_fixture(
+        &constant_schema_component(
+            r#"{"type":"object","maxProperties":0,"additionalProperties":false}"#,
+        ),
+        &metadata(),
+    );
+    let configured_schema = common::sectioned_fixture(
+        &constant_schema_component(
+            r#"{"type":"object","required":["enabled"],"properties":{"enabled":{"type":"boolean"}},"additionalProperties":false}"#,
+        ),
+        &metadata(),
+    );
+    let mut builder = HostBuilder::new(()).unwrap();
+
+    builder
+        .prepare(PLUGIN_ID, &without_schema, PluginConfig::default())
+        .await
+        .unwrap();
+
+    let error = builder
+        .prepare(
+            PLUGIN_ID,
+            &without_schema,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "enabled": true })),
+                ..PluginConfig::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::SettingsWithoutSchema));
+    assert!(error.to_string().contains("exports no settings schema"));
+
+    builder
+        .prepare(PLUGIN_ID, &empty_schema, PluginConfig::default())
+        .await
+        .unwrap();
+    builder
+        .prepare(
+            PLUGIN_ID,
+            &configured_schema,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "enabled": true })),
+                ..PluginConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let error = builder
+        .prepare(
+            PLUGIN_ID,
+            &configured_schema,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "enabled": "yes" })),
+                ..PluginConfig::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::SettingsValidation { .. }));
+    assert!(error.to_string().contains("do not match their schema"));
+}
+
+#[tokio::test]
+async fn malformed_schema_json_is_a_typed_preparation_error() {
+    let bytes = common::sectioned_fixture(&constant_schema_component("not JSON"), &metadata());
+    let mut builder = HostBuilder::new(()).unwrap();
+    let error = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AdmissionError::SchemaMalformed { .. }));
+    assert!(error.to_string().contains("schema is not valid JSON"));
+}
+
+#[tokio::test]
 async fn prepares_a_well_formed_sectioned_fixture() {
     let bytes = well_formed_fixture();
     let free = inspect(&bytes).unwrap();
@@ -500,18 +614,11 @@ async fn validator_passing_unwired_import_fails_linker_preflight() {
 }
 
 #[tokio::test]
-async fn non_default_config_is_rejected_instead_of_ignored() {
+async fn unresolved_config_fields_are_rejected_instead_of_ignored() {
     let mut builder = HostBuilder::new(()).unwrap();
     let mut roots = SymbolicRoots::default();
     roots.insert("workspace", "/tmp/workspace");
     let cases = [
-        (
-            PluginConfig {
-                settings: Some(serde_json::json!({ "enabled": true })),
-                ..PluginConfig::default()
-            },
-            "settings",
-        ),
         (
             PluginConfig {
                 roots,
@@ -548,8 +655,10 @@ async fn non_default_config_is_rejected_instead_of_ignored() {
 #[tokio::test]
 async fn artifact_validation_precedes_temporary_config_rejection() {
     let mut builder = HostBuilder::new(()).unwrap();
+    let mut roots = SymbolicRoots::default();
+    roots.insert("workspace", "/tmp/workspace");
     let config = PluginConfig {
-        settings: Some(serde_json::json!({ "enabled": true })),
+        roots,
         ..PluginConfig::default()
     };
 

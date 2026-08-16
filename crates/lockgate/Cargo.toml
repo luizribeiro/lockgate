@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow = "1"
+jsonschema = { version = "0.49.2", default-features = false }
 lockgate-schema = { path = "../lockgate-schema" }
 lockgate-macros = { path = "../lockgate-macros" }
 serde_json.workspace = true

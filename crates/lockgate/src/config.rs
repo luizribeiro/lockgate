@@ -5,6 +5,9 @@ use wasmtime::{ResourceLimiter, Store};
 
 use crate::exec::{ExecEngine, ExecLimits};
 
+const MAX_SCHEMA_BYTES: usize = 256 * 1024;
+const MAX_SCHEMA_DEPTH: usize = 64;
+
 wasmtime::component::bindgen!({
     path: "wit",
     world: "plugin",
@@ -66,6 +69,105 @@ struct SchemaMemoryLimiter {
     max_memory_bytes: usize,
 }
 
+pub(crate) struct ValidatedSettings {
+    json: String,
+}
+
+impl ValidatedSettings {
+    pub(crate) fn json(&self) -> &str {
+        &self.json
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum SettingsValidationError {
+    SettingsWithoutSchema,
+    SchemaTooLarge { actual: usize, maximum: usize },
+    SchemaTooDeep { maximum: usize },
+    SchemaMalformed { message: String },
+    NonLocalReference { reference: String },
+    InvalidSchema { message: String },
+    InvalidSettings { message: String },
+}
+
+pub(crate) fn validate_settings(
+    schema: Option<&str>,
+    settings: Option<serde_json::Value>,
+) -> Result<ValidatedSettings, SettingsValidationError> {
+    let Some(schema) = schema else {
+        return match settings {
+            Some(_) => Err(SettingsValidationError::SettingsWithoutSchema),
+            None => Ok(ValidatedSettings {
+                json: "{}".to_owned(),
+            }),
+        };
+    };
+    if schema.len() > MAX_SCHEMA_BYTES {
+        return Err(SettingsValidationError::SchemaTooLarge {
+            actual: schema.len(),
+            maximum: MAX_SCHEMA_BYTES,
+        });
+    }
+
+    let schema: serde_json::Value =
+        serde_json::from_str(schema).map_err(|error| SettingsValidationError::SchemaMalformed {
+            message: error.to_string(),
+        })?;
+    if json_depth(&schema) > MAX_SCHEMA_DEPTH {
+        return Err(SettingsValidationError::SchemaTooDeep {
+            maximum: MAX_SCHEMA_DEPTH,
+        });
+    }
+    if let Some(reference) = non_local_reference(&schema) {
+        return Err(SettingsValidationError::NonLocalReference {
+            reference: reference.to_owned(),
+        });
+    }
+
+    // No resolver features are enabled for `jsonschema`, so validator
+    // construction cannot perform filesystem or network retrieval.
+    let validator = jsonschema::draft202012::options()
+        .build(&schema)
+        .map_err(|error| SettingsValidationError::InvalidSchema {
+            message: error.to_string(),
+        })?;
+    let settings = settings.unwrap_or_else(|| serde_json::json!({}));
+    if let Err(error) = validator.validate(&settings) {
+        return Err(SettingsValidationError::InvalidSettings {
+            message: error.to_string(),
+        });
+    }
+    Ok(ValidatedSettings {
+        json: serde_json::to_string(&settings)
+            .expect("serializing a serde_json::Value cannot fail"),
+    })
+}
+
+fn json_depth(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Array(values) => 1 + values.iter().map(json_depth).max().unwrap_or(0),
+        serde_json::Value::Object(values) => 1 + values.values().map(json_depth).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+fn non_local_reference(value: &serde_json::Value) -> Option<&str> {
+    match value {
+        serde_json::Value::Array(values) => values.iter().find_map(non_local_reference),
+        serde_json::Value::Object(values) => {
+            for keyword in ["$ref", "$dynamicRef"] {
+                if let Some(reference) = values.get(keyword).and_then(serde_json::Value::as_str)
+                    && !reference.starts_with('#')
+                {
+                    return Some(reference);
+                }
+            }
+            values.values().find_map(non_local_reference)
+        }
+        _ => None,
+    }
+}
+
 impl ResourceLimiter for SchemaMemoryLimiter {
     fn memory_growing(
         &mut self,
@@ -88,6 +190,9 @@ impl ResourceLimiter for SchemaMemoryLimiter {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::{
+        MAX_SCHEMA_BYTES, MAX_SCHEMA_DEPTH, SettingsValidationError, validate_settings,
+    };
     use crate::exec::{ExecEngine, ExecLimits};
     use wit_parser::Resolve;
 
@@ -164,5 +269,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(schema.as_deref(), Some(r#"{"type":"object"}"#));
+    }
+
+    #[test]
+    fn schema_references_are_local_only() {
+        let error = validate_settings(
+            Some(r#"{"$ref":"https://example.invalid/settings.json"}"#),
+            None,
+        )
+        .err()
+        .unwrap();
+        assert!(matches!(
+            error,
+            SettingsValidationError::NonLocalReference { reference }
+                if reference == "https://example.invalid/settings.json"
+        ));
+
+        validate_settings(
+            Some(r##"{"$defs":{"value":{"type":"string"}},"$ref":"#/$defs/value"}"##),
+            Some(serde_json::json!("local")),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn schema_size_and_depth_have_explicit_limits() {
+        let error = validate_settings(Some(&" ".repeat(MAX_SCHEMA_BYTES + 1)), None)
+            .err()
+            .unwrap();
+        assert!(matches!(
+            error,
+            SettingsValidationError::SchemaTooLarge { actual, maximum }
+                if actual == MAX_SCHEMA_BYTES + 1 && maximum == MAX_SCHEMA_BYTES
+        ));
+
+        let schema = format!(
+            "{}true{}",
+            "[".repeat(MAX_SCHEMA_DEPTH + 1),
+            "]".repeat(MAX_SCHEMA_DEPTH + 1)
+        );
+        let error = validate_settings(Some(&schema), None).err().unwrap();
+        assert!(matches!(
+            error,
+            SettingsValidationError::SchemaTooDeep { maximum }
+                if maximum == MAX_SCHEMA_DEPTH
+        ));
     }
 }

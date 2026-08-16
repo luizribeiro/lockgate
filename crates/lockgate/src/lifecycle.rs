@@ -10,6 +10,7 @@ use std::{
 use lockgate_schema::{AtomKey, GrantSet, NeedsManifest, PluginMetadata};
 
 use crate::CallContext;
+use crate::config::{SettingsValidationError, validate_settings};
 use crate::exec::{
     ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError, LoadedComponent, TypedImports,
 };
@@ -163,9 +164,7 @@ pub struct PluginConfig {
 
 impl PluginConfig {
     fn unavailable_field(&self) -> Option<&'static str> {
-        if self.settings.is_some() {
-            Some("settings")
-        } else if !self.roots.is_empty() {
+        if !self.roots.is_empty() {
             Some("symbolic roots")
         } else if self.limits != LimitSet::Unconstrained {
             Some("grant limits")
@@ -249,6 +248,7 @@ impl<S: CallContext> HostBuilder<S> {
         bytes: &[u8],
         config: PluginConfig,
     ) -> Result<Prepared, AdmissionError> {
+        let unavailable_field = config.unavailable_field();
         let component = self
             .engine
             .compile(bytes)
@@ -265,18 +265,21 @@ impl<S: CallContext> HostBuilder<S> {
             decode_needs(&sections).map_err(AdmissionError::from_inspection)?;
         let exported_interfaces = validate_and_collect_exported_interfaces(bytes)
             .map_err(AdmissionError::from_validation)?;
-        if let Some(field) = config.unavailable_field() {
-            return Err(AdmissionError::ConfigFeatureUnavailable { field });
-        }
-
         let artifact = self
             .engine
             .load_hosted_component::<S>(&component, std::sync::Arc::clone(&self.imports))
             .map_err(AdmissionError::from_load)?;
-        self.engine
+        let schema = self
+            .engine
             .fetch_settings_schema(&component, RuntimeLimits::default().into())
             .await
             .map_err(AdmissionError::from_schema_fetch)?;
+        let settings = validate_settings(schema.as_deref(), config.settings)
+            .map_err(AdmissionError::from_settings_validation)?;
+        let _ = settings.json();
+        if let Some(field) = unavailable_field {
+            return Err(AdmissionError::ConfigFeatureUnavailable { field });
+        }
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             inspection,
@@ -500,6 +503,26 @@ pub enum AdmissionError {
     SchemaFetchFailure {
         message: String,
     },
+    SettingsWithoutSchema,
+    SchemaTooLarge {
+        actual: usize,
+        maximum: usize,
+    },
+    SchemaTooDeep {
+        maximum: usize,
+    },
+    SchemaMalformed {
+        message: String,
+    },
+    SchemaReferenceNotLocal {
+        reference: String,
+    },
+    InvalidSettingsSchema {
+        message: String,
+    },
+    SettingsValidation {
+        message: String,
+    },
 }
 
 impl AdmissionError {
@@ -556,6 +579,28 @@ impl AdmissionError {
             }
         }
     }
+
+    fn from_settings_validation(error: SettingsValidationError) -> Self {
+        match error {
+            SettingsValidationError::SettingsWithoutSchema => Self::SettingsWithoutSchema,
+            SettingsValidationError::SchemaTooLarge { actual, maximum } => {
+                Self::SchemaTooLarge { actual, maximum }
+            }
+            SettingsValidationError::SchemaTooDeep { maximum } => Self::SchemaTooDeep { maximum },
+            SettingsValidationError::SchemaMalformed { message } => {
+                Self::SchemaMalformed { message }
+            }
+            SettingsValidationError::NonLocalReference { reference } => {
+                Self::SchemaReferenceNotLocal { reference }
+            }
+            SettingsValidationError::InvalidSchema { message } => {
+                Self::InvalidSettingsSchema { message }
+            }
+            SettingsValidationError::InvalidSettings { message } => {
+                Self::SettingsValidation { message }
+            }
+        }
+    }
 }
 
 impl fmt::Display for AdmissionError {
@@ -594,6 +639,37 @@ impl fmt::Display for AdmissionError {
             }
             Self::SchemaFetchFailure { message } => {
                 write!(formatter, "plugin settings schema fetch failed: {message}")
+            }
+            Self::SettingsWithoutSchema => formatter.write_str(
+                "plugin settings were supplied, but the component exports no settings schema",
+            ),
+            Self::SchemaTooLarge { actual, maximum } => write!(
+                formatter,
+                "plugin settings schema is {actual} bytes; the maximum is {maximum} bytes"
+            ),
+            Self::SchemaTooDeep { maximum } => write!(
+                formatter,
+                "plugin settings schema exceeds the maximum JSON depth of {maximum}"
+            ),
+            Self::SchemaMalformed { message } => {
+                write!(
+                    formatter,
+                    "plugin settings schema is not valid JSON: {message}"
+                )
+            }
+            Self::SchemaReferenceNotLocal { reference } => write!(
+                formatter,
+                "plugin settings schema reference `{reference}` is not local; only fragment references are allowed"
+            ),
+            Self::InvalidSettingsSchema { message } => write!(
+                formatter,
+                "plugin settings schema is not valid JSON Schema Draft 2020-12: {message}"
+            ),
+            Self::SettingsValidation { message } => {
+                write!(
+                    formatter,
+                    "plugin settings do not match their schema: {message}"
+                )
             }
         }
     }
