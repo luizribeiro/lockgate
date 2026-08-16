@@ -1,5 +1,6 @@
 //! Host admission, permissions, and execution kernel.
 
+mod config;
 #[cfg_attr(
     test,
     allow(
