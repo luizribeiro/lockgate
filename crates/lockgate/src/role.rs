@@ -118,7 +118,8 @@ impl CallError {
             // Generated application imports have no outer failure channel yet:
             // WIT `result` values are guest data, while only future fallible
             // capability adapters can create the internal HostImport marker.
-            // That later step will give these failures their public shape.
+            // A public host-import variant belongs here once capability adapters
+            // can actually produce host-import failures.
             ExecError::HostImport(error) | ExecError::Dispatch(error) => Self::Dispatch {
                 message: error.to_string(),
             },
