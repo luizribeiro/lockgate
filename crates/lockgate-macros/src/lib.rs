@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
     FnArg, GenericArgument, Ident, Item, ItemTrait, LitStr, PathArguments, ReturnType, Token,
@@ -49,6 +49,22 @@ struct HostBindingsInput {
 struct HostImportsConfig {
     imports: SynType,
     data: SynType,
+    imports_option: Ident,
+    data_option: Ident,
+}
+
+impl HostImportsConfig {
+    fn option_span(&self) -> Span {
+        self.imports_option
+            .span()
+            .join(self.data_option.span())
+            .unwrap_or_else(|| self.imports_option.span())
+    }
+}
+
+struct ParsedOption<T> {
+    value: T,
+    option: Ident,
 }
 
 impl Parse for HostBindingsInput {
@@ -78,8 +94,22 @@ impl HostBindingsInput {
             match option.to_string().as_str() {
                 "path" => set_once(&mut path, input.parse()?, &option)?,
                 "world" => set_once(&mut world, input.parse()?, &option)?,
-                "imports" => set_once(&mut imports, input.parse()?, &option)?,
-                "data" => set_once(&mut data, input.parse()?, &option)?,
+                "imports" => set_once(
+                    &mut imports,
+                    ParsedOption {
+                        value: input.parse()?,
+                        option: option.clone(),
+                    },
+                    &option,
+                )?,
+                "data" => set_once(
+                    &mut data,
+                    ParsedOption {
+                        value: input.parse()?,
+                        option: option.clone(),
+                    },
+                    &option,
+                )?,
                 name => {
                     return Err(syn::Error::new(
                         option.span(),
@@ -93,10 +123,22 @@ impl HostBindingsInput {
         }
 
         let imports = match (imports, data) {
-            (Some(imports), Some(data)) => Some(HostImportsConfig { imports, data }),
+            (Some(imports), Some(data)) => Some(HostImportsConfig {
+                imports: imports.value,
+                data: data.value,
+                imports_option: imports.option,
+                data_option: data.option,
+            }),
             (None, None) => None,
-            _ => {
-                return Err(input.error(
+            (Some(imports), None) => {
+                return Err(syn::Error::new(
+                    imports.option.span(),
+                    "lockgate::host_bindings! options `imports` and `data` must be specified together",
+                ));
+            }
+            (None, Some(data)) => {
+                return Err(syn::Error::new(
+                    data.option.span(),
                     "lockgate::host_bindings! options `imports` and `data` must be specified together",
                 ));
             }
@@ -1131,12 +1173,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         });
     }
 
-    if input.imports.is_none() && !interfaces.is_empty() {
-        return Err(syn::Error::new_spanned(
-            &input.world,
-            "lockgate::host_bindings! requires `imports` and `data` for a world that imports interfaces",
-        ));
-    }
+    validate_import_options(&input, !interfaces.is_empty())?;
 
     let mut imports_config = FunctionConfig::new();
     imports_config.push(
@@ -1276,6 +1313,26 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         #(#export_modules)*
         #host_imports_impl
     })
+}
+
+fn validate_import_options(
+    input: &HostBindingsInput,
+    has_imported_interfaces: bool,
+) -> syn::Result<()> {
+    match (&input.imports, has_imported_interfaces) {
+        (None, true) => Err(syn::Error::new_spanned(
+            &input.world,
+            "lockgate::host_bindings! requires `imports` and `data` for a world that imports interfaces",
+        )),
+        (Some(config), false) => Err(syn::Error::new(
+            config.option_span(),
+            format!(
+                "lockgate::host_bindings! world `{}` imports no interfaces; remove the `imports` and `data` options",
+                input.world.value()
+            ),
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn adapter_items(host: &ItemTrait, lockgate: &TokenStream2) -> syn::Result<Vec<Item>> {
@@ -1562,7 +1619,7 @@ fn lockgate_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2> {
 
 #[cfg(test)]
 mod tests {
-    use super::HostBindingsInput;
+    use super::{HostBindingsInput, validate_import_options};
 
     #[test]
     fn accepts_import_options_as_a_pair_or_not_at_all() {
@@ -1590,5 +1647,19 @@ mod tests {
                 "lockgate::host_bindings! options `imports` and `data` must be specified together"
             ));
         }
+    }
+
+    #[test]
+    fn rejects_import_options_for_a_world_without_imported_interfaces() {
+        let input: HostBindingsInput = syn::parse_str(
+            r#"{ path: "wit", world: "exports-only", imports: Imports, data: Data }"#,
+        )
+        .unwrap();
+        let error = validate_import_options(&input, false).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "lockgate::host_bindings! world `exports-only` imports no interfaces; remove the `imports` and `data` options"
+        );
     }
 }
