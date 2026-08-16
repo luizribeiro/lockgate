@@ -10,8 +10,12 @@
 //! Direct `cargo test --target wasm32-wasip2` fails for this crate by construction because the runtime feature's panic handler collides with std's in the test harness; test through the dependent fixtures instead.
 #![no_std]
 
+extern crate alloc;
 extern crate self as lockgate_plugin;
 
+pub use schemars::{self, JsonSchema};
+pub use serde::Deserialize;
+use serde::de::{DeserializeOwned, Error as _, MapAccess, Visitor};
 #[doc(hidden)]
 pub use wit_bindgen as __wit_bindgen;
 
@@ -107,7 +111,7 @@ macro_rules! generate {
 /// by Rust as a missing trait item:
 ///
 /// ```compile_fail,E0046
-/// use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
+/// use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
 ///
 /// macro_rules! __lockgate_wit_export {
 ///     ($plugin:ident) => {};
@@ -120,6 +124,7 @@ macro_rules! generate {
 ///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
 ///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
 ///     const NEEDS: Needs = Needs::NOTHING;
+///     type Settings = NoSettings;
 /// }
 /// export!(MissingIdentity);
 /// ```
@@ -127,7 +132,7 @@ macro_rules! generate {
 /// An explicitly empty identity is rejected during const evaluation:
 ///
 /// ```compile_fail,E0080
-/// use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
+/// use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
 ///
 /// macro_rules! __lockgate_wit_export {
 ///     ($plugin:ident) => {};
@@ -141,6 +146,7 @@ macro_rules! generate {
 ///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
 ///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
 ///     const NEEDS: Needs = Needs::NOTHING;
+///     type Settings = NoSettings;
 /// }
 /// export!(EmptyIdentity);
 /// ```
@@ -149,7 +155,7 @@ macro_rules! generate {
 /// its authority posture:
 ///
 /// ```compile_fail,E0046
-/// use lockgate_plugin::{MetadataSource, Plugin};
+/// use lockgate_plugin::{MetadataSource, NoSettings, Plugin};
 ///
 /// struct MissingNeeds;
 /// impl Plugin for MissingNeeds {
@@ -158,6 +164,7 @@ macro_rules! generate {
 ///     const LICENSE: MetadataSource = MetadataSource::Absent;
 ///     const REPOSITORY: MetadataSource = MetadataSource::Absent;
 ///     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
+///     type Settings = NoSettings;
 /// }
 /// ```
 pub use lockgate_plugin_macros::export;
@@ -199,6 +206,72 @@ pub trait Plugin {
     const REPOSITORY: MetadataSource = MetadataSource::Cargo;
     const HOMEPAGE: MetadataSource = MetadataSource::Cargo;
     const NEEDS: Needs;
+    const SETTINGS_POLICY: SettingsPolicy = SettingsPolicy::Closed;
+    type Settings: DeserializeOwned + JsonSchema;
+}
+
+/// Controls whether a plugin's top-level settings object accepts unknown keys.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SettingsPolicy {
+    /// Reject unknown top-level keys.
+    #[default]
+    Closed,
+    /// Permit unknown top-level keys.
+    Open,
+}
+
+/// The explicit settings type for a plugin that accepts no configuration.
+///
+/// Unlike a unit struct's incidental generated schema, `NoSettings` always
+/// means a closed empty JSON object. It accepts `{}` and rejects every key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NoSettings;
+
+impl JsonSchema for NoSettings {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
+        "NoSettings".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "properties": {},
+            "unevaluatedProperties": false
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for NoSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct NoSettingsVisitor;
+
+        impl<'de> Visitor<'de> for NoSettingsVisitor {
+            type Value = NoSettings;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                formatter.write_str("an empty settings object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                if let Some(key) = map.next_key::<alloc::string::String>()? {
+                    return Err(A::Error::unknown_field(&key, &[]));
+                }
+                Ok(NoSettings)
+            }
+        }
+
+        deserializer.deserialize_map(NoSettingsVisitor)
+    }
 }
 
 /// A const-constructible guest permission declaration.
@@ -221,7 +294,7 @@ impl Needs {
 /// from semantic-versioning guarantees. It must never be used directly.
 #[doc(hidden)]
 pub mod __private {
-    use super::Needs;
+    use super::{Needs, Plugin, SettingsPolicy};
 
     const NEEDS_BYTES: &[u8] = br#"{"format":1,"optional":{},"reasons":{},"required":{}}"#;
 
@@ -293,6 +366,16 @@ pub mod __private {
             index += 1;
         }
         output
+    }
+
+    pub const fn validate_settings_policy<P: Plugin>() {
+        if matches!(P::SETTINGS_POLICY, SettingsPolicy::Open)
+            && core::mem::size_of::<P::Settings>() == 0
+        {
+            panic!(
+                "Lockgate NoSettings cannot use SettingsPolicy::Open; remove the policy override or declare a settings struct"
+            );
+        }
     }
 
     const fn validate_manifest(manifest: &Manifest) {

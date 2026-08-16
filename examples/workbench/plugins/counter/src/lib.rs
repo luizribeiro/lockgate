@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use lockgate_plugin::{MetadataSource, Needs};
+use lockgate_plugin::{MetadataSource, Needs, NoSettings};
 
 lockgate_plugin::generate!({
     path: "wit",
@@ -19,6 +19,7 @@ impl lockgate_plugin::Plugin for Counter {
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
     // Explicit authority claim: this plugin requests no host capabilities.
     const NEEDS: Needs = Needs::NOTHING;
+    type Settings = NoSettings;
 }
 
 impl exports::example::workbench::stats::Guest for Counter {

@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::string::String;
-use lockgate_plugin::{MetadataSource, Needs};
+use lockgate_plugin::{MetadataSource, Needs, NoSettings};
 
 lockgate_plugin::generate!({
     path: "../../data/host_bindings",
@@ -19,6 +19,7 @@ impl lockgate_plugin::Plugin for Fixture {
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
     const NEEDS: Needs = Needs::NOTHING;
+    type Settings = NoSettings;
 }
 
 impl exports::test::host_bindings::guest::Guest for Fixture {

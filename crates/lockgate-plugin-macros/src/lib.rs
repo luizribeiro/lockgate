@@ -47,6 +47,9 @@ pub fn export(input: TokenStream) -> TokenStream {
     quote! {
         __lockgate_wit_export!(#plugin);
 
+        const __LOCKGATE_SETTINGS_POLICY_CHECK: () =
+            #facade::__private::validate_settings_policy::<#plugin>();
+
         const __LOCKGATE_PLUGIN_MANIFEST: #facade::__private::Manifest =
             #facade::__private::Manifest {
                 id: <#plugin as #facade::Plugin>::ID,

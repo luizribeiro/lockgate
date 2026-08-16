@@ -7,7 +7,7 @@ fn metadata_source_failures_have_field_specific_diagnostics() {
     check_compile_failure(
         "missing-description",
         r#"
-use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
+use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
 
 macro_rules! __lockgate_wit_export {
     ($plugin:ident) => {};
@@ -23,6 +23,7 @@ impl Plugin for MissingDescription {
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
     const NEEDS: Needs = Needs::NOTHING;
+    type Settings = NoSettings;
 }
 
 export!(MissingDescription);
@@ -32,7 +33,7 @@ export!(MissingDescription);
     check_compile_failure(
         "absent-name",
         r#"
-use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
+use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
 
 macro_rules! __lockgate_wit_export {
     ($plugin:ident) => {};
@@ -49,6 +50,7 @@ impl Plugin for AbsentName {
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
     const NEEDS: Needs = Needs::NOTHING;
+    type Settings = NoSettings;
 }
 
 export!(AbsentName);
@@ -58,7 +60,7 @@ export!(AbsentName);
     check_compile_failure(
         "absent-version",
         r#"
-use lockgate_plugin::{MetadataSource, Needs, Plugin, export};
+use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
 
 macro_rules! __lockgate_wit_export {
     ($plugin:ident) => {};
@@ -75,6 +77,7 @@ impl Plugin for AbsentVersion {
     const REPOSITORY: MetadataSource = MetadataSource::Absent;
     const HOMEPAGE: MetadataSource = MetadataSource::Absent;
     const NEEDS: Needs = Needs::NOTHING;
+    type Settings = NoSettings;
 }
 
 export!(AbsentVersion);
