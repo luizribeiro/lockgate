@@ -5,3 +5,6 @@ edition.workspace = true
 
 [dependencies]
 lockgate-macros = { path = "../lockgate-macros" }
+
+[dev-dependencies]
+proptest = "1"
