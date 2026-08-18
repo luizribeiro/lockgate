@@ -22,6 +22,7 @@ pub use lifecycle::{
     Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, InvocationCtx,
     LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
+pub use lockgate_policy::{Scope, ScopeError, ScopeRepr, check_scope_laws};
 
 /// Generates typed application bindings for a WIT world.
 ///
@@ -119,6 +120,7 @@ impl<'a, S> HostCtx<'a, S> {
 pub mod __private {
     pub use crate::exec::StoreCtx;
     pub use crate::jobs::DetachedJobContext;
+    pub use lockgate_policy;
     pub use wasmtime;
 }
 

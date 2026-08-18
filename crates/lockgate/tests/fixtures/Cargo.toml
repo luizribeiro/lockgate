@@ -12,6 +12,7 @@ members = [
     "public-guest",
     "renamed-facade",
     "renamed-host-facade",
+    "scope-reexport",
     "typed-settings-guest",
 ]
 

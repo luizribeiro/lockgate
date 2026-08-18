@@ -1000,6 +1000,7 @@ dependencies = [
  "anyhow",
  "jsonschema",
  "lockgate-macros",
+ "lockgate-policy",
  "lockgate-schema",
  "serde_json",
  "tokio",
@@ -1107,6 +1108,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-policy"
+version = "0.1.0"
+dependencies = [
+ "lockgate-macros",
+]
+
+[[package]]
 name = "lockgate-public-fixture"
 version = "0.1.0"
 dependencies = [
@@ -1135,6 +1143,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "lockgate-scope-reexport-fixture"
+version = "0.0.0"
+dependencies = [
+ "lockgate",
 ]
 
 [[package]]

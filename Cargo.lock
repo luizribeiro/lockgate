@@ -1021,6 +1021,7 @@ dependencies = [
  "anyhow",
  "jsonschema",
  "lockgate-macros",
+ "lockgate-policy",
  "lockgate-schema",
  "serde_json",
  "tokio",

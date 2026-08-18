@@ -1636,10 +1636,17 @@ fn lockgate_policy_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2>
             let name = format_ident!("{name}");
             Ok(quote!(::#name))
         }
-        Err(error) => Err(syn::Error::new_spanned(
-            span,
-            format!("failed to resolve the lockgate-policy crate: {error}"),
-        )),
+        Err(policy_error) => match crate_name("lockgate") {
+            Ok(FoundCrate::Itself) => Ok(quote!(crate::__private::lockgate_policy)),
+            Ok(FoundCrate::Name(name)) => {
+                let name = format_ident!("{name}");
+                Ok(quote!(::#name::__private::lockgate_policy))
+            }
+            Err(_) => Err(syn::Error::new_spanned(
+                span,
+                format!("failed to resolve the lockgate-policy crate: {policy_error}"),
+            )),
+        },
     }
 }
 
