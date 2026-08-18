@@ -17,7 +17,7 @@ pub use scope::{
 };
 
 /// Derives [`ScopeRepr`] and exhaustive-domain evidence for a closed enum.
-pub use lockgate_macros::ScopeRepr;
+pub use lockgate_macros::{ScopeRepr, capability};
 
 #[doc(hidden)]
 pub mod __private {

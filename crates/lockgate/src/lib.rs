@@ -23,7 +23,7 @@ pub use lifecycle::{
     LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
 pub use lockgate_policy::{
-    CapabilityContract, Permission, Scope, ScopeError, ScopeRepr, ScopedPermission,
+    CapabilityContract, Permission, Scope, ScopeError, ScopeRepr, ScopedPermission, capability,
     check_scope_laws,
 };
 

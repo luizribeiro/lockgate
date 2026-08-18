@@ -12,7 +12,21 @@ use syn::{
 use wasmtime_wit_bindgen::{FunctionConfig, FunctionFilter, FunctionFlags, Opts};
 use wit_parser::{InterfaceId, Resolve, Type, TypeDefKind, TypeId, TypeOwner, WorldItem};
 
+mod capability;
 mod scope_repr;
+
+/// Declares one stable capability vocabulary from an inline Rust module.
+///
+/// The capability ID must match `[a-z0-9]+(-[a-z0-9]+)*`: lowercase ASCII
+/// kebab-case with no leading, trailing, or repeated dash.
+#[proc_macro_attribute]
+pub fn capability(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let capability_id = syn::parse_macro_input!(arguments as LitStr);
+    let item = syn::parse_macro_input!(item as syn::Item);
+    capability::expand(capability_id, item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Derives Lockgate's representational scope trait for a closed enum.
 #[proc_macro_derive(ScopeRepr, attributes(scope))]
