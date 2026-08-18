@@ -39,6 +39,24 @@ fn identity_fields_are_private() {
 "#,
         "cannot construct `Permission` with struct literal syntax due to private fields",
     );
+    check_compile_failure(
+        "scoped-qualified-identity-is-private",
+        r#"
+use lockgate_policy::{Scope, ScopedPermission};
+
+#[derive(Clone, PartialEq, Eq, lockgate_policy::ScopeRepr)]
+enum Project {
+    All,
+}
+
+impl Scope for Project {}
+
+fn identity_fields_are_private() {
+    let _ = ScopedPermission::<Project> {};
+}
+"#,
+        "cannot construct `ScopedPermission<Project>` with struct literal syntax due to private fields",
+    );
 }
 
 fn check_compile_failure(case: &str, source: &str, expected: &str) {

@@ -1,9 +1,10 @@
 //! Typed declarations and qualified permission handles.
 
-use core::fmt;
+use core::{fmt, hash::Hash, marker::PhantomData, str::FromStr};
 
-use crate::atom::{
-    AtomValidationError, QualifiedAtom, validate_capability_id, validate_permission_id,
+use crate::{
+    Scope, ScopeError,
+    atom::{AtomValidationError, QualifiedAtom, validate_capability_id, validate_permission_id},
 };
 
 /// An unqualified declaration consumed by `#[lockgate::capability]`.
@@ -21,6 +22,42 @@ impl fmt::Debug for PermissionDecl {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PermissionDecl")
+            .field("permission", &self.permission)
+            .finish()
+    }
+}
+
+/// An unqualified scoped declaration consumed by `#[lockgate::capability]`.
+///
+/// The scope marker preserves the declared scope vocabulary without granting
+/// the value a capability ID or making it usable as a qualified permission.
+#[doc(hidden)]
+pub struct ScopedPermissionDecl<S: Scope>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    permission: &'static str,
+    marker: PhantomData<fn() -> S>,
+}
+
+impl<S: Scope> Clone for ScopedPermissionDecl<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S: Scope> Copy for ScopedPermissionDecl<S> where <S as FromStr>::Err: Into<ScopeError> {}
+
+impl<S: Scope> fmt::Debug for ScopedPermissionDecl<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ScopedPermissionDecl")
             .field("permission", &self.permission)
             .finish()
     }
@@ -88,6 +125,116 @@ impl fmt::Debug for Permission {
     }
 }
 
+/// A qualified permission handle with one specific scope vocabulary.
+///
+/// Its private identity is always fully qualified, while `S` makes the scope
+/// values accepted by this permission visible to Rust. Different permissions
+/// in one capability may therefore use unrelated scope types.
+///
+/// An unqualified declaration cannot be passed where this type is required:
+///
+/// ```compile_fail,E0308
+/// extern crate alloc;
+///
+/// use lockgate_policy::{Scope, ScopeError, ScopeRepr, ScopedPermission};
+///
+/// #[derive(Clone, PartialEq, Eq)]
+/// struct Project;
+///
+/// impl core::str::FromStr for Project {
+///     type Err = ScopeError;
+///     fn from_str(_: &str) -> Result<Self, Self::Err> { Ok(Self) }
+/// }
+/// impl ScopeRepr for Project {
+///     fn canonical(&self) -> alloc::string::String { "project".into() }
+/// }
+/// impl Scope for Project {}
+///
+/// fn requires_qualified(_: ScopedPermission<Project>) {}
+///
+/// requires_qualified(ScopedPermission::<Project>::new("read"));
+/// ```
+pub struct ScopedPermission<S: Scope>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    atom: QualifiedAtom,
+    marker: PhantomData<fn() -> S>,
+}
+
+impl<S: Scope> ScopedPermission<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    /// Declares a scoped permission ID for `#[lockgate::capability]`.
+    ///
+    /// This returns an inert declaration carrying `S`, not a permission with
+    /// an empty or sentinel capability ID.
+    #[allow(
+        clippy::new_ret_no_self,
+        reason = "the normative API makes new an intentionally inert declaration constructor"
+    )]
+    pub const fn new(permission: &'static str) -> ScopedPermissionDecl<S> {
+        assert_valid_permission_id(permission);
+        ScopedPermissionDecl {
+            permission,
+            marker: PhantomData,
+        }
+    }
+
+    #[allow(
+        dead_code,
+        reason = "erased descriptors consume this identity in a later commit"
+    )]
+    pub(crate) const fn atom(self) -> QualifiedAtom {
+        self.atom
+    }
+}
+
+impl<S: Scope> Clone for ScopedPermission<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S: Scope> Copy for ScopedPermission<S> where <S as FromStr>::Err: Into<ScopeError> {}
+
+impl<S: Scope> PartialEq for ScopedPermission<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.atom == other.atom
+    }
+}
+
+impl<S: Scope> Eq for ScopedPermission<S> where <S as FromStr>::Err: Into<ScopeError> {}
+
+impl<S: Scope> Hash for ScopedPermission<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.atom.hash(state);
+    }
+}
+
+impl<S: Scope> fmt::Debug for ScopedPermission<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ScopedPermission")
+            .field("capability", &self.atom.capability())
+            .field("permission", &self.atom.permission())
+            .finish()
+    }
+}
+
 /// Qualifies an unscoped declaration for generated capability code.
 #[doc(hidden)]
 pub const fn qualify_permission(
@@ -100,6 +247,25 @@ pub const fn qualify_permission(
             Ok(atom) => atom,
             Err(_) => panic!("Lockgate generated an invalid qualified permission atom"),
         },
+    }
+}
+
+/// Qualifies a scoped declaration for generated capability code.
+#[doc(hidden)]
+pub const fn qualify_scoped_permission<S: Scope>(
+    capability: &'static str,
+    declaration: ScopedPermissionDecl<S>,
+) -> ScopedPermission<S>
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    assert_valid_capability_id(capability);
+    ScopedPermission {
+        atom: match QualifiedAtom::new(capability, declaration.permission) {
+            Ok(atom) => atom,
+            Err(_) => panic!("Lockgate generated an invalid qualified scoped permission atom"),
+        },
+        marker: PhantomData,
     }
 }
 
@@ -136,14 +302,72 @@ const fn assert_valid_permission_id(permission: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::String, vec::Vec};
+
+    #[derive(Clone, PartialEq, Eq)]
+    struct PoolScope(String);
+
+    impl FromStr for PoolScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            Ok(Self(value.into()))
+        }
+    }
+
+    impl crate::ScopeRepr for PoolScope {
+        fn canonical(&self) -> String {
+            self.0.clone()
+        }
+    }
+
+    impl Scope for PoolScope {}
+
+    #[derive(Clone, PartialEq, Eq)]
+    struct InstanceScope(String);
+
+    impl FromStr for InstanceScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            Ok(Self(value.into()))
+        }
+    }
+
+    impl crate::ScopeRepr for InstanceScope {
+        fn canonical(&self) -> String {
+            self.0.clone()
+        }
+    }
+
+    impl Scope for InstanceScope {}
 
     const LIST_DECL: PermissionDecl = Permission::new("list-pools");
     const LIST: Permission = qualify_permission("vm", LIST_DECL);
+    const CREATE_DECL: ScopedPermissionDecl<PoolScope> =
+        ScopedPermission::<PoolScope>::new("create");
+    const EXEC_DECL: ScopedPermissionDecl<InstanceScope> =
+        ScopedPermission::<InstanceScope>::new("exec");
+    const CREATE: ScopedPermission<PoolScope> = qualify_scoped_permission("vm", CREATE_DECL);
+    const EXEC: ScopedPermission<InstanceScope> = qualify_scoped_permission("vm", EXEC_DECL);
+
+    #[test]
+    fn one_capability_keeps_each_permissions_scope_type() {
+        fn accepts_pool(_: ScopedPermission<PoolScope>) {}
+        fn accepts_instance(_: ScopedPermission<InstanceScope>) {}
+        fn accepts_unscoped(_: Permission) {}
+
+        accepts_pool(CREATE);
+        accepts_instance(EXEC);
+        accepts_unscoped(LIST);
+    }
 
     #[test]
     fn qualification_retains_the_complete_stable_identity() {
         assert_eq!(LIST.atom().capability(), "vm");
         assert_eq!(LIST.atom().permission(), "list-pools");
+        assert_eq!(CREATE.atom().permission(), "create");
+        assert_eq!(EXEC.atom().permission(), "exec");
     }
 
     #[test]
@@ -179,5 +403,41 @@ mod tests {
         );
         assert!(debug.contains("PermissionDecl"));
         assert!(debug.contains("Permission"));
+    }
+
+    #[test]
+    fn scoped_types_support_derived_debug_without_debug_scopes() {
+        #[allow(
+            dead_code,
+            reason = "the fields exercise every permission type's Debug implementation"
+        )]
+        #[derive(Debug)]
+        struct DebuggablePermissions {
+            unscoped_declaration: PermissionDecl,
+            scoped_declaration: ScopedPermissionDecl<PoolScope>,
+            unscoped: Permission,
+            scoped: ScopedPermission<PoolScope>,
+        }
+
+        let debug = alloc::format!(
+            "{:?}",
+            DebuggablePermissions {
+                unscoped_declaration: LIST_DECL,
+                scoped_declaration: CREATE_DECL,
+                unscoped: LIST,
+                scoped: CREATE,
+            }
+        );
+        assert!(debug.contains("ScopedPermissionDecl"));
+        assert!(debug.contains("ScopedPermission"));
+    }
+
+    #[test]
+    fn qualified_scoped_handles_are_copy_without_requiring_copy_scopes() {
+        fn duplicate<T: Copy>(value: T) -> Vec<T> {
+            alloc::vec![value; 2]
+        }
+
+        assert_eq!(duplicate(CREATE).len(), 2);
     }
 }
