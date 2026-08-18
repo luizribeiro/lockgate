@@ -3,3 +3,7 @@
 //! Shared authority-contract types for Lockgate applications and plugins.
 
 extern crate alloc;
+
+mod scope;
+
+pub use scope::{ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr};
