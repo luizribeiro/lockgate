@@ -1,6 +1,36 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use lockgate::{CapabilityContract, Permission, Scope, ScopeRepr, ScopedPermission};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ScopeRepr)]
+enum FacadeScope {
+    Project,
+}
+
+impl Scope for FacadeScope {}
+
+#[test]
+fn host_facade_exposes_permission_contract_types() {
+    fn accepts_contract<T: CapabilityContract>() {}
+    fn accepts_unscoped(_: Option<Permission>) {}
+    fn accepts_scoped(_: Option<ScopedPermission<FacadeScope>>) {}
+
+    accepts_unscoped(None);
+    accepts_scoped(None);
+    accepts_contract::<FixtureContract>();
+}
+
+struct FixtureContract;
+
+impl CapabilityContract for FixtureContract {
+    const ID: &'static str = "fixture";
+
+    fn permissions() -> &'static [lockgate_policy::__private::ErasedPermission] {
+        &[]
+    }
+}
+
 #[test]
 fn scope_repr_derive_supports_a_renamed_host_facade_only_dependency() {
     let manifest =

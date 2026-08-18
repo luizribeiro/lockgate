@@ -22,7 +22,10 @@ pub use lifecycle::{
     Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, InvocationCtx,
     LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
-pub use lockgate_policy::{Scope, ScopeError, ScopeRepr, check_scope_laws};
+pub use lockgate_policy::{
+    CapabilityContract, Permission, Scope, ScopeError, ScopeRepr, ScopedPermission,
+    check_scope_laws,
+};
 
 /// Generates typed application bindings for a WIT world.
 ///
