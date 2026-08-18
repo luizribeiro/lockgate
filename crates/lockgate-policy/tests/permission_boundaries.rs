@@ -57,6 +57,17 @@ fn identity_fields_are_private() {
 "#,
         "cannot construct `ScopedPermission<Project>` with struct literal syntax due to private fields",
     );
+    check_compile_failure(
+        "erased-descriptor-is-private",
+        r#"
+use lockgate_policy::__private::ErasedPermission;
+
+fn descriptor_fields_are_private() {
+    let _ = ErasedPermission {};
+}
+"#,
+        "cannot construct `lockgate_policy::__private::ErasedPermission` with struct literal syntax due to private fields",
+    );
 }
 
 fn check_compile_failure(case: &str, source: &str, expected: &str) {

@@ -106,10 +106,6 @@ impl Permission {
         PermissionDecl { permission }
     }
 
-    #[allow(
-        dead_code,
-        reason = "erased descriptors consume this identity in a later commit"
-    )]
     pub(crate) const fn atom(self) -> QualifiedAtom {
         self.atom
     }
@@ -182,10 +178,6 @@ where
         }
     }
 
-    #[allow(
-        dead_code,
-        reason = "erased descriptors consume this identity in a later commit"
-    )]
     pub(crate) const fn atom(self) -> QualifiedAtom {
         self.atom
     }
