@@ -7,4 +7,5 @@ edition.workspace = true
 lockgate-macros = { path = "../lockgate-macros" }
 
 [dev-dependencies]
+lockgate-schema = { path = "../lockgate-schema" }
 proptest = "1"

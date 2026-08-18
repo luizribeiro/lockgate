@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+mod atom;
 mod scope;
 
 pub use scope::{
@@ -16,5 +17,6 @@ pub use lockgate_macros::ScopeRepr;
 
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::atom::{AtomValidationError, validate_atom};
     pub use alloc::{string::String, vec};
 }

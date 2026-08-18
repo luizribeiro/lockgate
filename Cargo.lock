@@ -1078,6 +1078,7 @@ name = "lockgate-policy"
 version = "0.1.0"
 dependencies = [
  "lockgate-macros",
+ "lockgate-schema",
  "proptest",
 ]
 
