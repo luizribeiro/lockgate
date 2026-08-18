@@ -88,6 +88,37 @@ pub const fn validate_atom(capability: &str, permission: &str) -> Result<(), Ato
     Ok(())
 }
 
+/// Validates the stricter grammar used for author-written stable IDs.
+///
+/// This is deliberately separate from [`validate_atom`], whose permissive
+/// grammar is frozen for decoding existing wire data. Capability macros and
+/// host registration use this check at their respective trust boundaries.
+#[doc(hidden)]
+pub const fn is_valid_authoring_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let mut index = 0;
+    let mut previous_was_dash = true;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'-' {
+            if previous_was_dash {
+                return false;
+            }
+            previous_was_dash = true;
+        } else if byte.is_ascii_lowercase() || byte.is_ascii_digit() {
+            previous_was_dash = false;
+        } else {
+            return false;
+        }
+        index += 1;
+    }
+    !previous_was_dash
+}
+
 pub(crate) const fn validate_capability_id(capability: &str) -> Result<(), AtomValidationError> {
     if capability.is_empty() {
         Err(AtomValidationError::EmptyCapability)
@@ -192,6 +223,28 @@ mod tests {
                 .to_string(),
             "permission atom must have exactly two segments: capability.permission; neither ID may contain `.`",
         );
+    }
+
+    #[test]
+    fn authoring_ids_require_lowercase_ascii_kebab_case() {
+        for valid in ["vm", "vm2", "virtual-machines", "2fa"] {
+            assert!(is_valid_authoring_id(valid), "rejected valid ID {valid:?}");
+        }
+        for invalid in [
+            "",
+            "VM",
+            "virtual_machines",
+            "-vm",
+            "vm-",
+            "virtual--machines",
+            "é",
+            "vm.exec",
+        ] {
+            assert!(
+                !is_valid_authoring_id(invalid),
+                "accepted invalid ID {invalid:?}"
+            );
+        }
     }
 
     fn policy_outcome(result: Result<(), AtomValidationError>) -> ValidationOutcome {

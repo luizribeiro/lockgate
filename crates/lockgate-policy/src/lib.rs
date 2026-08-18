@@ -21,7 +21,7 @@ pub use lockgate_macros::ScopeRepr;
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::atom::{AtomValidationError, validate_atom};
+    pub use crate::atom::{AtomValidationError, is_valid_authoring_id, validate_atom};
     pub use crate::capability::{
         ErasedPermission, ErasedScopeTypeError, ErasedScopeValue, erase_permission,
         erase_scoped_permission,
