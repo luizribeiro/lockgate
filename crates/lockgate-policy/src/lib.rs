@@ -6,4 +6,4 @@ extern crate alloc;
 
 mod scope;
 
-pub use scope::{ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr};
+pub use scope::{ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr, check_scope_laws};

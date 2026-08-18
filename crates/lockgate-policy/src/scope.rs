@@ -7,7 +7,7 @@
 //! exclusion, not a fallback for a resource that belongs to no narrower
 //! category.
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{boxed::Box, format, string::String, vec::Vec};
 use core::{error::Error, fmt, str::FromStr};
 
 /// An invalid scope representation or scope-algebra implementation.
@@ -26,6 +26,12 @@ impl ScopeError {
         let value = value.into();
         Self {
             message: alloc::format!("unknown scope `{value}`").into(),
+        }
+    }
+
+    fn law_violation(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into().into(),
         }
     }
 }
@@ -154,6 +160,337 @@ where
     }
 }
 
+/// Checks the scope laws over representative values from an open scope type.
+///
+/// The supplied values must be unique. Every law is checked over their full
+/// Cartesian product (and, for transitivity and associativity, product of
+/// triples), so callers should keep sample sets intentionally small. The check
+/// proves the laws only for the supplied values; open types remain trusted over
+/// values outside the sample.
+///
+/// Closed types expose exhaustive-domain evidence through
+/// [`ScopeRepr::exhaustive_domain`] and are checked by Lockgate when registered.
+/// Applications can use this helper in their own test suites for open types:
+///
+/// ```
+/// extern crate alloc;
+///
+/// use alloc::string::String;
+/// use core::str::FromStr;
+/// use lockgate_policy::{Scope, ScopeError, ScopeRepr, check_scope_laws};
+///
+/// #[derive(Clone, PartialEq, Eq)]
+/// struct Tenant(String);
+///
+/// impl FromStr for Tenant {
+///     type Err = ScopeError;
+///
+///     fn from_str(value: &str) -> Result<Self, Self::Err> {
+///         if value.is_empty() {
+///             Err(ScopeError::unknown(value))
+///         } else {
+///             Ok(Self(value.into()))
+///         }
+///     }
+/// }
+///
+/// impl ScopeRepr for Tenant {
+///     fn canonical(&self) -> String { self.0.clone() }
+/// }
+/// impl Scope for Tenant {}
+///
+/// check_scope_laws::<Tenant>([
+///     Tenant("engineering".into()),
+///     Tenant("support".into()),
+/// ])?;
+/// # Ok::<(), ScopeError>(())
+/// ```
+pub fn check_scope_laws<S>(samples: impl IntoIterator<Item = S>) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    check_scope_laws_inner(&samples.into_iter().collect::<Vec<_>>())
+}
+
+fn check_scope_laws_inner<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    check_sample_uniqueness(samples)?;
+    check_canonical_round_trips(samples)?;
+    check_reflexivity_and_idempotence(samples)?;
+    check_symmetry(samples)?;
+    check_contains_agreement(samples)?;
+    check_antisymmetry(samples)?;
+    check_transitivity(samples)?;
+    check_unique_meets(samples)?;
+    check_associativity(samples)
+}
+
+fn check_sample_uniqueness<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for (left_index, left) in samples.iter().enumerate() {
+        for (right_index, right) in samples.iter().enumerate().skip(left_index + 1) {
+            if left == right {
+                return Err(ScopeError::law_violation(format!(
+                    "enumeration uniqueness law violated: samples at indices {left_index} and {right_index} are both {}",
+                    name(left)
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_canonical_round_trips<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for sample in samples {
+        let canonical = sample.canonical();
+        let parsed = canonical.parse::<S>().map_err(|error| {
+            let error: ScopeError = error.into();
+            ScopeError::law_violation(format!(
+                "canonical round-trip law violated for {}: canonical value `{canonical}` failed to parse: {error}",
+                name(sample)
+            ))
+        })?;
+        if parsed != *sample {
+            return Err(ScopeError::law_violation(format!(
+                "canonical round-trip law violated for {}: parsing `{canonical}` produced {}",
+                name(sample),
+                name(&parsed)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn check_reflexivity_and_idempotence<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for sample in samples {
+        if !sample.contains(sample) {
+            return Err(ScopeError::law_violation(format!(
+                "containment reflexivity law violated: `contains({0}, {0})` is false",
+                name(sample)
+            )));
+        }
+
+        let intersection = sample.intersect(sample);
+        if intersection.as_ref() != Some(sample) {
+            return Err(ScopeError::law_violation(format!(
+                "intersection idempotence law violated: `intersect({0}, {0})` returned {1}, expected `Some({0})`",
+                name(sample),
+                intersection_name(intersection.as_ref())
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn check_symmetry<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for left in samples {
+        for right in samples {
+            let forward = left.intersect(right);
+            let reverse = right.intersect(left);
+            if forward != reverse {
+                return Err(ScopeError::law_violation(format!(
+                    "intersection symmetry law violated: `intersect({}, {})` returned {} but `intersect({}, {})` returned {}",
+                    name(left),
+                    name(right),
+                    intersection_name(forward.as_ref()),
+                    name(right),
+                    name(left),
+                    intersection_name(reverse.as_ref())
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_contains_agreement<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for outer in samples {
+        for inner in samples {
+            let contains = outer.contains(inner);
+            let intersection = outer.intersect(inner);
+            let agrees = intersection.as_ref() == Some(inner);
+            if contains != agrees {
+                return Err(ScopeError::law_violation(format!(
+                    "containment/intersection agreement law violated: `contains({}, {})` is {contains} but `intersect({}, {})` returned {} — these must agree",
+                    name(outer),
+                    name(inner),
+                    name(outer),
+                    name(inner),
+                    intersection_name(intersection.as_ref())
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_antisymmetry<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for left in samples {
+        for right in samples {
+            if left != right && left.contains(right) && right.contains(left) {
+                return Err(ScopeError::law_violation(format!(
+                    "containment antisymmetry law violated: {} and {} contain each other but are distinct values",
+                    name(left),
+                    name(right)
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_transitivity<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for outer in samples {
+        for middle in samples {
+            for inner in samples {
+                if outer.contains(middle) && middle.contains(inner) && !outer.contains(inner) {
+                    return Err(ScopeError::law_violation(format!(
+                        "containment transitivity law violated: {} contains {} and {} contains {}, but {} does not contain {}",
+                        name(outer),
+                        name(middle),
+                        name(middle),
+                        name(inner),
+                        name(outer),
+                        name(inner)
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_unique_meets<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for left in samples {
+        for right in samples {
+            let intersection = left.intersect(right);
+            match intersection.as_ref() {
+                Some(meet) => {
+                    if !left.contains(meet) || !right.contains(meet) {
+                        return Err(ScopeError::law_violation(format!(
+                            "greatest-common-subscope law violated: `intersect({}, {})` returned {}, which is not a common subscope",
+                            name(left),
+                            name(right),
+                            intersection_name(Some(meet))
+                        )));
+                    }
+
+                    for candidate in samples {
+                        if left.contains(candidate)
+                            && right.contains(candidate)
+                            && !meet.contains(candidate)
+                        {
+                            return Err(ScopeError::law_violation(format!(
+                                "unique greatest-common-subscope law violated: `intersect({}, {})` returned {}, but common subscope {} is not contained by it",
+                                name(left),
+                                name(right),
+                                intersection_name(Some(meet)),
+                                name(candidate)
+                            )));
+                        }
+                    }
+                }
+                None => {
+                    if let Some(candidate) = samples
+                        .iter()
+                        .find(|candidate| left.contains(candidate) && right.contains(candidate))
+                    {
+                        return Err(ScopeError::law_violation(format!(
+                            "unique greatest-common-subscope law violated: `intersect({}, {})` returned `None`, but {} is a common subscope — `None` must mean disjoint",
+                            name(left),
+                            name(right),
+                            name(candidate)
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_associativity<S>(samples: &[S]) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    for first in samples {
+        for second in samples {
+            for third in samples {
+                let left_pair = first.intersect(second);
+                let left = left_pair.as_ref().and_then(|meet| meet.intersect(third));
+                let right_pair = second.intersect(third);
+                let right = right_pair.as_ref().and_then(|meet| first.intersect(meet));
+                if left != right {
+                    return Err(ScopeError::law_violation(format!(
+                        "intersection associativity law violated for {}, {}, {}: `(first ∩ second) ∩ third` returned {} but `first ∩ (second ∩ third)` returned {}",
+                        name(first),
+                        name(second),
+                        name(third),
+                        intersection_name(left.as_ref()),
+                        intersection_name(right.as_ref())
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn name<S>(scope: &S) -> String
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    scope.canonical()
+}
+
+fn intersection_name<S>(scope: Option<&S>) -> String
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    match scope {
+        Some(scope) => format!("`Some({})`", name(scope)),
+        None => String::from("`None`"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{
@@ -163,7 +500,7 @@ mod tests {
     };
     use core::str::FromStr;
 
-    use super::{Scope, ScopeError, ScopeRepr};
+    use super::{Scope, ScopeError, ScopeRepr, check_scope_laws};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum ExactScope {
@@ -194,6 +531,127 @@ mod tests {
     }
 
     impl Scope for ExactScope {}
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum BrokenAgreementScope {
+        All,
+        Current,
+    }
+
+    impl FromStr for BrokenAgreementScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            match value {
+                "all" => Ok(Self::All),
+                "current" => Ok(Self::Current),
+                value => Err(ScopeError::unknown(value)),
+            }
+        }
+    }
+
+    impl ScopeRepr for BrokenAgreementScope {
+        fn canonical(&self) -> String {
+            match self {
+                Self::All => "all",
+                Self::Current => "current",
+            }
+            .into()
+        }
+    }
+
+    impl Scope for BrokenAgreementScope {
+        fn contains(&self, inner: &Self) -> bool {
+            self == inner || matches!(self, Self::All)
+        }
+
+        fn intersect(&self, other: &Self) -> Option<Self> {
+            (self == other).then(|| self.clone())
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum DiamondScope {
+        All,
+        Left,
+        Right,
+        Bottom,
+    }
+
+    impl FromStr for DiamondScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            match value {
+                "all" => Ok(Self::All),
+                "left" => Ok(Self::Left),
+                "right" => Ok(Self::Right),
+                "bottom" => Ok(Self::Bottom),
+                value => Err(ScopeError::unknown(value)),
+            }
+        }
+    }
+
+    impl ScopeRepr for DiamondScope {
+        fn canonical(&self) -> String {
+            match self {
+                Self::All => "all",
+                Self::Left => "left",
+                Self::Right => "right",
+                Self::Bottom => "bottom",
+            }
+            .into()
+        }
+    }
+
+    impl Scope for DiamondScope {
+        fn contains(&self, inner: &Self) -> bool {
+            self == inner
+                || matches!(self, Self::All)
+                || matches!((self, inner), (Self::Left | Self::Right, Self::Bottom))
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum TransitivityScope {
+        Outer,
+        Middle,
+        Inner,
+    }
+
+    impl FromStr for TransitivityScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            match value {
+                "outer" => Ok(Self::Outer),
+                "middle" => Ok(Self::Middle),
+                "inner" => Ok(Self::Inner),
+                value => Err(ScopeError::unknown(value)),
+            }
+        }
+    }
+
+    impl ScopeRepr for TransitivityScope {
+        fn canonical(&self) -> String {
+            match self {
+                Self::Outer => "outer",
+                Self::Middle => "middle",
+                Self::Inner => "inner",
+            }
+            .into()
+        }
+    }
+
+    impl Scope for TransitivityScope {
+        fn contains(&self, inner: &Self) -> bool {
+            self == inner
+                || matches!(
+                    (self, inner),
+                    (Self::Outer, Self::Middle) | (Self::Middle, Self::Inner)
+                )
+        }
+    }
 
     #[test]
     fn exact_scopes_are_equal_or_disjoint_by_default() {
@@ -226,6 +684,59 @@ mod tests {
         assert_eq!(
             domain.into_iter().collect::<Vec<_>>(),
             vec![ExactScope::Current, ExactScope::Created]
+        );
+    }
+
+    #[test]
+    fn exact_scope_samples_satisfy_the_full_law_suite() {
+        check_scope_laws([ExactScope::Current, ExactScope::Created]).unwrap();
+    }
+
+    #[test]
+    fn agreement_errors_explain_both_conflicting_answers() {
+        let error = check_scope_laws([BrokenAgreementScope::All, BrokenAgreementScope::Current])
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "containment/intersection agreement law violated: `contains(all, current)` is true but `intersect(all, current)` returned `None` — these must agree"
+        );
+    }
+
+    #[test]
+    fn unique_meet_errors_name_the_hidden_common_subscope() {
+        let error = check_scope_laws([
+            DiamondScope::All,
+            DiamondScope::Left,
+            DiamondScope::Right,
+            DiamondScope::Bottom,
+        ])
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("unique greatest-common-subscope law violated"));
+        assert!(message.contains("`intersect(left, right)` returned `None`"));
+        assert!(message.contains("bottom is a common subscope"));
+    }
+
+    #[test]
+    fn transitivity_errors_name_the_entire_broken_chain() {
+        let error = check_scope_laws([
+            TransitivityScope::Outer,
+            TransitivityScope::Middle,
+            TransitivityScope::Inner,
+        ])
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "containment transitivity law violated: outer contains middle and middle contains inner, but outer does not contain inner"
+        );
+    }
+
+    #[test]
+    fn duplicate_sample_errors_name_both_indices_and_the_value() {
+        let error = check_scope_laws([ExactScope::Current, ExactScope::Current]).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "enumeration uniqueness law violated: samples at indices 0 and 1 are both current"
         );
     }
 }
