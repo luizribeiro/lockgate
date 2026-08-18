@@ -10,6 +10,8 @@
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 use core::{error::Error, fmt, str::FromStr};
 
+const MAX_EXHAUSTIVE_SCOPE_VALUES: usize = 256;
+
 /// An invalid scope representation or scope-algebra implementation.
 ///
 /// Parsing implementations can construct an unknown-value error with
@@ -60,6 +62,10 @@ impl<S> ExhaustiveScopeDomain<S> {
     #[doc(hidden)]
     pub fn __from_derive(values: Vec<S>) -> Self {
         Self { values }
+    }
+
+    fn values(&self) -> &[S] {
+        &self.values
     }
 }
 
@@ -211,6 +217,54 @@ where
     <S as FromStr>::Err: Into<ScopeError>,
 {
     check_scope_laws_inner(&samples.into_iter().collect::<Vec<_>>())
+}
+
+/// Checks every value of a closed scope domain before registration.
+///
+/// Open scope domains have no exhaustive evidence and return `Ok(())`; their
+/// applications remain responsible for property testing representative values.
+#[doc(hidden)]
+pub fn check_scope_laws_for_registration<S>() -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    let Some(domain) = S::exhaustive_domain() else {
+        return Ok(());
+    };
+    check_exhaustive_domain(&domain)
+}
+
+fn check_exhaustive_domain<S>(domain: &ExhaustiveScopeDomain<S>) -> Result<(), ScopeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    let scopes = domain.values();
+    if scopes.len() > MAX_EXHAUSTIVE_SCOPE_VALUES {
+        return Err(ScopeError::law_violation(format!(
+            "exhaustive scope domain has {} values, exceeding the maximum of {} checked before quadratic and cubic scope-law checks",
+            scopes.len(),
+            MAX_EXHAUSTIVE_SCOPE_VALUES
+        )));
+    }
+    check_scope_laws_inner(scopes)?;
+    for left in scopes {
+        for right in scopes {
+            let Some(meet) = left.intersect(right) else {
+                continue;
+            };
+            if !scopes.contains(&meet) {
+                return Err(ScopeError::law_violation(format!(
+                    "intersection closure law violated: `intersect({}, {})` returned {}, which is absent from the exhaustive scope domain",
+                    name(left),
+                    name(right),
+                    intersection_name(Some(&meet))
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_scope_laws_inner<S>(samples: &[S]) -> Result<(), ScopeError>
@@ -500,7 +554,10 @@ mod tests {
     };
     use core::str::FromStr;
 
-    use super::{Scope, ScopeError, ScopeRepr, check_scope_laws};
+    use super::{
+        ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr, check_scope_laws,
+        check_scope_laws_for_registration,
+    };
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum ExactScope {
@@ -557,6 +614,13 @@ mod tests {
                 Self::Current => "current",
             }
             .into()
+        }
+
+        fn exhaustive_domain() -> Option<ExhaustiveScopeDomain<Self>> {
+            Some(ExhaustiveScopeDomain::__from_derive(vec![
+                Self::All,
+                Self::Current,
+            ]))
         }
     }
 
@@ -653,6 +717,114 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct OversizedScope(u16);
+
+    impl FromStr for OversizedScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            value
+                .parse()
+                .map(Self)
+                .map_err(|_| ScopeError::unknown(value))
+        }
+    }
+
+    impl ScopeRepr for OversizedScope {
+        fn canonical(&self) -> String {
+            panic!("the count guard must run before scope-law checks")
+        }
+
+        fn exhaustive_domain() -> Option<ExhaustiveScopeDomain<Self>> {
+            Some(ExhaustiveScopeDomain::__from_derive(
+                (0..=256).map(Self).collect(),
+            ))
+        }
+    }
+
+    impl Scope for OversizedScope {}
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct MaximumSizeScope(u16);
+
+    impl FromStr for MaximumSizeScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            value
+                .parse()
+                .map(Self)
+                .map_err(|_| ScopeError::unknown(value))
+        }
+    }
+
+    impl ScopeRepr for MaximumSizeScope {
+        fn canonical(&self) -> String {
+            self.0.to_string()
+        }
+
+        fn exhaustive_domain() -> Option<ExhaustiveScopeDomain<Self>> {
+            Some(ExhaustiveScopeDomain::__from_derive(
+                (0..256).map(Self).collect(),
+            ))
+        }
+    }
+
+    impl Scope for MaximumSizeScope {}
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum EscapingMeetScope {
+        Left,
+        Right,
+        Bottom,
+    }
+
+    impl FromStr for EscapingMeetScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            match value {
+                "left" => Ok(Self::Left),
+                "right" => Ok(Self::Right),
+                "bottom" => Ok(Self::Bottom),
+                value => Err(ScopeError::unknown(value)),
+            }
+        }
+    }
+
+    impl ScopeRepr for EscapingMeetScope {
+        fn canonical(&self) -> String {
+            match self {
+                Self::Left => "left",
+                Self::Right => "right",
+                Self::Bottom => "bottom",
+            }
+            .into()
+        }
+
+        fn exhaustive_domain() -> Option<ExhaustiveScopeDomain<Self>> {
+            Some(ExhaustiveScopeDomain::__from_derive(vec![
+                Self::Left,
+                Self::Right,
+            ]))
+        }
+    }
+
+    impl Scope for EscapingMeetScope {
+        fn contains(&self, inner: &Self) -> bool {
+            self == inner || matches!((self, inner), (Self::Left | Self::Right, Self::Bottom))
+        }
+
+        fn intersect(&self, other: &Self) -> Option<Self> {
+            if self == other {
+                Some(self.clone())
+            } else {
+                Some(Self::Bottom)
+            }
+        }
+    }
+
     #[test]
     fn exact_scopes_are_equal_or_disjoint_by_default() {
         assert!(ExactScope::Current.contains(&ExactScope::Current));
@@ -703,6 +875,15 @@ mod tests {
     }
 
     #[test]
+    fn registration_runs_the_full_law_suite_for_exhaustive_domains() {
+        let error = check_scope_laws_for_registration::<BrokenAgreementScope>().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "containment/intersection agreement law violated: `contains(all, current)` is true but `intersect(all, current)` returned `None` — these must agree"
+        );
+    }
+
+    #[test]
     fn unique_meet_errors_name_the_hidden_common_subscope() {
         let error = check_scope_laws([
             DiamondScope::All,
@@ -737,6 +918,31 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "enumeration uniqueness law violated: samples at indices 0 and 1 are both current"
+        );
+    }
+
+    #[test]
+    fn exhaustive_domain_size_is_bounded_before_law_checks() {
+        let error = check_scope_laws_for_registration::<OversizedScope>().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "exhaustive scope domain has 257 values, exceeding the maximum of 256 checked before quadratic and cubic scope-law checks"
+        );
+    }
+
+    #[test]
+    fn exhaustive_domain_at_the_size_limit_passes_registration() {
+        check_scope_laws_for_registration::<MaximumSizeScope>().unwrap();
+    }
+
+    #[test]
+    fn exhaustive_domains_must_include_every_pairwise_meet() {
+        check_scope_laws([EscapingMeetScope::Left, EscapingMeetScope::Right]).unwrap();
+
+        let error = check_scope_laws_for_registration::<EscapingMeetScope>().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "intersection closure law violated: `intersect(left, right)` returned `Some(bottom)`, which is absent from the exhaustive scope domain"
         );
     }
 }
