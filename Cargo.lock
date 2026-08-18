@@ -1072,6 +1072,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-policy"
+version = "0.1.0"
+
+[[package]]
 name = "lockgate-schema"
 version = "0.1.0"
 dependencies = [

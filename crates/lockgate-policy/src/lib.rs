@@ -1,0 +1,5 @@
+#![no_std]
+
+//! Shared authority-contract types for Lockgate applications and plugins.
+
+extern crate alloc;
