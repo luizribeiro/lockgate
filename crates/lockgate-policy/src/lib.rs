@@ -5,8 +5,10 @@
 extern crate alloc;
 
 mod atom;
+mod permission;
 mod scope;
 
+pub use permission::Permission;
 pub use scope::{
     ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr, check_scope_laws,
     check_scope_laws_for_registration,
@@ -18,5 +20,6 @@ pub use lockgate_macros::ScopeRepr;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::atom::{AtomValidationError, validate_atom};
+    pub use crate::permission::{PermissionDecl, qualify_permission};
     pub use alloc::{string::String, vec};
 }

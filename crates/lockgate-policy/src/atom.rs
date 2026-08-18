@@ -8,19 +8,11 @@ use core::fmt;
 
 /// A validated `<capability-id>.<permission-id>` identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[allow(
-    dead_code,
-    reason = "the permission handles introduced in the next commit consume this identity"
-)]
 pub(crate) struct QualifiedAtom {
     capability: &'static str,
     permission: &'static str,
 }
 
-#[allow(
-    dead_code,
-    reason = "the permission handles introduced in the next commit consume these methods"
-)]
 impl QualifiedAtom {
     /// Validates and combines the two explicit stable identity segments.
     pub(crate) const fn new(
@@ -94,6 +86,26 @@ pub const fn validate_atom(capability: &str, permission: &str) -> Result<(), Ato
         return Err(AtomValidationError::DotInSegment);
     }
     Ok(())
+}
+
+pub(crate) const fn validate_capability_id(capability: &str) -> Result<(), AtomValidationError> {
+    if capability.is_empty() {
+        Err(AtomValidationError::EmptyCapability)
+    } else if contains_dot(capability) {
+        Err(AtomValidationError::DotInSegment)
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) const fn validate_permission_id(permission: &str) -> Result<(), AtomValidationError> {
+    if permission.is_empty() {
+        Err(AtomValidationError::EmptyPermission)
+    } else if contains_dot(permission) {
+        Err(AtomValidationError::DotInSegment)
+    } else {
+        Ok(())
+    }
 }
 
 const fn contains_dot(value: &str) -> bool {
