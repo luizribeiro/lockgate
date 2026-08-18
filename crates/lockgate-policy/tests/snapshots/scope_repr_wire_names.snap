@@ -1,0 +1,5 @@
+ReadOnly = read-only
+HTTPServer = http-server
+XMLHttpRequest = xml-http-request
+UserID = user-id
+RenamedInRust = stable-name

@@ -1,0 +1,33 @@
+impl ::core::str::FromStr for SessionScope {
+    type Err = ::lockgate_policy::ScopeError;
+    fn from_str(value: &str) -> ::core::result::Result<Self, Self::Err> {
+        match value {
+            "all" => ::core::result::Result::Ok(Self::All),
+            "caller-current" => ::core::result::Result::Ok(Self::Current),
+            value => {
+                ::core::result::Result::Err(
+                    ::lockgate_policy::ScopeError::unknown(value),
+                )
+            }
+        }
+    }
+}
+impl ::lockgate_policy::ScopeRepr for SessionScope {
+    fn canonical(&self) -> ::lockgate_policy::__private::String {
+        ::lockgate_policy::__private::String::from(
+            match self {
+                Self::All => "all",
+                Self::Current => "caller-current",
+            },
+        )
+    }
+    fn exhaustive_domain() -> ::core::option::Option<
+        ::lockgate_policy::ExhaustiveScopeDomain<Self>,
+    > {
+        ::core::option::Option::Some(
+            ::lockgate_policy::ExhaustiveScopeDomain::__from_derive(
+                ::lockgate_policy::__private::vec![Self::All, Self::Current],
+            ),
+        )
+    }
+}

@@ -14,3 +14,6 @@ quote.workspace = true
 syn.workspace = true
 wasmtime-wit-bindgen.workspace = true
 wit-parser.workspace = true
+
+[dev-dependencies]
+prettyplease = "0.2"

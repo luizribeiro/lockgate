@@ -3,3 +3,5 @@ name = "lockgate-policy"
 version.workspace = true
 edition.workspace = true
 
+[dependencies]
+lockgate-macros = { path = "../lockgate-macros" }

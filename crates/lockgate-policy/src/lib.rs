@@ -10,3 +10,11 @@ pub use scope::{
     ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr, check_scope_laws,
     check_scope_laws_for_registration,
 };
+
+/// Derives [`ScopeRepr`] and exhaustive-domain evidence for a closed enum.
+pub use lockgate_macros::ScopeRepr;
+
+#[doc(hidden)]
+pub mod __private {
+    pub use alloc::{string::String, vec};
+}

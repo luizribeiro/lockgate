@@ -12,6 +12,17 @@ use syn::{
 use wasmtime_wit_bindgen::{FunctionConfig, FunctionFilter, FunctionFlags, Opts};
 use wit_parser::{InterfaceId, Resolve, Type, TypeDefKind, TypeId, TypeOwner, WorldItem};
 
+mod scope_repr;
+
+/// Derives Lockgate's representational scope trait for a closed enum.
+#[proc_macro_derive(ScopeRepr, attributes(scope))]
+pub fn derive_scope_repr(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    scope_repr::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 /// Generates typed application bindings for a WIT world.
 ///
 /// The macro takes `path` and `world` options. Worlds with imported interfaces
@@ -1614,6 +1625,20 @@ fn lockgate_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2> {
         Err(error) => Err(syn::Error::new_spanned(
             span,
             format!("failed to resolve the lockgate crate: {error}"),
+        )),
+    }
+}
+
+fn lockgate_policy_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2> {
+    match crate_name("lockgate-policy") {
+        Ok(FoundCrate::Itself) => Ok(quote!(crate)),
+        Ok(FoundCrate::Name(name)) => {
+            let name = format_ident!("{name}");
+            Ok(quote!(::#name))
+        }
+        Err(error) => Err(syn::Error::new_spanned(
+            span,
+            format!("failed to resolve the lockgate-policy crate: {error}"),
         )),
     }
 }

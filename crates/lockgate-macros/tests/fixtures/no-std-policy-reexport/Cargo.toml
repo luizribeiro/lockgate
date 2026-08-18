@@ -1,0 +1,9 @@
+[package]
+name = "lockgate-no-std-policy-reexport-fixture"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+policy = { package = "lockgate-policy", path = "../../../../lockgate-policy" }
