@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use lockgate_schema::{AtomKey, GrantValue, NeedsManifest, PluginMetadata};
+use lockgate_schema::{AtomKey, NeedKind, NeedsManifest, PluginMetadata};
 
 use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
@@ -386,12 +386,26 @@ impl<S: CallContext> HostBuilder<S> {
         let imported_interfaces =
             decode_imported_interfaces(bytes).map_err(AdmissionError::from_inspection)?;
         let wired_interfaces = self.select_host_imports(&imported_interfaces, &needs)?;
+        let has_http_egress = validate_http_egress_grant(
+            metadata.id(),
+            &imported_interfaces,
+            http_egress_origin_count(&needs),
+        )?;
         if let Some(field) = unavailable_field {
             return Err(AdmissionError::ConfigFeatureUnavailable { field });
         }
         let component = self
             .engine
             .compile(bytes)
+            .map_err(AdmissionError::from_load)?;
+        let mut artifact = self
+            .engine
+            .load_hosted_component::<S>(
+                &component,
+                std::sync::Arc::clone(&self.imports),
+                &wired_interfaces,
+                has_http_egress,
+            )
             .map_err(AdmissionError::from_load)?;
         let schema = self
             .engine
@@ -402,20 +416,6 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(AdmissionError::from_settings_validation)?;
         let resolved = resolve_needs(&needs, settings.value(), &config.roots, &self.registry)
             .map_err(AdmissionError::ScopeResolution)?;
-        let has_http_egress = validate_http_egress_grant(
-            metadata.id(),
-            &imported_interfaces,
-            http_egress_origins(&resolved),
-        )?;
-        let mut artifact = self
-            .engine
-            .load_hosted_component::<S>(
-                &component,
-                std::sync::Arc::clone(&self.imports),
-                &wired_interfaces,
-                has_http_egress,
-            )
-            .map_err(AdmissionError::from_load)?;
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
         artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
@@ -572,28 +572,30 @@ impl<S: CallContext> HostBuilder<S> {
     }
 }
 
-fn http_egress_origins(resolved: &ResolvedNeeds) -> Option<&[String]> {
+fn http_egress_origin_count(needs: &NeedsManifest) -> Option<usize> {
     let (capability, permission) =
         lockgate_policy::__private::scoped_permission_ids(lockgate_policy::http::EGRESS);
     let atom = AtomKey::new(capability, permission)
         .expect("typed permissions always contain a valid wire atom");
-    [&resolved.required, &resolved.optional]
-        .into_iter()
-        .find_map(|grants| match grants.get(&atom) {
-            Some(GrantValue::Scopes(origins)) => Some(origins.as_slice()),
-            Some(GrantValue::Flag) | None => None,
+    needs
+        .required()
+        .iter()
+        .chain(needs.optional())
+        .find_map(|entry| match entry.kind() {
+            NeedKind::Scoped(origins) if entry.atom() == &atom => Some(origins.len()),
+            NeedKind::Flag | NeedKind::Scoped(_) => None,
         })
 }
 
 fn validate_http_egress_grant(
     plugin: &str,
     imported_interfaces: &[String],
-    origins: Option<&[String]>,
+    origin_count: Option<usize>,
 ) -> Result<bool, AdmissionError> {
-    let Some(origins) = origins else {
+    let Some(origin_count) = origin_count else {
         return Ok(false);
     };
-    if origins.is_empty() {
+    if origin_count == 0 {
         return Err(AdmissionError::EmptyHttpEgressOrigins {
             plugin: plugin.to_owned(),
         });
@@ -1262,7 +1264,7 @@ mod grant_tests {
             validate_http_egress_grant(
                 "empty-http",
                 &["wasi:http/client@0.3.0".to_owned()],
-                Some(&[]),
+                Some(0),
             ),
             Err(AdmissionError::EmptyHttpEgressOrigins { ref plugin })
                 if plugin == "empty-http"
