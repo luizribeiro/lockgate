@@ -1,9 +1,11 @@
 //! Application-owned resource classification and target resolution.
 
-use std::{future::Future, str::FromStr};
+use std::{any::TypeId, future::Future, str::FromStr};
 
-use lockgate_policy::{Scope, ScopeError};
+use lockgate_policy::{Scope, ScopeError, ScopedPermission};
+use lockgate_schema::AtomKey;
 
+use super::{CapabilityRegistry, EffectiveGrants};
 use crate::PluginHandle;
 
 /// The admitted plugin identity making one host invocation.
@@ -82,50 +84,301 @@ where
     ) -> impl Future<Output = Result<Self::Resource, Self::Error>> + Send + 'a;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Clone, Debug, PartialEq, Eq, lockgate_policy::ScopeRepr)]
-    enum TestScope {
-        Member,
+/// Applies the single scoped-authorization relation to concrete memberships.
+///
+/// Access is allowed exactly when some effective grant contains some resource
+/// membership witness. Canonical strings frozen at admission are parsed again
+/// through the registered permission descriptor, then its concrete `S`
+/// implementation receives the containment call. Missing grants, malformed
+/// invariant data, a mismatched registered scope type, and empty memberships
+/// all fail closed.
+#[allow(
+    dead_code,
+    reason = "guard expansion consumes this scoped decision in the next policy chunk"
+)]
+pub(crate) fn scoped_access_allowed<S>(
+    registry: &CapabilityRegistry,
+    grants: &EffectiveGrants,
+    permission: ScopedPermission<S>,
+    memberships: &[S],
+) -> bool
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    if memberships.is_empty() {
+        return false;
     }
 
-    impl Scope for TestScope {}
+    let (capability, operation) = lockgate_policy::__private::scoped_permission_ids(permission);
+    let atom = AtomKey::new(capability, operation)
+        .expect("typed permissions always contain a valid wire atom");
+    let Some(values) = grants.scoped_values(&atom) else {
+        return false;
+    };
+    let Some(descriptor) = registry.permission(&atom) else {
+        return false;
+    };
+    if descriptor.scope_type_id() != Some(TypeId::of::<S>()) {
+        return false;
+    }
 
-    struct TestResource;
+    values.iter().any(|value| {
+        let Some(Ok(grant)) = descriptor.parse_scope(value) else {
+            return false;
+        };
+        memberships.iter().any(|membership| {
+            descriptor
+                .contains_scope(&grant, membership)
+                .and_then(Result::ok)
+                .unwrap_or(false)
+        })
+    })
+}
 
-    impl ScopedResource<TestScope> for TestResource {
-        fn scopes_for(&self, _subject: &PluginSubject<'_>) -> Vec<TestScope> {
-            vec![TestScope::Member]
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, sync::Mutex};
+
+    use lockgate_policy::ScopeRepr;
+    use lockgate_schema::GrantSet;
+
+    use super::*;
+
+    mod vm_contract {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../lockgate-policy/tests/fixtures/vm_contract.rs"
+        ));
+    }
+
+    use crate::policy::ResolvedNeeds;
+    use vm_contract::permissions::vm::{self, InstanceScope};
+
+    #[derive(Clone, Debug, PartialEq, Eq, lockgate_policy::ScopeRepr)]
+    enum ConflictingScope {
+        Other,
+    }
+
+    impl Scope for ConflictingScope {}
+
+    #[lockgate_policy::capability("vm")]
+    mod conflicting_vm {
+        use super::ConflictingScope;
+        use lockgate_policy::ScopedPermission;
+
+        pub const EXEC: ScopedPermission<ConflictingScope> = ScopedPermission::new("exec");
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct MockVm {
+        pool: String,
+        created_by: Option<String>,
+    }
+
+    impl ScopedResource<InstanceScope> for MockVm {
+        fn scopes_for(&self, subject: &PluginSubject<'_>) -> Vec<InstanceScope> {
+            let mut scopes = vec![InstanceScope::Pool(self.pool.clone())];
+            if self.created_by.as_deref() == Some(subject.plugin_id()) {
+                scopes.push(InstanceScope::CreatedByCaller);
+            }
+            scopes
         }
     }
 
-    struct TestResolver;
+    #[derive(Debug, PartialEq, Eq)]
+    enum VmError {
+        NotFound(String),
+    }
 
-    impl ResolveScopedResource<TestScope, str> for TestResolver {
-        type Resource = TestResource;
-        type Error = ();
+    struct MockHost {
+        vms: Mutex<BTreeMap<String, MockVm>>,
+    }
+
+    impl ResolveScopedResource<InstanceScope, String> for MockHost {
+        type Resource = MockVm;
+        type Error = VmError;
 
         async fn resolve_scoped_resource<'a>(
             &'a self,
             _subject: &'a PluginSubject<'_>,
-            _argument: &'a str,
+            id: &'a String,
         ) -> Result<Self::Resource, Self::Error> {
-            Ok(TestResource)
+            self.vms
+                .lock()
+                .unwrap()
+                .get(id)
+                .cloned()
+                .ok_or_else(|| VmError::NotFound(id.clone()))
         }
     }
 
+    fn registry() -> CapabilityRegistry {
+        let mut registry = CapabilityRegistry::default();
+        registry.register::<vm::Contract>().unwrap();
+        registry
+    }
+
+    fn effective_grants(scopes: &[InstanceScope]) -> EffectiveGrants {
+        let mut required = GrantSet::new();
+        if !scopes.is_empty() {
+            required
+                .insert_scopes(
+                    AtomKey::new("vm", "exec").unwrap(),
+                    scopes.iter().map(ScopeRepr::canonical),
+                )
+                .unwrap();
+        }
+        EffectiveGrants::from_resolved(ResolvedNeeds {
+            required,
+            optional: GrantSet::new(),
+        })
+    }
+
+    fn raw_effective_grants(scopes: &[&str]) -> EffectiveGrants {
+        let mut required = GrantSet::new();
+        required
+            .insert_scopes(
+                AtomKey::new("vm", "exec").unwrap(),
+                scopes.iter().map(|scope| (*scope).to_owned()),
+            )
+            .unwrap();
+        EffectiveGrants::from_resolved(ResolvedNeeds {
+            required,
+            optional: GrantSet::new(),
+        })
+    }
+
+    fn subject(plugin_id: &str) -> PluginHandle {
+        PluginHandle::for_policy_test(plugin_id, effective_grants(&[]))
+    }
+
     #[test]
-    fn resolver_impl_uses_native_async_fn_with_send_boundary_types() {
-        fn assert_resolver<T>()
-        where
-            T: ResolveScopedResource<TestScope, str>,
-            T::Resource: Send,
-            T::Error: Send,
-        {
+    fn golden_vm_memberships_and_grant_matrix_use_the_real_policy_relation() {
+        struct GoldenRow {
+            vm: MockVm,
+            caller: &'static str,
+            memberships: Vec<InstanceScope>,
+            allowed: [bool; 4],
         }
 
-        assert_resolver::<TestResolver>();
+        let rows = [
+            GoldenRow {
+                vm: MockVm {
+                    pool: "gpu".to_owned(),
+                    created_by: Some("A".to_owned()),
+                },
+                caller: "A",
+                memberships: vec![
+                    InstanceScope::Pool("gpu".to_owned()),
+                    InstanceScope::CreatedByCaller,
+                ],
+                allowed: [true, true, false, true],
+            },
+            GoldenRow {
+                vm: MockVm {
+                    pool: "gpu".to_owned(),
+                    created_by: Some("A".to_owned()),
+                },
+                caller: "B",
+                memberships: vec![InstanceScope::Pool("gpu".to_owned())],
+                allowed: [true, true, false, false],
+            },
+            GoldenRow {
+                vm: MockVm {
+                    pool: "cpu".to_owned(),
+                    created_by: Some("B".to_owned()),
+                },
+                caller: "A",
+                memberships: vec![InstanceScope::Pool("cpu".to_owned())],
+                allowed: [true, false, true, false],
+            },
+        ];
+        let grant_cases = [
+            InstanceScope::Any,
+            InstanceScope::Pool("gpu".to_owned()),
+            InstanceScope::Pool("cpu".to_owned()),
+            InstanceScope::CreatedByCaller,
+        ];
+        let registry = registry();
+
+        for row in rows {
+            let handle = subject(row.caller);
+            let plugin_subject = PluginSubject::new(&handle);
+            let memberships = row.vm.scopes_for(&plugin_subject);
+            assert_eq!(memberships, row.memberships);
+
+            for (grant, expected) in grant_cases.iter().zip(row.allowed) {
+                let grants = effective_grants(std::slice::from_ref(grant));
+                assert_eq!(
+                    scoped_access_allowed(&registry, &grants, vm::EXEC, &memberships),
+                    expected,
+                    "caller {} with grant {} and memberships {:?}",
+                    row.caller,
+                    grant.canonical(),
+                    memberships
+                );
+            }
+
+            assert!(!scoped_access_allowed(
+                &registry,
+                &effective_grants(&[]),
+                vm::EXEC,
+                &memberships,
+            ));
+        }
+
+        assert!(!scoped_access_allowed(
+            &registry,
+            &effective_grants(&[InstanceScope::Any]),
+            vm::EXEC,
+            &[],
+        ));
+    }
+
+    #[test]
+    fn scoped_decision_fails_closed_on_broken_internal_invariants() {
+        let memberships = [InstanceScope::Pool("gpu".to_owned())];
+        assert!(!scoped_access_allowed(
+            &registry(),
+            &raw_effective_grants(&["not-an-instance-scope"]),
+            vm::EXEC,
+            &memberships,
+        ));
+
+        let mut conflicting_registry = CapabilityRegistry::default();
+        conflicting_registry
+            .register::<conflicting_vm::Contract>()
+            .unwrap();
+        assert!(!scoped_access_allowed(
+            &conflicting_registry,
+            &effective_grants(&[InstanceScope::Any]),
+            vm::EXEC,
+            &memberships,
+        ));
+    }
+
+    #[tokio::test]
+    async fn string_id_resolves_asynchronously_to_a_local_vm() {
+        let vm = MockVm {
+            pool: "gpu".to_owned(),
+            created_by: Some("A".to_owned()),
+        };
+        let host = MockHost {
+            vms: Mutex::new(BTreeMap::from([("vm-1".to_owned(), vm.clone())])),
+        };
+        let handle = subject("A");
+        let plugin_subject = PluginSubject::new(&handle);
+
+        assert_eq!(
+            host.resolve_scoped_resource(&plugin_subject, &"vm-1".to_owned())
+                .await,
+            Ok(vm)
+        );
+        assert_eq!(
+            host.resolve_scoped_resource(&plugin_subject, &"missing".to_owned())
+                .await,
+            Err(VmError::NotFound("missing".to_owned()))
+        );
     }
 }

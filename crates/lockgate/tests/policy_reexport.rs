@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use lockgate::{CapabilityContract, Permission, Scope, ScopeRepr, ScopedPermission};
+use lockgate::{
+    CapabilityContract, Permission, PluginSubject, ResolveScopedResource, Scope, ScopeRepr,
+    ScopedPermission, ScopedResource,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ScopeRepr)]
 enum FacadeScope {
@@ -10,15 +13,42 @@ enum FacadeScope {
 
 impl Scope for FacadeScope {}
 
+struct FacadeResource;
+
+impl ScopedResource<FacadeScope> for FacadeResource {
+    fn scopes_for(&self, _subject: &PluginSubject<'_>) -> Vec<FacadeScope> {
+        vec![FacadeScope::Project]
+    }
+}
+
+struct FacadeResolver;
+
+impl ResolveScopedResource<FacadeScope, str> for FacadeResolver {
+    type Resource = FacadeResource;
+    type Error = ();
+
+    async fn resolve_scoped_resource<'a>(
+        &'a self,
+        _subject: &'a PluginSubject<'_>,
+        _argument: &'a str,
+    ) -> Result<Self::Resource, Self::Error> {
+        Ok(FacadeResource)
+    }
+}
+
 #[test]
 fn host_facade_exposes_permission_contract_types() {
     fn accepts_contract<T: CapabilityContract>() {}
     fn accepts_unscoped(_: Option<Permission>) {}
     fn accepts_scoped(_: Option<ScopedPermission<FacadeScope>>) {}
+    fn accepts_resource<T: ScopedResource<FacadeScope>>() {}
+    fn accepts_resolver<T: ResolveScopedResource<FacadeScope, str>>() {}
 
     accepts_unscoped(None);
     accepts_scoped(None);
     accepts_contract::<FixtureContract>();
+    accepts_resource::<FacadeResource>();
+    accepts_resolver::<FacadeResolver>();
 }
 
 struct FixtureContract;

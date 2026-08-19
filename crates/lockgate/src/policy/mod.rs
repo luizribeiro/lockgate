@@ -20,4 +20,9 @@ pub use resolution::{
     InvalidScopeValue, JsonValueKind, NeedValueKind, ScopeReference, ScopeResolutionError,
 };
 pub(crate) use resolution::{ResolvedNeeds, resolve_needs};
+#[allow(
+    unused_imports,
+    reason = "guard expansion consumes the scoped decision in the next policy chunk"
+)]
+pub(crate) use resources::scoped_access_allowed;
 pub use resources::{PluginSubject, ResolveScopedResource, ScopedResource};

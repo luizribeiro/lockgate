@@ -1,5 +1,10 @@
 //! Host admission, permissions, and execution kernel.
 
+#[cfg(test)]
+extern crate alloc;
+#[cfg(test)]
+extern crate self as lockgate;
+
 mod config;
 #[cfg_attr(
     test,

@@ -224,6 +224,16 @@ impl PluginHandle {
     pub(crate) fn effective_grants(&self) -> &EffectiveGrants {
         &self.effective_grants
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_policy_test(plugin_id: &str, effective_grants: EffectiveGrants) -> Self {
+        Self {
+            host: HostId(0),
+            index: 0,
+            metadata: PluginMetadata::new(plugin_id, "Policy test plugin", "1.0").unwrap(),
+            effective_grants,
+        }
+    }
 }
 
 impl<S: CallContext> HostBuilder<S> {
