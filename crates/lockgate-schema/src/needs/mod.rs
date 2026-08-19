@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, str::FromStr};
+use std::{cmp::Ordering, error::Error, fmt, iter, str::FromStr};
 
 mod digest;
 mod entry;
@@ -18,10 +18,36 @@ pub use scope_ref::{
 };
 
 /// The identity of one permission operation, written `capability.operation`.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AtomKey {
     capability: String,
     operation: String,
+}
+
+impl Ord for AtomKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Atom keys are serialized as one `capability.operation` string. Keep
+        // every ordered schema collection aligned with that byte order,
+        // including the `ab-c.x`/`ab.c-x` prefix case where derived struct
+        // ordering would compare the capability fields differently.
+        self.capability
+            .bytes()
+            .chain(iter::once(b'.'))
+            .chain(self.operation.bytes())
+            .cmp(
+                other
+                    .capability
+                    .bytes()
+                    .chain(iter::once(b'.'))
+                    .chain(other.operation.bytes()),
+            )
+    }
+}
+
+impl PartialOrd for AtomKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl AtomKey {
@@ -139,5 +165,14 @@ mod tests {
             "sessions.".parse::<AtomKey>().unwrap_err(),
             AtomKeyError::EmptyOperation
         );
+    }
+
+    #[test]
+    fn atom_key_order_matches_its_wire_string_order() {
+        let prefixed: AtomKey = "ab-c.x".parse().unwrap();
+        let shorter: AtomKey = "ab.c-x".parse().unwrap();
+
+        assert!(prefixed < shorter);
+        assert!(prefixed.to_string() < shorter.to_string());
     }
 }

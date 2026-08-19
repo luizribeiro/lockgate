@@ -1,7 +1,7 @@
 use lockgate_schema::needs::{MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
 use lockgate_schema::sections::needs::{DecodeError, EncodeError};
 use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, ScopeRef};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, ScopeRef};
 
 fn atom(value: &str) -> AtomKey {
     value.parse().unwrap()
@@ -53,6 +53,37 @@ fn encoding_sorts_maps_and_uses_symbolic_scope_strings() {
     let decoded = NeedsManifest::from_section_bytes(&encoded).unwrap();
     assert_eq!(decoded, manifest);
     assert_eq!(decoded.to_section_bytes().unwrap(), encoded);
+}
+
+#[test]
+fn dash_prefixed_capabilities_have_stable_canonical_bytes_and_digest() {
+    let entries = || {
+        [
+            NeedEntry::flag(atom("ab.c-x")),
+            NeedEntry::flag(atom("ab-c.x")),
+        ]
+    };
+    let [first, second] = entries();
+    let forward = NeedsManifest::new(vec![first, second], vec![]).unwrap();
+    let [first, second] = entries();
+    let reversed = NeedsManifest::new(vec![second, first], vec![]).unwrap();
+
+    let expected =
+        br#"{"format":1,"optional":{},"reasons":{},"required":{"ab-c.x":true,"ab.c-x":true}}"#;
+    assert_eq!(forward.to_section_bytes().unwrap(), expected);
+    assert_eq!(reversed.to_section_bytes().unwrap(), expected);
+    assert_eq!(
+        forward
+            .required()
+            .iter()
+            .map(|entry| entry.atom().to_string())
+            .collect::<Vec<_>>(),
+        ["ab-c.x", "ab.c-x"]
+    );
+    assert_eq!(
+        NeedsDigest::compute(&forward).unwrap(),
+        NeedsDigest::compute(&reversed).unwrap()
+    );
 }
 
 fn large_manifest(scope_lengths: &[usize]) -> NeedsManifest {
