@@ -1,8 +1,13 @@
+extern crate alloc;
+
 use lockgate::{CapabilityContract, HostBuilder, Permission, Scope, ScopedPermission};
 use lockgate_policy::__private::{
     ErasedPermission, erase_permission, erase_scoped_permission, qualify_permission,
     qualify_scoped_permission,
 };
+
+#[path = "../../lockgate-policy/tests/fixtures/vm_contract.rs"]
+mod vm_contract;
 
 #[lockgate::capability("sessions")]
 mod sessions {
@@ -93,6 +98,13 @@ impl CapabilityContract for BrokenScopeContract {
 
 #[test]
 fn generated_contract_registers_and_duplicate_capabilities_are_rejected() {
+    use vm_contract::permissions;
+
+    HostBuilder::new(())
+        .unwrap()
+        .register::<permissions::vm::Contract>()
+        .unwrap();
+
     let builder = HostBuilder::new(())
         .unwrap()
         .register::<sessions::Contract>()

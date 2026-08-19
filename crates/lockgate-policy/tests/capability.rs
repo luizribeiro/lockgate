@@ -1,4 +1,10 @@
+extern crate alloc;
+extern crate lockgate_policy as lockgate;
+
 use lockgate_policy::{CapabilityContract, Permission, Scope, ScopedPermission, capability};
+
+#[path = "fixtures/vm_contract.rs"]
+mod vm_contract;
 
 #[capability("documents")]
 mod documents {
@@ -56,4 +62,19 @@ fn capability_rewrites_declarations_into_typed_qualified_handles() {
     let conditional_descriptors = conditional::Contract::permissions();
     assert_eq!(conditional_descriptors.len(), 1);
     assert_eq!(conditional_descriptors[0].permission_id(), "read");
+}
+
+#[test]
+fn canonical_vm_contract_compiles_through_the_policy_macro() {
+    use vm_contract::permissions::vm;
+
+    fn accepts_pool(_: ScopedPermission<vm::PoolScope>) {}
+    fn accepts_instance(_: ScopedPermission<vm::InstanceScope>) {}
+
+    accepts_pool(vm::CREATE);
+    accepts_instance(vm::EXEC);
+    accepts_instance(vm::DESTROY);
+    assert_eq!(vm::Contract::ID, "vm");
+    assert_eq!(vm::Contract::permissions().len(), 4);
+    assert_eq!(vm::Contract::permissions()[3].permission_id(), "list-pools");
 }
