@@ -1,5 +1,55 @@
-use lockgate_policy::ScopeRef;
+extern crate alloc;
+extern crate lockgate_policy as lockgate;
+
+use lockgate_policy::{Need, Needs, ScopeRef};
 use lockgate_schema::ScopeRef as HostScopeRef;
+
+#[path = "fixtures/vm_contract.rs"]
+mod vm_contract;
+
+use vm_contract::permissions::vm;
+
+const REQUIRED: &[Need] = &[
+    vm::CREATE.need(&[
+        ScopeRef::literal("gpu"),
+        ScopeRef::setting("/fallback-pool"),
+        ScopeRef::root("workspace").join("generated/images"),
+    ]),
+    vm::EXEC.need(&[
+        ScopeRef::literal("pool:gpu"),
+        ScopeRef::literal("created-by-caller"),
+    ]),
+    vm::DESTROY.need(&[ScopeRef::literal("created-by-caller")]),
+];
+const OPTIONAL: &[Need] = &[vm::LIST_POOLS.need()];
+const DECLARED: Needs = Needs::required(REQUIRED).optional(OPTIONAL);
+
+#[test]
+fn permission_handles_construct_typed_needs_without_repeating_atoms() {
+    use lockgate_policy::__private::{
+        need_capability, need_permission, need_scopes, needs_optional, needs_required,
+    };
+
+    assert_eq!(needs_required(&DECLARED), REQUIRED);
+    assert_eq!(needs_optional(&DECLARED), OPTIONAL);
+    assert_eq!(need_capability(&REQUIRED[0]), "vm");
+    assert_eq!(need_permission(&REQUIRED[0]), "create");
+    assert_eq!(need_permission(&REQUIRED[1]), "exec");
+    assert_eq!(need_permission(&REQUIRED[2]), "destroy");
+    assert_eq!(need_scopes(&REQUIRED[0]).unwrap().len(), 3);
+    assert_eq!(
+        author_wire(&need_scopes(&REQUIRED[0]).unwrap()[1]),
+        "setting:/fallback-pool"
+    );
+    assert_eq!(
+        author_wire(&need_scopes(&REQUIRED[0]).unwrap()[2]),
+        "$workspace/generated/images"
+    );
+
+    assert_eq!(need_capability(&OPTIONAL[0]), "vm");
+    assert_eq!(need_permission(&OPTIONAL[0]), "list-pools");
+    assert!(need_scopes(&OPTIONAL[0]).is_none());
+}
 
 #[test]
 fn authoring_scope_references_match_the_frozen_schema_wire() {

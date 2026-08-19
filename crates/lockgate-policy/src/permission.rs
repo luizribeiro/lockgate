@@ -3,7 +3,7 @@
 use core::{fmt, hash::Hash, marker::PhantomData, str::FromStr};
 
 use crate::{
-    Scope, ScopeError,
+    Need, Scope, ScopeError, ScopeRef,
     atom::{AtomValidationError, QualifiedAtom, validate_capability_id, validate_permission_id},
 };
 
@@ -106,6 +106,14 @@ impl Permission {
         PermissionDecl { permission }
     }
 
+    /// Requests this unscoped permission for a plugin.
+    ///
+    /// The qualified atom comes from the surrounding capability contract, so
+    /// callers do not repeat its stable string identity.
+    pub const fn need(self) -> Need {
+        Need::flag(self.atom)
+    }
+
     pub(crate) const fn atom(self) -> QualifiedAtom {
         self.atom
     }
@@ -176,6 +184,14 @@ where
             permission,
             marker: PhantomData,
         }
+    }
+
+    /// Requests this scoped permission over a non-empty union of references.
+    ///
+    /// References remain symbolic until host preparation. Their concrete
+    /// values are deliberately not checked against `S` while authoring.
+    pub const fn need(self, scopes: &'static [ScopeRef]) -> Need {
+        Need::scoped(self.atom, scopes)
     }
 
     pub(crate) const fn atom(self) -> QualifiedAtom {
