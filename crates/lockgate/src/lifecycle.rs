@@ -1371,7 +1371,7 @@ mod grant_tests {
         let needs = NeedsManifest::new(
             vec![
                 NeedEntry::scoped(
-                    atom("http.egress"),
+                    atom("net.egress"),
                     vec![ScopeRef::literal("https://example.com").unwrap()],
                 )
                 .unwrap(),
@@ -1404,7 +1404,7 @@ mod grant_tests {
     #[tokio::test]
     async fn empty_http_egress_origin_set_is_rejected_during_inspection() {
         let metadata = PluginMetadata::new("empty-http", "Empty HTTP", "1.0").unwrap();
-        let raw_needs = br#"{"format":1,"optional":{},"reasons":{},"required":{"http.egress":[]}}"#;
+        let raw_needs = br#"{"format":1,"optional":{},"reasons":{},"required":{"net.egress":[]}}"#;
         let component = with_section(
             with_section(
                 component(),

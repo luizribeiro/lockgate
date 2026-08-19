@@ -17,18 +17,18 @@ use wasmtime_wasi_http::{Error as WasiHttpError, WasiBody, WasiHttpHooks};
 use crate::{
     PluginHandle,
     exec::{ExecEngine, StoreCtx, add_http_to_linker, wasi_http::HttpHooks},
-    http,
+    net,
     policy::{CapabilityRegistry, EffectiveGrants, ResolvedNeeds},
 };
 
 fn hooks_with_origins(origins: &[HttpOrigin]) -> HttpHooks {
     let mut registry = CapabilityRegistry::default();
-    registry.register::<http::Contract>().unwrap();
+    registry.register::<net::Contract>().unwrap();
     let mut required = GrantSet::new();
     if !origins.is_empty() {
         required
             .insert_scopes(
-                "http.egress".parse().unwrap(),
+                "net.egress".parse().unwrap(),
                 origins.iter().map(ScopeRepr::canonical),
             )
             .unwrap();
