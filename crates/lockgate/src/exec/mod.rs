@@ -16,6 +16,10 @@ use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
 
 use super::config::{SettingsState, ValidatedSettings, add_settings_to_linker};
 use super::jobs::DetachedJobContext;
+#[cfg(not(test))]
+use super::policy::ResourceStore;
+#[cfg(test)]
+use lockgate::__private::ResourceStore;
 
 mod errors;
 
@@ -287,6 +291,7 @@ pub struct StoreCtx<S> {
     imports: Box<dyn Any + Send>,
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     jobs: Option<DetachedJobContext>,
+    resources: ResourceStore,
     settings: SettingsState,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
@@ -307,6 +312,7 @@ impl<S> StoreCtx<S> {
             imports,
             plugin,
             jobs,
+            resources: ResourceStore::__new(),
             settings,
             #[cfg(test)]
             drop_probe: None,
@@ -326,7 +332,7 @@ impl<S> StoreCtx<S> {
     }
 
     #[doc(hidden)]
-    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, Arc<P>, DetachedJobContext)
+    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, Arc<P>, DetachedJobContext, ResourceStore)
     where
         I: Clone + 'static,
         P: Send + Sync + 'static,
@@ -347,7 +353,13 @@ impl<S> StoreCtx<S> {
             .jobs
             .clone()
             .expect("public plugin Stores must carry detached-job context");
-        (imports, Arc::clone(&self.data), plugin, jobs)
+        (
+            imports,
+            Arc::clone(&self.data),
+            plugin,
+            jobs,
+            self.resources.clone(),
+        )
     }
 
     #[cfg(test)]

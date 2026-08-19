@@ -1,12 +1,19 @@
 //! Application-owned resource classification and target resolution.
 
-use std::{any::TypeId, fmt, future::Future, str::FromStr};
+use std::{
+    any::{Any, TypeId},
+    fmt,
+    future::Future,
+    str::FromStr,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use lockgate_policy::{Scope, ScopeError, ScopedPermission};
 use lockgate_schema::AtomKey;
+use wasmtime::component::{Resource, ResourceTable, ResourceTableError};
 
 use super::{CapabilityRegistry, EffectiveGrants};
-use crate::PluginHandle;
+use crate::{CallContext, PluginHandle};
 
 /// The admitted plugin identity making one host invocation.
 ///
@@ -91,8 +98,10 @@ impl std::error::Error for PermissionDenied {}
 /// returning an empty vector deliberately denies access (fail closed).
 ///
 /// Classification is pure and synchronous. Perform fallible or asynchronous
-/// lookup through [`ResolveScopedResource`] and return an owned authorization
-/// snapshot when classification needs facts loaded from external state.
+/// lookup through [`ResolveScopedResource`] or
+/// [`ResolveScopedResourceHandle`]. A resolver may retain a live reference or
+/// return an owned authorization snapshot when classification needs facts
+/// loaded from external state.
 /// Duplicate witnesses are permitted and do not change authorization's
 /// existential containment relation.
 pub trait ScopedResource<S: Scope>
@@ -101,6 +110,218 @@ where
 {
     /// Returns all scope membership witnesses for `self` and `subject`.
     fn scopes_for(&self, subject: &PluginSubject<'_>) -> Vec<S>;
+}
+
+impl<S, R> ScopedResource<S> for Arc<R>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+    R: ScopedResource<S> + ?Sized,
+{
+    fn scopes_for(&self, subject: &PluginSubject<'_>) -> Vec<S> {
+        (**self).scopes_for(subject)
+    }
+}
+
+/// Failure while accessing one live host representation by WIT resource handle.
+///
+/// Generated resource guards propagate this value through the application's
+/// ordinary resolver-error conversion. A stale, fabricated, or already
+/// deleted handle is therefore reported by the host method's normal error
+/// channel rather than panicking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResourceLookupError {
+    /// The handle has no live entry in this invocation's resource table.
+    NotPresent,
+    /// The handle's entry contains a different application representation.
+    WrongRepresentation,
+    /// The invocation resource table has reached its configured capacity.
+    Full,
+    /// The resource cannot be removed while child resources remain live.
+    HasChildren,
+    /// Another host call panicked while it held the resource table lock.
+    TablePoisoned,
+}
+
+impl fmt::Display for ResourceLookupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NotPresent => "resource handle is not present in this invocation",
+            Self::WrongRepresentation => {
+                "resource handle refers to a different host representation"
+            }
+            Self::Full => "invocation resource table has no free entries",
+            Self::HasChildren => "resource still has live child resources",
+            Self::TablePoisoned => "invocation resource table is unavailable",
+        })
+    }
+}
+
+impl std::error::Error for ResourceLookupError {}
+
+impl From<ResourceTableError> for ResourceLookupError {
+    fn from(error: ResourceTableError) -> Self {
+        match error {
+            ResourceTableError::Full => Self::Full,
+            ResourceTableError::NotPresent => Self::NotPresent,
+            ResourceTableError::WrongType => Self::WrongRepresentation,
+            ResourceTableError::HasChildren => Self::HasChildren,
+        }
+    }
+}
+
+struct ResourceEntry(Option<Arc<dyn Any + Send + Sync>>);
+
+/// One Store-owned resource table shared only with host calls in that Store.
+///
+/// The `Arc` here lets overlapping host-call adapters retain the table handle;
+/// the table itself is created afresh for each invocation and is deliberately
+/// not stored in the per-call cloned `HostImports` value.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct ResourceStore {
+    table: Arc<Mutex<ResourceTable>>,
+}
+
+impl ResourceStore {
+    #[doc(hidden)]
+    pub fn __new() -> Self {
+        Self {
+            table: Arc::new(Mutex::new(ResourceTable::new())),
+        }
+    }
+
+    /// Reserved for generated WIT resource destructors.
+    #[doc(hidden)]
+    pub fn __delete_resource<H: 'static>(
+        &self,
+        handle: &Resource<H>,
+    ) -> Result<(), ResourceLookupError> {
+        self.delete(handle)
+    }
+
+    fn lock(&self) -> Result<MutexGuard<'_, ResourceTable>, ResourceLookupError> {
+        self.table
+            .lock()
+            .map_err(|_| ResourceLookupError::TablePoisoned)
+    }
+
+    fn insert<H: 'static, R: Any + Send + Sync>(
+        &self,
+        resource: R,
+    ) -> Result<Resource<H>, ResourceLookupError> {
+        let mut table = self.lock()?;
+        let entry = table.push(ResourceEntry(Some(Arc::new(resource))))?;
+        Ok(Resource::new_own(entry.rep()))
+    }
+
+    fn get<H: 'static, R: Any + Send + Sync>(
+        &self,
+        handle: &Resource<H>,
+    ) -> Result<Arc<R>, ResourceLookupError> {
+        let table = self.lock()?;
+        let key = Resource::<ResourceEntry>::new_borrow(handle.rep());
+        let entry = table.get(&key)?;
+        Arc::clone(entry.0.as_ref().ok_or(ResourceLookupError::NotPresent)?)
+            .downcast::<R>()
+            .map_err(|_| ResourceLookupError::WrongRepresentation)
+    }
+
+    fn delete<H: 'static>(&self, handle: &Resource<H>) -> Result<(), ResourceLookupError> {
+        let mut table = self.lock()?;
+        // Keep an empty entry instead of returning its numeric slot to
+        // ResourceTable's free list. Guest-visible handles carry that numeric
+        // representation, so non-reuse prevents an invalidated stale handle
+        // from ever naming a later resource (the ABA case).
+        let key = Resource::<ResourceEntry>::new_borrow(handle.rep());
+        let entry = table.get_mut(&key)?;
+        entry.0.take().ok_or(ResourceLookupError::NotPresent)?;
+        Ok(())
+    }
+}
+
+/// Narrow context for resolving one resource-method authorization target.
+///
+/// This context exposes the calling [`PluginSubject`], immutable invocation
+/// data, and typed operations on the invocation's resource table. It does not
+/// expose effective grants or any way to mutate them; authorization remains a
+/// separate generated step after resolution and classification.
+///
+/// Lockgate's default table shape stores an [`Arc`] to the live host
+/// representation. Repeated lookups of one handle therefore reuse the live
+/// reference, but generated guards still call the resolver, `scopes_for`, and
+/// the effective-grant check on every method call. Applications can instead
+/// store a stable identity and load current state in
+/// [`ResolveScopedResourceHandle`]. Lockgate does not cache membership-fact
+/// snapshots. An application that chooses to return such a snapshot owns the
+/// required lifetime, epoch, or invalidation check and must perform it on
+/// every call.
+#[derive(Clone, Copy)]
+pub struct ResolveCtx<'a, C> {
+    data: &'a C,
+    subject: PluginSubject<'a>,
+    resources: &'a ResourceStore,
+}
+
+impl<'a, C> ResolveCtx<'a, C> {
+    pub(crate) const fn new(
+        data: &'a C,
+        plugin: &'a PluginHandle,
+        resources: &'a ResourceStore,
+    ) -> Self {
+        Self {
+            data,
+            subject: PluginSubject::new(plugin),
+            resources,
+        }
+    }
+
+    /// Returns the stable subject for the plugin making this invocation.
+    pub const fn subject(&self) -> PluginSubject<'a> {
+        self.subject
+    }
+
+    /// Returns immutable application call context for this invocation.
+    pub const fn data(&self) -> &'a C {
+        self.data
+    }
+
+    /// Inserts one live representation and returns its typed WIT handle.
+    ///
+    /// Resource constructors normally call this once. Insertion records no
+    /// permission or membership facts and grants no authority to later
+    /// methods on the returned handle.
+    pub fn insert_resource<H: 'static, R: Any + Send + Sync>(
+        &self,
+        resource: R,
+    ) -> Result<Resource<H>, ResourceLookupError> {
+        self.resources.insert(resource)
+    }
+
+    /// Looks up and retains the live representation for `handle`.
+    ///
+    /// The returned `Arc` is a live reference, not an authorization result.
+    /// Generated guards reevaluate classification and grants after every
+    /// lookup.
+    pub fn resource<H: 'static, R: Any + Send + Sync>(
+        &self,
+        handle: &Resource<H>,
+    ) -> Result<Arc<R>, ResourceLookupError> {
+        self.resources.get(handle)
+    }
+
+    /// Removes a live representation from this invocation's table.
+    ///
+    /// This is primarily a lifecycle operation. Any later method using the
+    /// same handle observes [`ResourceLookupError::NotPresent`]. Generated WIT
+    /// destructors also remove their entry through this path.
+    pub fn delete_resource<H: 'static>(
+        &self,
+        handle: &Resource<H>,
+    ) -> Result<(), ResourceLookupError> {
+        self.resources.delete(handle)
+    }
 }
 
 /// Resolves a host-call target expression to an application-owned resource.
@@ -132,6 +353,44 @@ where
     ) -> impl Future<Output = Result<Self::Resource, Self::Error>> + Send + 'a;
 }
 
+/// Resolves a live WIT resource representation for scoped authorization.
+///
+/// This is the resource-handle counterpart to [`ResolveScopedResource`]. The
+/// separate entry point is necessary because the ordinary `&self` resolver
+/// cannot reach the per-Store resource table: `HostImports` is cloned for each
+/// host call, while resource handles belong to the invocation Store.
+///
+/// Lockgate validates `handle` and obtains `Arc<Self::Representation>` before
+/// calling this trait. Implementations whose live representation itself
+/// implements [`ScopedResource`] normally return that `Arc` unchanged. An
+/// implementation may instead derive an owned authorization snapshot, but the
+/// resolver is invoked anew on every resource-method call and Lockgate never
+/// freezes the returned membership facts in the handle.
+pub trait ResolveScopedResourceHandle<S, H: 'static, C: CallContext>: Send + Sync
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    /// The live application value stored for this WIT resource.
+    type Representation: Any + Send + Sync;
+
+    /// The live value or per-call authorization snapshot to classify.
+    type Resource: ScopedResource<S> + Send;
+
+    /// The application's normal resource-resolution error.
+    ///
+    /// `From<ResourceLookupError>` ensures stale and invalid handles use the
+    /// same error path as other resolution failures.
+    type Error: From<ResourceLookupError> + Send;
+
+    /// Resolves the live representation for this call's authorization check.
+    fn resolve_scoped_resource_handle<'a>(
+        &'a self,
+        context: &'a ResolveCtx<'_, C>,
+        representation: Arc<Self::Representation>,
+    ) -> impl Future<Output = Result<Self::Resource, Self::Error>> + Send + 'a;
+}
+
 /// Calls an application resolver with the scope type selected by a permission.
 #[doc(hidden)]
 pub async fn resolve_scoped_resource<'a, S, A, R>(
@@ -147,6 +406,29 @@ where
     R: ResolveScopedResource<S, A> + ?Sized,
 {
     resolver.resolve_scoped_resource(subject, argument).await
+}
+
+/// Looks up a WIT handle and calls its per-call authorization resolver.
+#[doc(hidden)]
+pub async fn resolve_scoped_resource_handle<'a, S, H, C, R>(
+    resolver: &'a R,
+    context: &'a ResolveCtx<'_, C>,
+    handle: &Resource<H>,
+    _permission: ScopedPermission<S>,
+) -> Result<R::Resource, R::Error>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+    H: 'static,
+    C: CallContext,
+    R: ResolveScopedResourceHandle<S, H, C> + ?Sized,
+{
+    let representation = context
+        .resource::<H, R::Representation>(handle)
+        .map_err(R::Error::from)?;
+    resolver
+        .resolve_scoped_resource_handle(context, representation)
+        .await
 }
 
 /// Applies the single scoped-authorization relation to concrete memberships.
@@ -199,7 +481,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Mutex};
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+        },
+    };
 
     use lockgate_policy::ScopeRepr;
     use lockgate_schema::GrantSet;
@@ -449,6 +737,159 @@ mod tests {
             host.resolve_scoped_resource(&plugin_subject, &"missing".to_owned())
                 .await,
             Err(VmError::NotFound("missing".to_owned()))
+        );
+    }
+
+    enum StableHandle {}
+    enum LiveHandle {}
+    enum SnapshotHandle {}
+
+    struct CacheShapeHost {
+        stable_state: Mutex<BTreeMap<u64, MockVm>>,
+        stable_loads: AtomicUsize,
+        live_resolutions: AtomicUsize,
+    }
+
+    impl ResolveScopedResourceHandle<InstanceScope, StableHandle, ()> for CacheShapeHost {
+        type Representation = u64;
+        type Resource = MockVm;
+        type Error = ResourceLookupError;
+
+        async fn resolve_scoped_resource_handle<'a>(
+            &'a self,
+            _context: &'a ResolveCtx<'_, ()>,
+            identity: Arc<Self::Representation>,
+        ) -> Result<Self::Resource, Self::Error> {
+            self.stable_loads.fetch_add(1, Ordering::SeqCst);
+            self.stable_state
+                .lock()
+                .map_err(|_| ResourceLookupError::TablePoisoned)?
+                .get(identity.as_ref())
+                .cloned()
+                .ok_or(ResourceLookupError::NotPresent)
+        }
+    }
+
+    impl ResolveScopedResourceHandle<InstanceScope, LiveHandle, ()> for CacheShapeHost {
+        type Representation = MockVm;
+        type Resource = Arc<MockVm>;
+        type Error = ResourceLookupError;
+
+        async fn resolve_scoped_resource_handle<'a>(
+            &'a self,
+            _context: &'a ResolveCtx<'_, ()>,
+            representation: Arc<Self::Representation>,
+        ) -> Result<Self::Resource, Self::Error> {
+            self.live_resolutions.fetch_add(1, Ordering::SeqCst);
+            Ok(representation)
+        }
+    }
+
+    struct VersionedSnapshot {
+        facts: MockVm,
+        epoch: u64,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum SnapshotError {
+        Lookup(ResourceLookupError),
+        Stale,
+    }
+
+    impl From<ResourceLookupError> for SnapshotError {
+        fn from(error: ResourceLookupError) -> Self {
+            Self::Lookup(error)
+        }
+    }
+
+    struct SnapshotHost {
+        live_epoch: AtomicU64,
+    }
+
+    impl ResolveScopedResourceHandle<InstanceScope, SnapshotHandle, ()> for SnapshotHost {
+        type Representation = VersionedSnapshot;
+        type Resource = MockVm;
+        type Error = SnapshotError;
+
+        async fn resolve_scoped_resource_handle<'a>(
+            &'a self,
+            _context: &'a ResolveCtx<'_, ()>,
+            snapshot: Arc<Self::Representation>,
+        ) -> Result<Self::Resource, Self::Error> {
+            if snapshot.epoch != self.live_epoch.load(Ordering::SeqCst) {
+                return Err(SnapshotError::Stale);
+            }
+            Ok(snapshot.facts.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_shapes_contrast_fresh_loads_live_reuse_and_versioned_facts() {
+        const CALLS: usize = 256;
+
+        let plugin = subject("cache-probe");
+        let resources = ResourceStore::__new();
+        let data = ();
+        let context = ResolveCtx::new(&data, &plugin, &resources);
+        let stable = context.insert_resource::<StableHandle, _>(7_u64).unwrap();
+        let live = context
+            .insert_resource::<LiveHandle, _>(MockVm {
+                pool: "gpu".to_owned(),
+                created_by: None,
+            })
+            .unwrap();
+        let host = CacheShapeHost {
+            stable_state: Mutex::new(BTreeMap::from([(
+                7,
+                MockVm {
+                    pool: "gpu".to_owned(),
+                    created_by: None,
+                },
+            )])),
+            stable_loads: AtomicUsize::new(0),
+            live_resolutions: AtomicUsize::new(0),
+        };
+
+        let mut first_live = None;
+        for _ in 0..CALLS {
+            let freshly_loaded = resolve_scoped_resource_handle(&host, &context, &stable, vm::EXEC)
+                .await
+                .unwrap();
+            assert_eq!(freshly_loaded.pool, "gpu");
+
+            let reused = resolve_scoped_resource_handle(&host, &context, &live, vm::EXEC)
+                .await
+                .unwrap();
+            if let Some(first) = &first_live {
+                assert!(Arc::ptr_eq(first, &reused));
+            } else {
+                first_live = Some(reused);
+            }
+        }
+        assert_eq!(host.stable_loads.load(Ordering::SeqCst), CALLS);
+        assert_eq!(host.live_resolutions.load(Ordering::SeqCst), CALLS);
+
+        let snapshot = context
+            .insert_resource::<SnapshotHandle, _>(VersionedSnapshot {
+                facts: MockVm {
+                    pool: "gpu".to_owned(),
+                    created_by: None,
+                },
+                epoch: 3,
+            })
+            .unwrap();
+        let snapshot_host = SnapshotHost {
+            live_epoch: AtomicU64::new(3),
+        };
+        assert!(
+            resolve_scoped_resource_handle(&snapshot_host, &context, &snapshot, vm::EXEC,)
+                .await
+                .is_ok()
+        );
+        snapshot_host.live_epoch.store(4, Ordering::SeqCst);
+        assert_eq!(
+            resolve_scoped_resource_handle(&snapshot_host, &context, &snapshot, vm::EXEC,).await,
+            Err(SnapshotError::Stale)
         );
     }
 }

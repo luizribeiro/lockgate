@@ -34,9 +34,12 @@ pub use lockgate_policy::{
 };
 pub use policy::{
     CapabilityRegistrationError, EffectiveGrants, HostImportPolicyError, InvalidScopeValue,
-    JsonValueKind, NeedValueKind, PermissionDenied, PluginSubject, ResolveScopedResource,
-    ScopeReference, ScopeResolutionError, ScopedResource,
+    JsonValueKind, NeedValueKind, PermissionDenied, PluginSubject, ResolveCtx,
+    ResolveScopedResource, ResolveScopedResourceHandle, ResourceLookupError, ScopeReference,
+    ScopeResolutionError, ScopedResource,
 };
+/// Typed handle used by generated host bindings for a WIT resource.
+pub use wasmtime::component::Resource;
 
 /// Generates typed application bindings for a WIT world.
 ///
@@ -77,7 +80,9 @@ impl<T: Send + Sync + 'static> CallContext for T {}
 /// serialized. Writes to ordinary, non-shared fields are visible only within
 /// that host call and are discarded when it returns, so later calls never
 /// observe them. Put intentionally shared state in fields such as
-/// [`std::sync::Arc`].
+/// [`std::sync::Arc`]. WIT resource representations are a deliberate
+/// exception: Lockgate keeps those in a separate per-Store table and gives
+/// guarded resource methods controlled access through [`ResolveCtx`].
 pub trait HostImports<S>: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn policy_metadata() -> Result<__private::HostImportPolicyMetadata, HostImportPolicyError>;
@@ -112,12 +117,23 @@ pub struct HostCtx<'a, S> {
     data: &'a S,
     plugin: &'a PluginHandle,
     jobs: jobs::DetachedJobContext,
+    resources: policy::ResourceStore,
 }
 
 impl<'a, S> HostCtx<'a, S> {
     #[doc(hidden)]
-    pub fn new(data: &'a S, plugin: &'a PluginHandle, jobs: jobs::DetachedJobContext) -> Self {
-        Self { data, plugin, jobs }
+    pub fn new(
+        data: &'a S,
+        plugin: &'a PluginHandle,
+        jobs: jobs::DetachedJobContext,
+        resources: policy::ResourceStore,
+    ) -> Self {
+        Self {
+            data,
+            plugin,
+            jobs,
+            resources,
+        }
     }
 
     /// Returns the [call context](CallContext) for this invocation.
@@ -133,6 +149,14 @@ impl<'a, S> HostCtx<'a, S> {
     /// Returns the stable policy subject for the plugin making this host call.
     pub fn subject(&self) -> PluginSubject<'_> {
         PluginSubject::new(self.plugin)
+    }
+
+    /// Returns the narrow context used for WIT resource resolution.
+    ///
+    /// It exposes the subject, immutable call data, and controlled operations
+    /// on this invocation's resource table, but never effective grants.
+    pub fn resolve_context(&self) -> ResolveCtx<'_, S> {
+        ResolveCtx::new(self.data, self.plugin, &self.resources)
     }
 
     /// Requires one unscoped permission for this host call.
@@ -193,8 +217,9 @@ pub mod __private {
     pub use crate::jobs::DetachedJobContext;
     pub use crate::policy::{
         HostImportPolicyError, HostImportPolicyMetadata, InterfaceIdentity, MethodClassification,
-        MethodIdentity, PolicyMethod, PolicyPermission, ValidatedInterfacePolicy,
-        resolve_scoped_resource, validate_interface_policy,
+        MethodIdentity, PolicyMethod, PolicyPermission, ResourceStore, ValidatedInterfacePolicy,
+        resolve_scoped_resource, resolve_scoped_resource_handle, validate_interface_policy,
+        validate_interface_policy_parts,
     };
     pub use lockgate_policy;
     pub use wasmtime;
@@ -211,7 +236,7 @@ mod tests {
         HostCtx, PluginHandle, ScopedResource,
         exec::ExecEngine,
         jobs,
-        policy::{CapabilityRegistry, EffectiveGrants, ResolvedNeeds},
+        policy::{CapabilityRegistry, EffectiveGrants, ResolvedNeeds, ResourceStore},
     };
 
     mod vm_contract {
@@ -269,7 +294,7 @@ mod tests {
     #[test]
     fn host_context_enforces_unscoped_and_scoped_effective_grants() {
         let (plugin, jobs) = context(grants(true, &[InstanceScope::Pool("gpu".to_owned())]));
-        let cx = HostCtx::new(&(), &plugin, jobs);
+        let cx = HostCtx::new(&(), &plugin, jobs, ResourceStore::__new());
 
         assert_eq!(cx.subject().plugin_id(), "plugin-a");
         assert_eq!(cx.require(vm::LIST_POOLS), Ok(()));
@@ -284,7 +309,7 @@ mod tests {
         );
 
         let (plugin, jobs) = context(grants(false, &[]));
-        let cx = HostCtx::new(&(), &plugin, jobs);
+        let cx = HostCtx::new(&(), &plugin, jobs, ResourceStore::__new());
         assert_eq!(
             cx.require(vm::LIST_POOLS).unwrap_err().permission(),
             "list-pools"

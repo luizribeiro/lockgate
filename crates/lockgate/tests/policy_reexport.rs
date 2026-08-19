@@ -1,9 +1,10 @@
-use std::path::PathBuf;
 use std::process::Command;
+use std::{path::PathBuf, sync::Arc};
 
 use lockgate::{
-    CapabilityContract, Permission, PluginSubject, ResolveScopedResource, Scope, ScopeRepr,
-    ScopedPermission, ScopedResource,
+    CapabilityContract, Permission, PluginSubject, ResolveCtx, ResolveScopedResource,
+    ResolveScopedResourceHandle, Resource, ResourceLookupError, Scope, ScopeRepr, ScopedPermission,
+    ScopedResource,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ScopeRepr)]
@@ -36,6 +37,24 @@ impl ResolveScopedResource<FacadeScope, str> for FacadeResolver {
     }
 }
 
+enum ResourceMarker {}
+
+struct ResourceResolver;
+
+impl ResolveScopedResourceHandle<FacadeScope, ResourceMarker, ()> for ResourceResolver {
+    type Representation = FacadeResource;
+    type Resource = Arc<FacadeResource>;
+    type Error = ResourceLookupError;
+
+    async fn resolve_scoped_resource_handle<'a>(
+        &'a self,
+        _context: &'a ResolveCtx<'_, ()>,
+        representation: Arc<Self::Representation>,
+    ) -> Result<Self::Resource, Self::Error> {
+        Ok(representation)
+    }
+}
+
 #[test]
 fn host_facade_exposes_permission_contract_types() {
     fn accepts_contract<T: CapabilityContract>() {}
@@ -43,12 +62,20 @@ fn host_facade_exposes_permission_contract_types() {
     fn accepts_scoped(_: Option<ScopedPermission<FacadeScope>>) {}
     fn accepts_resource<T: ScopedResource<FacadeScope>>() {}
     fn accepts_resolver<T: ResolveScopedResource<FacadeScope, str>>() {}
+    fn accepts_resource_resolver<
+        T: ResolveScopedResourceHandle<FacadeScope, ResourceMarker, ()>,
+    >() {
+    }
 
     accepts_unscoped(None);
     accepts_scoped(None);
     accepts_contract::<FixtureContract>();
     accepts_resource::<FacadeResource>();
     accepts_resolver::<FacadeResolver>();
+    accepts_resource_resolver::<ResourceResolver>();
+    let _ = core::mem::size_of::<ResolveCtx<'_, ()>>();
+    let _ = core::mem::size_of::<Resource<ResourceMarker>>();
+    let _ = core::mem::size_of::<ResourceLookupError>();
 }
 
 struct FixtureContract;

@@ -12,7 +12,7 @@ pub(crate) use grants::PreparedNeedsDigest;
 pub use metadata::{
     HostImportPolicyError, HostImportPolicyMetadata, InterfaceIdentity, MethodClassification,
     MethodIdentity, PolicyMethod, PolicyPermission, ValidatedInterfacePolicy,
-    validate_interface_policy,
+    validate_interface_policy, validate_interface_policy_parts,
 };
 pub use registry::CapabilityRegistrationError;
 pub(crate) use registry::CapabilityRegistry;
@@ -20,7 +20,10 @@ pub use resolution::{
     InvalidScopeValue, JsonValueKind, NeedValueKind, ScopeReference, ScopeResolutionError,
 };
 pub(crate) use resolution::{ResolvedNeeds, resolve_needs};
-#[doc(hidden)]
-pub use resources::resolve_scoped_resource;
 pub(crate) use resources::scoped_access_allowed;
-pub use resources::{PermissionDenied, PluginSubject, ResolveScopedResource, ScopedResource};
+pub use resources::{
+    PermissionDenied, PluginSubject, ResolveCtx, ResolveScopedResource,
+    ResolveScopedResourceHandle, ResourceLookupError, ScopedResource,
+};
+#[doc(hidden)]
+pub use resources::{ResourceStore, resolve_scoped_resource, resolve_scoped_resource_handle};

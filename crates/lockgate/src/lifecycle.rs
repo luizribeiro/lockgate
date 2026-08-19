@@ -1275,7 +1275,7 @@ mod grant_tests {
             handle.id().to_owned(),
             1,
         );
-        let cx = crate::HostCtx::new(&(), &handle, jobs);
+        let cx = crate::HostCtx::new(&(), &handle, jobs, crate::policy::ResourceStore::__new());
         assert_eq!(cx.require(permissions::SEND), Ok(()));
         assert_eq!(cx.require_scoped(permissions::READ, &Session), Ok(()));
     }

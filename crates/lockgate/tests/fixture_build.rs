@@ -9,4 +9,5 @@ fn builds_exec_guest_component() {
     assert!(common::PUBLIC_FIXTURE.starts_with(b"\0asm"));
     assert!(common::HOST_BINDINGS_FIXTURE.starts_with(b"\0asm"));
     assert!(common::HOST_EXPORT_VALUES_FIXTURE.starts_with(b"\0asm"));
+    assert!(common::RESOURCE_GUARDED_FIXTURE.starts_with(b"\0asm"));
 }

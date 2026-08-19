@@ -1,0 +1,28 @@
+impl sessions::HostSession for Imports {
+    async fn send(
+        &mut self,
+        cx: lockgate::HostCtx<'_, Data>,
+        session: lockgate::Resource<Session>,
+        message: String,
+    ) -> Result<(), Error> {
+        let __lockgate_resolve_context = cx.resolve_context();
+        let __lockgate_target = &(session);
+        let __lockgate_resource = ::lockgate::__private::resolve_scoped_resource_handle(
+                &*self,
+                &__lockgate_resolve_context,
+                __lockgate_target,
+                permissions::SEND,
+            )
+            .await?;
+        cx.require_scoped(permissions::SEND, &__lockgate_resource)?;
+        { self.send_message(cx, session, message).await }
+    }
+    const __LOCKGATE_POLICY_METHODS: &'static [::lockgate::__private::PolicyMethod] = &[
+        ::lockgate::__private::PolicyMethod::__requires_scoped(
+            sessions::__LockgateSessionBinding::INTERFACE,
+            sessions::__LockgateSessionBinding::__LOCKGATE_METHOD_SEND,
+            permissions::SEND,
+            ::core::stringify!(session),
+        ),
+    ];
+}

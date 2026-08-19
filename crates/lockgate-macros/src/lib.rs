@@ -10,7 +10,9 @@ use syn::{
     Type as SynType, TypeImplTrait, braced, parse::Parse, parse::ParseStream,
 };
 use wasmtime_wit_bindgen::{FunctionConfig, FunctionFilter, FunctionFlags, Opts};
-use wit_parser::{InterfaceId, Resolve, Type, TypeDefKind, TypeId, TypeOwner, WorldItem};
+use wit_parser::{
+    FunctionKind, InterfaceId, Resolve, Type, TypeDefKind, TypeId, TypeOwner, WorldItem,
+};
 
 mod capability;
 mod guarded;
@@ -31,6 +33,11 @@ pub fn capability(arguments: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Classifies every method in an application implementation of a generated
 /// host-import trait.
+///
+/// A scoped target is treated as a WIT resource handle when it is a direct
+/// named parameter whose outer type path is spelled `Resource<...>`. That
+/// generated-signature rule routes it through the invocation resource table;
+/// all other accepted targets retain the ordinary argument-resolver path.
 #[proc_macro_attribute]
 pub fn guarded(arguments: TokenStream, item: TokenStream) -> TokenStream {
     let arguments = TokenStream2::from(arguments);
@@ -91,6 +98,9 @@ pub fn derive_scope_repr(input: TokenStream) -> TokenStream {
 /// Each imported WIT interface becomes a top-level Rust module with a `Host`
 /// trait; an implementation may use `async fn` methods whose second parameter
 /// is `HostCtx<'_, data>`.
+/// Imported WIT resources additionally expose `Host<Resource>` traits (for
+/// example, `HostSession`). Their generated adapters keep representations in
+/// one table owned by the invocation Store, never in the cloned imports value.
 ///
 /// Each named exported interface becomes a top-level module containing its WIT
 /// value types plus `Role`, `Client`, and `HostExt`. Client methods take an
@@ -1160,11 +1170,18 @@ struct ImportedInterface {
     identity: String,
     version: Option<String>,
     methods: Vec<ImportedMethod>,
+    resources: Vec<ImportedResource>,
 }
 
 struct ImportedMethod {
     rust_name: Ident,
     wit_name: String,
+}
+
+struct ImportedResource {
+    host_trait: Ident,
+    binding: Ident,
+    methods: Vec<ImportedMethod>,
 }
 
 struct ExportedInterface {
@@ -1234,6 +1251,36 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                 wit_name: function.item_name().to_owned(),
             })
             .collect();
+        let resources = interface
+            .types
+            .iter()
+            .filter(|(_, resource_id)| {
+                matches!(resolve.types[**resource_id].kind, TypeDefKind::Resource)
+            })
+            .map(|(resource_name, resource_id)| {
+                let resource_name = rust_type_ident(resource_name);
+                let methods = interface
+                    .functions
+                    .values()
+                    .filter(|function| function.kind.resource() == Some(*resource_id))
+                    .map(|function| ImportedMethod {
+                        rust_name: format_ident!(
+                            "{}",
+                            match function.kind {
+                                FunctionKind::Constructor(_) => "new".to_owned(),
+                                _ => rust_ident(function.item_name()),
+                            }
+                        ),
+                        wit_name: function.name.clone(),
+                    })
+                    .collect();
+                ImportedResource {
+                    host_trait: format_ident!("Host{resource_name}"),
+                    binding: format_ident!("__Lockgate{resource_name}Binding"),
+                    methods,
+                }
+            })
+            .collect();
         interfaces.push(ImportedInterface {
             path: interface_module_path(&resolve, *id),
             public_module,
@@ -1241,6 +1288,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
             identity,
             version,
             methods,
+            resources,
         });
     }
 
@@ -1319,7 +1367,29 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                         ),
                     )
                 })?;
-            items.extend(adapter_items(&host, interface, &lockgate)?);
+            let mut adapters = adapter_items(&host, interface, &lockgate)?;
+            for resource in &interface.resources {
+                let with_store = format_ident!("{}WithStore", resource.host_trait);
+                let host = items
+                    .iter()
+                    .find_map(|item| match item {
+                        Item::Trait(item) if item.ident == with_store => Some(item.clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        syn::Error::new_spanned(
+                            &input.world,
+                            format!(
+                                "generated interface `{}` has no `{with_store}` resource trait",
+                                interface.public_module
+                            ),
+                        )
+                    })?;
+                adapters.extend(resource_adapter_items(
+                    &host, interface, resource, &lockgate,
+                )?);
+            }
+            items.extend(adapters);
         }
     }
 
@@ -1346,12 +1416,23 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                         .public_types
                         .iter()
                         .map(|ty| quote!(pub use #raw::#ty;));
+                    let resource_reexports = interface.resources.iter().map(|resource| {
+                        let host = &resource.host_trait;
+                        let binding = &resource.binding;
+                        let generated_host = format_ident!("__Lockgate{host}");
+                        quote! {
+                            #[doc(hidden)]
+                            pub use #raw::#binding;
+                            pub use #raw::#generated_host as #host;
+                        }
+                    });
                     quote! {
                         pub mod #module {
                             #[doc(hidden)]
                             pub use #raw::__LockgateBinding;
                             pub use #raw::__LockgateHost as Host;
                             #(#type_reexports)*
+                            #(#resource_reexports)*
                         }
                     }
                 })
@@ -1371,7 +1452,11 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         let data = &config.data;
         let host_bounds = interfaces.iter().map(|interface| {
             let module = &interface.public_module;
-            quote!(#imports: #module::Host,)
+            let resources = interface
+                .resources
+                .iter()
+                .map(|resource| &resource.host_trait);
+            quote!(#imports: #module::Host #( + #module::#resources )*,)
         });
         let registrations = interfaces.iter().map(|interface| {
             let path = &interface.path;
@@ -1386,12 +1471,23 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         });
         let policy_interfaces = interfaces.iter().map(|interface| {
             let path = &interface.path;
+            let resource_parts = interface.resources.iter().map(|resource| {
+                let host = &resource.host_trait;
+                let generated_host = format_ident!("__Lockgate{host}");
+                quote! {
+                    <#imports as __lockgate_host_bindings::#(#path)::*::#generated_host>::
+                        __LOCKGATE_POLICY_METHODS
+                }
+            });
             quote! {
-                #lockgate::__private::validate_interface_policy(
+                #lockgate::__private::validate_interface_policy_parts(
                     __lockgate_host_bindings::#(#path)::*::__LockgateBinding::INTERFACE,
                     __lockgate_host_bindings::#(#path)::*::__LockgateBinding::METHODS,
-                    <#imports as __lockgate_host_bindings::#(#path)::*::__LockgateHost>::
-                        __LOCKGATE_POLICY_METHODS,
+                    &[
+                        <#imports as __lockgate_host_bindings::#(#path)::*::__LockgateHost>::
+                            __LOCKGATE_POLICY_METHODS,
+                        #(#resource_parts),*
+                    ],
                 )?
             }
         });
@@ -1545,8 +1641,13 @@ fn adapter_items(
                 #(#inputs),*
             ) -> impl ::core::future::Future<Output = #result> + Send {
                 async move {
-                    let (mut imports, data, plugin, jobs) = #host_parts;
-                    let cx = #lockgate::HostCtx::new(data.as_ref(), plugin.as_ref(), jobs);
+                    let (mut imports, data, plugin, jobs, resources) = #host_parts;
+                    let cx = #lockgate::HostCtx::new(
+                        data.as_ref(),
+                        plugin.as_ref(),
+                        jobs,
+                        resources,
+                    );
                     <#imports as __LockgateHost>::#name(
                         &mut imports,
                         cx,
@@ -1576,6 +1677,20 @@ fn adapter_items(
         }
     });
     let ordered_methods = methods.iter().map(|(_, constant)| quote!(Self::#constant));
+    let ordered_resource_methods = interface.resources.iter().flat_map(|resource| {
+        let binding = &resource.binding;
+        resource.methods.iter().map(move |method| {
+            let constant = method_identity_const_name(&method.rust_name);
+            quote!(#binding::#constant)
+        })
+    });
+    let host_with_store_impl = (!adapter_methods.is_empty()).then(|| {
+        quote! {
+            impl HostWithStore<#lockgate::__private::StoreCtx<#data>> for __LockgateAdapter {
+                #(#adapter_methods)*
+            }
+        }
+    });
 
     syn::parse2::<syn::File>(quote! {
         #[doc(hidden)]
@@ -1589,7 +1704,8 @@ fn adapter_items(
                 );
             #(#method_consts)*
             pub const METHODS: &'static [#lockgate::__private::MethodIdentity] = &[
-                #(#ordered_methods),*
+                #(#ordered_methods,)*
+                #(#ordered_resource_methods),*
             ];
         }
 
@@ -1609,9 +1725,7 @@ fn adapter_items(
 
         impl Host for () {}
 
-        impl HostWithStore<#lockgate::__private::StoreCtx<#data>> for __LockgateAdapter {
-            #(#adapter_methods)*
-        }
+        #host_with_store_impl
 
         pub fn __lockgate_register(
             linker: &mut #lockgate::__private::wasmtime::component::Linker<
@@ -1619,6 +1733,195 @@ fn adapter_items(
             >,
         ) -> #lockgate::__private::wasmtime::Result<()> {
             add_to_linker::<_, __LockgateAdapter>(linker, |_| ())
+        }
+    })
+    .map(|file| file.items)
+}
+
+fn resource_adapter_items(
+    host: &ItemTrait,
+    interface: &ImportedInterface,
+    resource: &ImportedResource,
+    lockgate: &TokenStream2,
+) -> syn::Result<Vec<Item>> {
+    let imports = quote!(super::super::super::__LockgateImports);
+    let data = quote!(super::super::super::__LockgateData);
+    let generated_host = format_ident!("__Lockgate{}", resource.host_trait);
+    let raw_host = &resource.host_trait;
+    let raw_host_with_store = format_ident!("{}WithStore", resource.host_trait);
+    let binding = &resource.binding;
+    let expected_names = resource
+        .methods
+        .iter()
+        .map(|method| method.rust_name.to_string())
+        .collect::<BTreeSet<_>>();
+
+    let mut public_methods = Vec::new();
+    let mut adapter_methods = Vec::new();
+    let mut destructor = None;
+    for item in &host.items {
+        let syn::TraitItem::Fn(method) = item else {
+            continue;
+        };
+        let name = &method.sig.ident;
+        let mut inputs = method.sig.inputs.iter();
+        let Some(store) = inputs.next() else {
+            return Err(syn::Error::new_spanned(
+                &method.sig,
+                "generated resource method is missing its Store accessor",
+            ));
+        };
+        let inputs = inputs.cloned().collect::<Vec<_>>();
+        if name == "drop" && !expected_names.contains("drop") {
+            let [FnArg::Typed(rep)] = inputs.as_slice() else {
+                return Err(syn::Error::new_spanned(
+                    &method.sig,
+                    "generated resource destructor has an unexpected signature",
+                ));
+            };
+            let rep_ty = &rep.ty;
+            destructor = Some(quote! {
+                fn drop(
+                    accessor: &#lockgate::__private::wasmtime::component::Accessor<
+                        #lockgate::__private::StoreCtx<#data>,
+                        Self,
+                    >,
+                    rep: #rep_ty,
+                ) -> impl ::core::future::Future<
+                    Output = #lockgate::__private::wasmtime::Result<()>,
+                > + Send
+                where
+                    Self: Sized,
+                {
+                    async move {
+                        let resources = accessor.with(|mut access| {
+                            let (_, _, _, _, resources) = access
+                                .data_mut()
+                                .host_parts::<#imports, #lockgate::PluginHandle>();
+                            resources
+                        });
+                        match resources.__delete_resource(&rep) {
+                            Ok(())
+                            | Err(#lockgate::ResourceLookupError::NotPresent) => Ok(()),
+                            Err(error) => Err(error.into()),
+                        }
+                    }
+                }
+            });
+            continue;
+        }
+        if !expected_names.contains(&name.to_string()) {
+            return Err(syn::Error::new_spanned(
+                &method.sig,
+                format!("unexpected generated resource method `{name}`"),
+            ));
+        }
+        if !matches!(store, FnArg::Typed(_)) {
+            return Err(syn::Error::new_spanned(
+                store,
+                "generated resource method has an unexpected receiver",
+            ));
+        }
+        let arguments = inputs
+            .iter()
+            .map(|input| match input {
+                FnArg::Typed(input) => match input.pat.as_ref() {
+                    syn::Pat::Ident(ident) => Ok(ident.ident.clone()),
+                    pattern => Err(syn::Error::new_spanned(
+                        pattern,
+                        "generated resource parameter must use an identifier",
+                    )),
+                },
+                FnArg::Receiver(receiver) => Err(syn::Error::new_spanned(
+                    receiver,
+                    "generated resource parameter unexpectedly uses a receiver",
+                )),
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        let result = future_output(&method.sig.output)?;
+        public_methods.push(quote! {
+            fn #name(
+                &mut self,
+                cx: #lockgate::HostCtx<'_, #data>,
+                #(#inputs),*
+            ) -> impl ::core::future::Future<Output = #result> + Send;
+        });
+        adapter_methods.push(quote! {
+            fn #name(
+                mut host: #lockgate::__private::wasmtime::component::Access<
+                    #lockgate::__private::StoreCtx<#data>,
+                    Self,
+                >,
+                #(#inputs),*
+            ) -> impl ::core::future::Future<Output = #result> + Send {
+                async move {
+                    let (mut imports, data, plugin, jobs, resources) = host
+                        .data_mut()
+                        .host_parts::<#imports, #lockgate::PluginHandle>();
+                    let cx = #lockgate::HostCtx::new(
+                        data.as_ref(),
+                        plugin.as_ref(),
+                        jobs,
+                        resources,
+                    );
+                    <#imports as #generated_host>::#name(
+                        &mut imports,
+                        cx,
+                        #(#arguments),*
+                    ).await
+                }
+            }
+        });
+    }
+    let destructor = destructor.ok_or_else(|| {
+        syn::Error::new_spanned(host, "generated WIT resource trait has no destructor")
+    })?;
+
+    let methods = resource
+        .methods
+        .iter()
+        .map(|method| (method, method_identity_const_name(&method.rust_name)))
+        .collect::<Vec<_>>();
+    let method_consts = methods.iter().map(|(method, constant)| {
+        let rust_name = method.rust_name.to_string();
+        let wit_name = &method.wit_name;
+        quote! {
+            pub const #constant: #lockgate::__private::MethodIdentity =
+                #lockgate::__private::MethodIdentity::__new(#rust_name, #wit_name);
+        }
+    });
+    let interface_name = &interface.identity;
+    let interface_version = match interface.version.as_deref() {
+        Some(version) => quote!(::core::option::Option::Some(#version)),
+        None => quote!(::core::option::Option::None),
+    };
+
+    syn::parse2::<syn::File>(quote! {
+        #[doc(hidden)]
+        pub struct #binding;
+
+        impl #binding {
+            pub const INTERFACE: #lockgate::__private::InterfaceIdentity =
+                #lockgate::__private::InterfaceIdentity::__new(
+                    #interface_name,
+                    #interface_version,
+                );
+            #(#method_consts)*
+        }
+
+        #[doc = "Application implementation of this imported WIT resource."]
+        pub trait #generated_host: Send {
+            #[doc(hidden)]
+            const __LOCKGATE_POLICY_METHODS: &'static [#lockgate::__private::PolicyMethod] = &[];
+
+            #(#public_methods)*
+        }
+
+        impl #raw_host for () {}
+
+        impl #raw_host_with_store<#lockgate::__private::StoreCtx<#data>> for __LockgateAdapter {
+            #destructor
+            #(#adapter_methods)*
         }
     })
     .map(|file| file.items)

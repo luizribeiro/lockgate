@@ -1,0 +1,27 @@
+package test:resource-guarded@1.0.0;
+
+interface sessions {
+  enum session-error {
+    not-found,
+    denied,
+  }
+
+  resource session {
+    constructor(current: bool);
+    send: func(message: string) -> result<string, session-error>;
+    set-current: func(current: bool) -> result<_, session-error>;
+    invalidate: func() -> result<_, session-error>;
+  }
+}
+
+interface guest {
+  live-send: func() -> string;
+  repeated-call: func() -> string;
+  stale-handle: func() -> string;
+  acquire-without-authority: func() -> string;
+}
+
+world fixture {
+  import sessions;
+  export guest;
+}

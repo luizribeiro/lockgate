@@ -1146,6 +1146,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-resource-guarded-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin",
+]
+
+[[package]]
 name = "lockgate-schema"
 version = "0.1.0"
 dependencies = [

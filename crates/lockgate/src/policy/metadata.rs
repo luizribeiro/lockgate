@@ -426,6 +426,21 @@ pub fn validate_interface_policy(
     Ok(ValidatedInterfacePolicy { interface, methods })
 }
 
+/// Validates one interface whose classifications are split across its free
+/// `Host` trait and one or more generated `Host<Resource>` traits.
+#[doc(hidden)]
+pub fn validate_interface_policy_parts(
+    interface: InterfaceIdentity,
+    expected_methods: &[MethodIdentity],
+    policy_parts: &[&[PolicyMethod]],
+) -> Result<ValidatedInterfacePolicy, HostImportPolicyError> {
+    let policy_methods = policy_parts
+        .iter()
+        .flat_map(|part| part.iter().copied())
+        .collect::<Vec<_>>();
+    validate_interface_policy(interface, expected_methods, &policy_methods)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

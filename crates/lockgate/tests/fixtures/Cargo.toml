@@ -11,6 +11,7 @@ members = [
     "host-export-values-guest",
     "guarded-bindings-guest",
     "public-guest",
+    "resource-guarded-guest",
     "renamed-facade",
     "renamed-host-facade",
     "scope-reexport",

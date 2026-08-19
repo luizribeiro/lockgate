@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -20,19 +20,25 @@ pub(super) fn expand(
             "`#[lockgate::guarded]` requires an impl of a generated host-import `Host` trait",
         ));
     };
-    if trait_path
-        .segments
-        .last()
-        .is_none_or(|segment| segment.ident != "Host")
-    {
+    let Some(trait_name) = trait_path.segments.last().map(|segment| &segment.ident) else {
+        unreachable!("a Rust path always has at least one segment")
+    };
+    let trait_name = trait_name.to_string();
+    let Some(resource_name) = trait_name.strip_prefix("Host") else {
         return Err(syn::Error::new_spanned(
             trait_path,
-            "`#[lockgate::guarded]` requires a generated host-import trait path ending in `Host`",
+            "`#[lockgate::guarded]` requires a generated host-import trait path ending in `Host` or `Host<Resource>`",
         ));
-    }
+    };
     let mut binding = trait_path.clone();
-    binding.segments.last_mut().expect("checked above").ident =
-        Ident::new("__LockgateBinding", Span::call_site());
+    binding.segments.last_mut().expect("checked above").ident = if resource_name.is_empty() {
+        Ident::new("__LockgateBinding", Span::call_site())
+    } else {
+        Ident::new(
+            &format!("__Lockgate{resource_name}Binding"),
+            Span::call_site(),
+        )
+    };
 
     let mut policy_methods = Vec::new();
     for item in &mut implementation.items {
@@ -44,22 +50,15 @@ pub(super) fn expand(
         let (entry, guard) = match classification {
             Classification::Requires { permission, target } => match target {
                 Some(target) => {
-                    validate_target(&target, &method.sig.inputs)?;
+                    let target_kind = validate_target(&target, &method.sig.inputs)?;
                     let context = context_parameter(&method.sig.inputs, &method.sig.ident)?;
                     let identifiers = GuardIdentifiers::new(&method.sig.inputs);
                     let subject = &identifiers.subject;
+                    let resolve_context = &identifiers.resolve_context;
                     let target_binding = &identifiers.target;
                     let resource = &identifiers.resource;
-                    (
-                        quote! {
-                            #lockgate::__private::PolicyMethod::__requires_scoped(
-                                #binding::INTERFACE,
-                                #binding::#method_identity,
-                                #permission,
-                                ::core::stringify!(#target),
-                            )
-                        },
-                        Some(quote! {
+                    let resolution = match target_kind {
+                        TargetKind::Argument => quote! {
                             let #subject = #context.subject();
                             let #target_binding = &(#target);
                             let #resource =
@@ -70,6 +69,31 @@ pub(super) fn expand(
                                     #permission,
                                 )
                                 .await?;
+                        },
+                        TargetKind::ResourceHandle => quote! {
+                            let #resolve_context = #context.resolve_context();
+                            let #target_binding = &(#target);
+                            let #resource =
+                                #lockgate::__private::resolve_scoped_resource_handle(
+                                    &*self,
+                                    &#resolve_context,
+                                    #target_binding,
+                                    #permission,
+                                )
+                                .await?;
+                        },
+                    };
+                    (
+                        quote! {
+                            #lockgate::__private::PolicyMethod::__requires_scoped(
+                                #binding::INTERFACE,
+                                #binding::#method_identity,
+                                #permission,
+                                ::core::stringify!(#target),
+                            )
+                        },
+                        Some(quote! {
+                            #resolution
                             #context.require_scoped(#permission, &#resource)?;
                         }),
                     )
@@ -121,6 +145,7 @@ pub(super) fn expand(
 
 struct GuardIdentifiers {
     subject: Ident,
+    resolve_context: Ident,
     target: Ident,
     resource: Ident,
 }
@@ -134,10 +159,12 @@ impl GuardIdentifiers {
             }
         }
         let subject = fresh_identifier("__lockgate_subject", &mut bindings.names);
+        let resolve_context = fresh_identifier("__lockgate_resolve_context", &mut bindings.names);
         let target = fresh_identifier("__lockgate_target", &mut bindings.names);
         let resource = fresh_identifier("__lockgate_resource", &mut bindings.names);
         Self {
             subject,
+            resolve_context,
             target,
             resource,
         }
@@ -352,7 +379,16 @@ impl Parse for ReasonArgument {
     }
 }
 
-fn validate_target(target: &Expr, inputs: &Punctuated<FnArg, Token![,]>) -> syn::Result<()> {
+#[derive(Clone, Copy)]
+enum TargetKind {
+    Argument,
+    ResourceHandle,
+}
+
+fn validate_target(
+    target: &Expr,
+    inputs: &Punctuated<FnArg, Token![,]>,
+) -> syn::Result<TargetKind> {
     let mut forbidden = ForbiddenExpression::default();
     forbidden.visit_expr(target);
     if let Some(span) = forbidden.self_span {
@@ -370,6 +406,7 @@ fn validate_target(target: &Expr, inputs: &Punctuated<FnArg, Token![,]>) -> syn:
 
     let root = target_root(target)?;
     let mut named = BTreeSet::new();
+    let mut named_types = BTreeMap::new();
     let mut destructured = BTreeSet::new();
     let mut context = None;
     for input in inputs {
@@ -379,6 +416,7 @@ fn validate_target(target: &Expr, inputs: &Punctuated<FnArg, Token![,]>) -> syn:
         match input.pat.as_ref() {
             Pat::Ident(pattern) if pattern.subpat.is_none() => {
                 named.insert(pattern.ident.to_string());
+                named_types.insert(pattern.ident.to_string(), input.ty.as_ref());
                 if is_host_context(&input.ty) {
                     context = Some(pattern.ident.to_string());
                 }
@@ -412,7 +450,42 @@ fn validate_target(target: &Expr, inputs: &Punctuated<FnArg, Token![,]>) -> syn:
             "a `.data()` policy target must be rooted at this method's `HostCtx` parameter",
         ));
     }
-    Ok(())
+    let resource_handle = matches!(root, TargetRoot::Parameter(_))
+        && named_types
+            .get(&root_name)
+            .is_some_and(|ty| is_resource_handle(ty));
+    if resource_handle
+        && !matches!(
+            target,
+            Expr::Path(path)
+                if path.qself.is_none()
+                    && path.path.leading_colon.is_none()
+                    && path.path.segments.len() == 1
+        )
+    {
+        return Err(syn::Error::new_spanned(
+            target,
+            "a WIT resource-handle policy target must be the handle parameter itself, not a path through it",
+        ));
+    }
+    Ok(if resource_handle {
+        TargetKind::ResourceHandle
+    } else {
+        TargetKind::Argument
+    })
+}
+
+fn is_resource_handle(ty: &Type) -> bool {
+    match ty {
+        Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "Resource"),
+        Type::Paren(paren) => is_resource_handle(&paren.elem),
+        Type::Group(group) => is_resource_handle(&group.elem),
+        _ => false,
+    }
 }
 
 enum TargetRoot<'a> {
@@ -555,5 +628,29 @@ mod tests {
         let expansion = prettyplease::unparse(&syn::parse2(expansion).unwrap());
 
         assert_eq!(expansion, include_str!("snapshots/guarded_expansion.snap"));
+    }
+
+    #[test]
+    fn resource_guard_matches_the_expansion_snapshot() {
+        let implementation = syn::parse_quote! {
+            impl sessions::HostSession for Imports {
+                #[lockgate::requires(permission = permissions::SEND, target = session)]
+                async fn send(
+                    &mut self,
+                    cx: lockgate::HostCtx<'_, Data>,
+                    session: lockgate::Resource<Session>,
+                    message: String,
+                ) -> Result<(), Error> {
+                    self.send_message(cx, session, message).await
+                }
+            }
+        };
+        let expansion = super::expand(implementation, &quote!(::lockgate)).unwrap();
+        let expansion = prettyplease::unparse(&syn::parse2(expansion).unwrap());
+
+        assert_eq!(
+            expansion,
+            include_str!("snapshots/resource_guarded_expansion.snap")
+        );
     }
 }
