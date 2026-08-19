@@ -5,8 +5,10 @@ use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
 use wasm_encoder::{ComponentSection, CustomSection};
 
+use crate::policy::diff_grants;
 use crate::{
-    ConsentRecord, ConsentRequired, HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits,
+    ConsentRecord, ConsentRequired, DriftKind, GrantReview, HostBuilder, InvocationCtx,
+    PluginConfig, RuntimeLimits,
 };
 
 const INSTANCE_ID: &str = "sessions-prod";
@@ -59,6 +61,24 @@ mod notify {
 
 fn atom(value: &str) -> AtomKey {
     value.parse().unwrap()
+}
+
+fn scoped_need(atom_name: &str, scopes: &[&str]) -> NeedEntry {
+    NeedEntry::scoped(
+        atom(atom_name),
+        scopes
+            .iter()
+            .map(|scope| ScopeRef::literal(*scope).unwrap())
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn config(scope: &str) -> PluginConfig {
+    PluginConfig {
+        settings: Some(serde_json::json!({ "scope": scope })),
+        ..PluginConfig::default()
+    }
 }
 
 fn builder() -> HostBuilder<()> {
@@ -220,7 +240,9 @@ async fn first_run_refuses_acceptance_until_explicit_approval_then_admits() {
         .unwrap();
 
     let required = prepared.accept_reviewed(None).unwrap_err();
-    let ConsentRequired::FirstRun { manifest } = required;
+    let ConsentRequired::FirstRun { manifest } = required else {
+        panic!("first run must not be reported as drift")
+    };
     assert_eq!(manifest, prepared.review());
 
     let record = prepared.approve("2026-08-19T15:00:00Z".to_owned());
@@ -260,4 +282,249 @@ async fn approval_for_another_instance_does_not_authorize_matching_manifest() {
         required,
         ConsentRequired::FirstRun { ref manifest } if manifest.instance_id == INSTANCE_ID
     ));
+}
+
+#[tokio::test]
+async fn capability_scope_and_requirement_expansions_refuse_acceptance() {
+    let cases = [
+        (
+            NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap(),
+            NeedsManifest::new(
+                vec![
+                    NeedEntry::flag(atom("sessions.send")),
+                    NeedEntry::flag(atom("notify.send")),
+                ],
+                Vec::new(),
+            )
+            .unwrap(),
+            "notify",
+            "send",
+            DriftKind::NewGrant,
+        ),
+        (
+            NeedsManifest::new(vec![scoped_need("sessions.read", &["current"])], Vec::new())
+                .unwrap(),
+            NeedsManifest::new(
+                vec![scoped_need("sessions.read", &["current", "all"])],
+                Vec::new(),
+            )
+            .unwrap(),
+            "sessions",
+            "read",
+            DriftKind::ScopeWidened,
+        ),
+        (
+            NeedsManifest::new(Vec::new(), vec![NeedEntry::flag(atom("sessions.send"))]).unwrap(),
+            NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap(),
+            "sessions",
+            "send",
+            DriftKind::BecameRequired,
+        ),
+    ];
+
+    for (before, after, capability, permission, expected_kind) in cases {
+        let mut prior_builder = builder();
+        let prior = prior_builder
+            .prepare(INSTANCE_ID, &fixture(&before), PluginConfig::default())
+            .await
+            .unwrap();
+        let record = prior.approve("2026-08-19T16:00:00Z".to_owned());
+        let mut current_builder = builder();
+        let current = current_builder
+            .prepare(INSTANCE_ID, &fixture(&after), PluginConfig::default())
+            .await
+            .unwrap();
+
+        let required = current.accept_reviewed(Some(&record)).unwrap_err();
+        let ConsentRequired::Drift { manifest, drift } = required else {
+            panic!("an expanded request must be reported as drift")
+        };
+
+        assert_eq!(manifest, current.review());
+        assert!(drift.blocks_admission);
+        assert!(drift.changes.iter().any(|change| {
+            change.capability == capability
+                && change.permission == permission
+                && change.kind == expected_kind
+        }));
+    }
+}
+
+#[tokio::test]
+async fn config_widening_changes_the_fingerprint_and_refuses_acceptance() {
+    let needs = NeedsManifest::new(
+        vec![
+            NeedEntry::scoped(
+                atom("sessions.read"),
+                vec![
+                    ScopeRef::literal("current").unwrap(),
+                    ScopeRef::setting("/scope").unwrap(),
+                ],
+            )
+            .unwrap(),
+        ],
+        Vec::new(),
+    )
+    .unwrap();
+    let bytes = fixture(&needs);
+    let mut prior_builder = builder();
+    let prior = prior_builder
+        .prepare(INSTANCE_ID, &bytes, config("current"))
+        .await
+        .unwrap();
+    let record = prior.approve("2026-08-19T16:00:00Z".to_owned());
+    let mut current_builder = builder();
+    let current = current_builder
+        .prepare(INSTANCE_ID, &bytes, config("all"))
+        .await
+        .unwrap();
+
+    assert_ne!(record.fingerprint, current.review().fingerprint);
+    let required = current.accept_reviewed(Some(&record)).unwrap_err();
+    let ConsentRequired::Drift { drift, .. } = required else {
+        panic!("config widening must be reported as drift")
+    };
+
+    assert!(drift.blocks_admission);
+    assert_eq!(drift.changes.len(), 1);
+    assert_eq!(drift.changes[0].kind, DriftKind::ScopeWidened);
+    assert_eq!(drift.changes[0].before, Some(vec!["current".to_owned()]));
+    assert_eq!(
+        drift.changes[0].after,
+        Some(vec!["all".to_owned(), "current".to_owned()])
+    );
+}
+
+#[tokio::test]
+async fn scope_and_requirement_narrowing_rebinds_to_the_current_manifest() {
+    let before = NeedsManifest::new(
+        vec![
+            scoped_need("sessions.read", &["all", "current"]),
+            NeedEntry::flag(atom("sessions.send")),
+        ],
+        Vec::new(),
+    )
+    .unwrap();
+    let after = NeedsManifest::new(
+        vec![scoped_need("sessions.read", &["current"])],
+        vec![NeedEntry::flag(atom("sessions.send"))],
+    )
+    .unwrap();
+    let mut prior_builder = builder();
+    let prior = prior_builder
+        .prepare(INSTANCE_ID, &fixture(&before), PluginConfig::default())
+        .await
+        .unwrap();
+    let record = prior.approve("2026-08-19T16:00:00Z".to_owned());
+    let mut current_builder = builder();
+    let current = current_builder
+        .prepare(INSTANCE_ID, &fixture(&after), PluginConfig::default())
+        .await
+        .unwrap();
+    let current_review = current.review();
+    let drift = diff_grants(&record.grants, &current_review.grants);
+
+    assert!(!drift.blocks_admission);
+    assert_eq!(
+        drift
+            .changes
+            .iter()
+            .map(|change| change.kind)
+            .collect::<Vec<_>>(),
+        vec![DriftKind::ScopeNarrowed, DriftKind::BecameOptional]
+    );
+
+    let acceptance = current.accept_reviewed(Some(&record)).unwrap();
+    let admitted = current_builder
+        .admit(
+            current,
+            acceptance,
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        admitted
+            .effective_grants()
+            .scoped_values(&atom("sessions.read")),
+        Some(["current".to_owned()].as_slice())
+    );
+}
+
+#[test]
+fn drift_classifies_every_change_and_blocks_if_and_only_if_an_expansion_exists() {
+    let grant =
+        |capability: &str, permission: &str, scopes: &[&str], optional: bool| -> GrantReview {
+            GrantReview {
+                capability: capability.to_owned(),
+                permission: permission.to_owned(),
+                scopes: scopes.iter().map(|scope| (*scope).to_owned()).collect(),
+                optional,
+                reason: None,
+            }
+        };
+    let before = vec![
+        grant("cache", "read", &[], false),
+        grant("files", "read", &["data", "workspace"], false),
+        grant("sessions", "read", &["current"], false),
+        grant("state", "write", &[], false),
+        grant("vm", "exec", &["gpu"], true),
+    ];
+    let after = vec![
+        grant("cache", "read", &[], true),
+        grant("files", "read", &["data"], false),
+        grant("notify", "send", &[], true),
+        grant("sessions", "read", &["all", "current"], false),
+        grant("vm", "exec", &["gpu"], false),
+    ];
+
+    let expanded = diff_grants(&before, &after);
+
+    assert_eq!(
+        expanded
+            .changes
+            .iter()
+            .map(|change| (&*change.capability, change.kind))
+            .collect::<Vec<_>>(),
+        vec![
+            ("cache", DriftKind::BecameOptional),
+            ("files", DriftKind::ScopeNarrowed),
+            ("notify", DriftKind::NewGrant),
+            ("sessions", DriftKind::ScopeWidened),
+            ("state", DriftKind::RemovedGrant),
+            ("vm", DriftKind::BecameRequired),
+        ]
+    );
+    assert!(expanded.blocks_admission);
+
+    let narrowing_only = diff_grants(
+        &before[..4],
+        &[
+            grant("cache", "read", &[], true),
+            grant("files", "read", &["data"], false),
+            grant("sessions", "read", &["current"], false),
+        ],
+    );
+    assert_eq!(
+        narrowing_only
+            .changes
+            .iter()
+            .map(|change| change.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            DriftKind::BecameOptional,
+            DriftKind::ScopeNarrowed,
+            DriftKind::RemovedGrant,
+        ]
+    );
+    assert!(!narrowing_only.blocks_admission);
+
+    let optional_but_wider = diff_grants(
+        &[grant("sessions", "read", &["current"], false)],
+        &[grant("sessions", "read", &["all", "current"], true)],
+    );
+    assert_eq!(optional_but_wider.changes[0].kind, DriftKind::ScopeWidened);
+    assert!(optional_but_wider.blocks_admission);
 }

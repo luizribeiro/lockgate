@@ -1,6 +1,7 @@
 //! Stateful host policy registration and enforcement.
 
 mod consent;
+mod drift;
 mod grants;
 mod metadata;
 mod registry;
@@ -8,6 +9,8 @@ mod resolution;
 mod resources;
 
 pub use consent::{ConsentManifest, ConsentRecord, ConsentRequired, GrantReview};
+pub(crate) use drift::diff_grants;
+pub use drift::{DriftChange, DriftKind, DriftReport};
 pub use grants::{EffectiveGrants, PreparedNeedsDigest};
 #[doc(hidden)]
 pub use metadata::{

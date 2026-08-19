@@ -1,9 +1,11 @@
 //! Storage-agnostic consent records over resolved permission declarations.
 
+use std::{error::Error, fmt};
+
 use lockgate_schema::{GrantSet, GrantValue, NeedEntry};
 use serde::{Deserialize, Serialize};
 
-use super::{PreparedNeedsDigest, ResolvedNeeds};
+use super::{DriftReport, PreparedNeedsDigest, ResolvedNeeds, diff_grants};
 use crate::{Acceptance, Prepared};
 
 /// The complete resolved permission request presented for operator approval.
@@ -37,8 +39,33 @@ pub struct ConsentRecord {
 /// The operator approval needed before this prepared instance may be admitted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConsentRequired {
-    FirstRun { manifest: ConsentManifest },
+    FirstRun {
+        manifest: ConsentManifest,
+    },
+    Drift {
+        manifest: ConsentManifest,
+        drift: DriftReport,
+    },
 }
+
+impl fmt::Display for ConsentRequired {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FirstRun { manifest } => write!(
+                formatter,
+                "instance `{}` requires approval before its first admission",
+                manifest.instance_id
+            ),
+            Self::Drift { manifest, .. } => write!(
+                formatter,
+                "instance `{}` has expanded its permission request and requires approval",
+                manifest.instance_id
+            ),
+        }
+    }
+}
+
+impl Error for ConsentRequired {}
 
 impl Prepared {
     /// Projects this prepared request into the complete operator review surface.
@@ -63,20 +90,29 @@ impl Prepared {
     }
 
     /// Returns a provenance-bound acceptance only when this exact request was approved.
+    #[allow(
+        clippy::result_large_err,
+        reason = "the public error intentionally carries the complete manifest and drift report for operator review"
+    )]
     pub fn accept_reviewed(
         &self,
         prior: Option<&ConsentRecord>,
     ) -> Result<Acceptance, ConsentRequired> {
-        match prior {
-            Some(prior)
-                if prior.instance_id == self.instance_id
-                    && prior.fingerprint == self.prepared_digest =>
-            {
-                Ok(self.accept_all())
-            }
-            None | Some(_) => Err(ConsentRequired::FirstRun {
+        let Some(prior) = prior.filter(|prior| prior.instance_id == self.instance_id) else {
+            return Err(ConsentRequired::FirstRun {
                 manifest: self.review(),
-            }),
+            });
+        };
+        if prior.fingerprint == self.prepared_digest {
+            return Ok(self.accept_all());
+        }
+
+        let manifest = self.review();
+        let drift = diff_grants(&prior.grants, &manifest.grants);
+        if drift.blocks_admission {
+            Err(ConsentRequired::Drift { manifest, drift })
+        } else {
+            Ok(self.accept_all())
         }
     }
 }
