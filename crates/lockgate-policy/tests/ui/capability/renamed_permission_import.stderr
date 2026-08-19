@@ -1,0 +1,7 @@
+error[E0308]: mismatched types
+ --> tests/ui/capability/renamed_permission_import.rs:5:25
+  |
+5 |     pub const READ: X = X::new("read");
+  |                     -   ^^^^^^^^^^^^^^ expected `Permission`, found `PermissionDecl`
+  |                     |
+  |                     expected because of the type of the constant

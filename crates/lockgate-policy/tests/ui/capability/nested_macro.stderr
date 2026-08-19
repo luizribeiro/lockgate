@@ -1,0 +1,12 @@
+error[E0308]: mismatched types
+  --> tests/ui/capability/nested_macro.rs:9:42
+   |
+ 9 |             pub const READ: Permission = Permission::new("read");
+   |                             ----------   ^^^^^^^^^^^^^^^^^^^^^^^ expected `Permission`, found `PermissionDecl`
+   |                             |
+   |                             expected because of the type of the constant
+...
+13 |     declare_read!();
+   |     --------------- in this macro invocation
+   |
+   = note: this error originates in the macro `declare_read` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,7 @@
+error[E0308]: mismatched types
+  --> tests/ui/capability/associated_const.rs:10:38
+   |
+10 |         pub const READ: Permission = Permission::new("read");
+   |                         ----------   ^^^^^^^^^^^^^^^^^^^^^^^ expected `Permission`, found `PermissionDecl`
+   |                         |
+   |                         expected because of the type of the associated constant

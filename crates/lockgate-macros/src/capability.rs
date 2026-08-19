@@ -314,6 +314,10 @@ fn permission_kind(ty: &Type) -> syn::Result<Option<PermissionKind>> {
 }
 
 fn reject_likely_alias(item: &ItemConst, permission_aliases: &BTreeSet<String>) -> syn::Result<()> {
+    // WHY: Nested macro output, imported aliases (including renamed `Permission`), and
+    // associated consts cannot be classified without name resolution or macro expansion.
+    // Leaving them untouched preserves ordinary items, while the declaration/handle type
+    // split makes each hidden permission fail with E0308; trybuild pins those safety nets.
     let local_alias = local_type_alias_ident(&item.ty)
         .is_some_and(|ident| permission_aliases.contains(&ident.to_string()));
     if local_alias
