@@ -11,7 +11,7 @@ mod permission;
 mod scope;
 
 pub use capability::CapabilityContract;
-pub use need::ScopeRef;
+pub use need::{Need, Needs, ScopeRef};
 pub use permission::{Permission, ScopedPermission};
 pub use scope::{
     ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr, check_scope_laws,
@@ -28,7 +28,10 @@ pub mod __private {
         ErasedPermission, ErasedScopeTypeError, ErasedScopeValue, erase_permission,
         erase_scoped_permission,
     };
-    pub use crate::need::{scope_ref_wire_byte, scope_ref_wire_len};
+    pub use crate::need::{
+        need_capability, need_permission, need_scopes, needs_format, needs_optional,
+        needs_required, scope_ref_wire_byte, scope_ref_wire_len,
+    };
     pub use crate::permission::{
         PermissionDecl, ScopedPermissionDecl, qualify_permission, qualify_scoped_permission,
     };
