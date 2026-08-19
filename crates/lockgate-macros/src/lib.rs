@@ -1556,22 +1556,20 @@ fn adapter_items(
         Some(version) => quote!(::core::option::Option::Some(#version)),
         None => quote!(::core::option::Option::None),
     };
-    let method_consts = interface.methods.iter().map(|method| {
+    let methods = interface
+        .methods
+        .iter()
+        .map(|method| (method, method_identity_const_name(&method.rust_name)))
+        .collect::<Vec<_>>();
+    let method_consts = methods.iter().map(|(method, constant)| {
         let rust_name = method.rust_name.to_string();
         let wit_name = &method.wit_name;
-        let constant = format_ident!("__LOCKGATE_METHOD_{}", rust_name.to_shouty_snake_case());
         quote! {
             pub const #constant: #lockgate::__private::MethodIdentity =
                 #lockgate::__private::MethodIdentity::__new(#rust_name, #wit_name);
         }
     });
-    let ordered_methods = interface.methods.iter().map(|method| {
-        let constant = format_ident!(
-            "__LOCKGATE_METHOD_{}",
-            method.rust_name.to_string().to_shouty_snake_case()
-        );
-        quote!(Self::#constant)
-    });
+    let ordered_methods = methods.iter().map(|(_, constant)| quote!(Self::#constant));
 
     syn::parse2::<syn::File>(quote! {
         #[doc(hidden)]
@@ -1755,6 +1753,13 @@ fn rust_ident(name: &str) -> String {
     } else {
         name
     }
+}
+
+fn method_identity_const_name(rust_name: &Ident) -> Ident {
+    format_ident!(
+        "__LOCKGATE_METHOD_{}",
+        rust_name.to_string().to_shouty_snake_case()
+    )
 }
 
 fn rust_type_ident(name: &str) -> String {

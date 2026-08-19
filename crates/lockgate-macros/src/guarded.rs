@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 
-use heck::ToShoutySnakeCase;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
     Attribute, Expr, FnArg, Ident, ImplItem, ItemImpl, LitStr, Pat, Path, Token, Type,
     parse::{Parse, ParseStream},
@@ -41,9 +40,7 @@ pub(super) fn expand(
             continue;
         };
         let classification = take_classification(&mut method.attrs, &method.sig.ident)?;
-        let method_name = method.sig.ident.to_string();
-        let method_identity =
-            format_ident!("__LOCKGATE_METHOD_{}", method_name.to_shouty_snake_case());
+        let method_identity = super::method_identity_const_name(&method.sig.ident);
         let entry = match classification {
             Classification::Requires { permission, target } => match target {
                 Some(target) => {
