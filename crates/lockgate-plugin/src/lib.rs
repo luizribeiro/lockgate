@@ -20,7 +20,7 @@ pub use serde::{self, Deserialize};
 #[doc(hidden)]
 pub use wit_bindgen as __wit_bindgen;
 
-pub use lockgate_policy::{Need, Needs, Permission, ScopeRef, ScopedPermission};
+pub use lockgate_policy::{HttpOrigin, Need, Needs, Permission, ScopeRef, ScopedPermission, http};
 
 #[cfg(all(feature = "runtime", target_arch = "wasm32"))]
 mod runtime {

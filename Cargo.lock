@@ -1307,6 +1307,7 @@ dependencies = [
  "lockgate-schema",
  "proptest",
  "trybuild",
+ "url",
 ]
 
 [[package]]

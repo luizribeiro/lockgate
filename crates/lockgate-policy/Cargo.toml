@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 lockgate-macros = { path = "../lockgate-macros" }
+url.workspace = true
 
 [dev-dependencies]
 lockgate-schema = { path = "../lockgate-schema" }

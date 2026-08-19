@@ -6,11 +6,13 @@ extern crate alloc;
 
 mod atom;
 mod capability;
+mod http_origin;
 mod need;
 mod permission;
 mod scope;
 
 pub use capability::CapabilityContract;
+pub use http_origin::HttpOrigin;
 pub use need::{Need, Needs, ScopeRef};
 pub use permission::{Permission, ScopedPermission};
 pub use scope::{
@@ -20,6 +22,15 @@ pub use scope::{
 
 /// Derives [`ScopeRepr`] and exhaustive-domain evidence for a closed enum.
 pub use lockgate_macros::{ScopeRepr, capability};
+
+/// Built-in outbound HTTP authority.
+#[capability("http")]
+pub mod http {
+    use crate::{HttpOrigin, ScopedPermission};
+
+    /// Send outbound HTTP requests to the granted exact origins.
+    pub const EGRESS: ScopedPermission<HttpOrigin> = ScopedPermission::new("egress");
+}
 
 #[doc(hidden)]
 pub mod __private {
