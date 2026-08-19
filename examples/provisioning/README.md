@@ -35,6 +35,10 @@ its pool; one created by the calling plugin additionally belongs to
 resource. Lockgate allows a call when an effective granted scope contains any
 reported membership and denies before the method body otherwise.
 
+Membership is a set (§7.1), so the created GPU VM satisfies both `pool:gpu`
+and `created-by-caller`; the printed provenance label does not imply that it is
+the sole qualifying scope.
+
 After preparation and all-or-nothing acceptance, the plugin holds exactly the
 grants it explicitly requested:
 
@@ -44,9 +48,12 @@ grants it explicitly requested:
 | `vm.exec` | `pool:gpu`, `created-by-caller` |
 | `vm.destroy` | `created-by-caller` |
 
-`vm.list-pools` is not requested and therefore is not effective. Policy v2
-does not narrow broad requests and does not derive `exec` or `destroy` from
-`create`; grant limits and implication graphs are deliberately deferred.
+`vm.list-pools` is not requested and therefore is not effective. The `vm`
+interface still wires because `protocol-version` is `no_capability_required`,
+so the plugin can reach `list-pools` and receives `denied` at runtime (§8.5
+rule 3). Policy v2 does not narrow broad requests and does not derive `exec` or
+`destroy` from `create`; grant limits and implication graphs are deliberately
+deferred.
 
 Build the guest and run the host from the repository root:
 
@@ -64,6 +71,7 @@ allowed: vm.create pool=gpu -> gpu/vm-1
 allowed: vm.exec vm=gpu/vm-1 via=created-by-caller
 allowed: vm.exec vm=gpu/base via=pool:gpu
 denied: vm.exec vm=cpu/base atom=vm.exec
+denied: vm.list-pools atom=vm.list-pools
 allowed: vm.destroy vm=gpu/vm-1 via=created-by-caller
 plugin outcome: explicit create/exec/destroy grants enforced by membership
 ```

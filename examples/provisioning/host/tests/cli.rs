@@ -50,6 +50,7 @@ fn policy_v2_provisioning_flow_allows_and_denies_by_membership() {
         "allowed: vm.exec vm=gpu/vm-1 via=created-by-caller",
         "allowed: vm.exec vm=gpu/base via=pool:gpu",
         "denied: vm.exec vm=cpu/base atom=vm.exec",
+        "denied: vm.list-pools atom=vm.list-pools",
         "allowed: vm.destroy vm=gpu/vm-1 via=created-by-caller",
         "plugin outcome: explicit create/exec/destroy grants enforced by membership",
     ] {

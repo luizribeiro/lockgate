@@ -47,6 +47,12 @@ impl exports::example::provisioning::provisioner::Guest for Provisioner {
             Ok(_) => return Err("cpu VM exec unexpectedly succeeded".into()),
         };
 
+        let list_pools_denied = match example::provisioning::vm::list_pools() {
+            Err(example::provisioning::vm::VmError::Denied(atom)) => atom,
+            Err(error) => return Err(format!("unexpected list pools error: {error:?}")),
+            Ok(_) => return Err("VM pool listing unexpectedly succeeded".into()),
+        };
+
         example::provisioning::vm::destroy(&created)
             .map_err(|error| format!("created VM destroy failed: {error:?}"))?;
 
@@ -56,6 +62,7 @@ impl exports::example::provisioning::provisioner::Guest for Provisioner {
             format!("allowed: vm.exec vm={created} via=created-by-caller"),
             "allowed: vm.exec vm=gpu/base via=pool:gpu".into(),
             format!("denied: vm.exec vm=cpu/base atom={denied}"),
+            format!("denied: vm.list-pools atom={list_pools_denied}"),
             format!("allowed: vm.destroy vm={created} via=created-by-caller"),
             "plugin outcome: explicit create/exec/destroy grants enforced by membership".into(),
         ])
