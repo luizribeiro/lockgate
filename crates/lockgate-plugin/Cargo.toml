@@ -8,6 +8,7 @@ default = ["runtime"]
 runtime = ["dep:dlmalloc"]
 
 [dependencies]
+lockgate-policy = { path = "../lockgate-policy" }
 lockgate-plugin-macros = { path = "../lockgate-plugin-macros" }
 schemars.workspace = true
 serde = { workspace = true, default-features = false, features = ["alloc", "derive"] }

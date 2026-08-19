@@ -1059,6 +1059,7 @@ version = "0.1.0"
 dependencies = [
  "dlmalloc",
  "lockgate-plugin-macros",
+ "lockgate-policy",
  "lockgate-schema",
  "schemars",
  "serde",
