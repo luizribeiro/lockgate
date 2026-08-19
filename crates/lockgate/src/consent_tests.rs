@@ -16,6 +16,7 @@ const INSTANCE_ID: &str = "sessions-prod";
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SessionScope {
     All,
+    Archived,
     Current,
 }
 
@@ -25,6 +26,7 @@ impl FromStr for SessionScope {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "all" => Ok(Self::All),
+            "archived" => Ok(Self::Archived),
             "current" => Ok(Self::Current),
             _ => Err(ScopeError::unknown(value)),
         }
@@ -35,6 +37,7 @@ impl ScopeRepr for SessionScope {
     fn canonical(&self) -> String {
         match self {
             Self::All => "all",
+            Self::Archived => "archived",
             Self::Current => "current",
         }
         .to_owned()
@@ -356,6 +359,48 @@ async fn config_widening_changes_the_fingerprint_and_refuses_acceptance() {
     assert_eq!(
         drift.changes[0].after,
         Some(vec!["all".to_owned(), "current".to_owned()])
+    );
+}
+
+#[tokio::test]
+async fn mixed_scope_addition_and_removal_is_refused_as_widening() {
+    let before = NeedsManifest::new(
+        vec![scoped_need("sessions.read", &["all", "current"])],
+        Vec::new(),
+    )
+    .unwrap();
+    let after = NeedsManifest::new(
+        vec![scoped_need("sessions.read", &["archived", "current"])],
+        Vec::new(),
+    )
+    .unwrap();
+    let mut prior_builder = builder();
+    let prior = prior_builder
+        .prepare(INSTANCE_ID, &fixture(&before), PluginConfig::default())
+        .await
+        .unwrap();
+    let record = prior.approve("2026-08-19T16:30:00Z".to_owned());
+    let mut current_builder = builder();
+    let current = current_builder
+        .prepare(INSTANCE_ID, &fixture(&after), PluginConfig::default())
+        .await
+        .unwrap();
+
+    let required = current.accept_reviewed(Some(&record)).unwrap_err();
+    let ConsentRequired::Drift { drift, .. } = required else {
+        panic!("a mixed scope change must be reported as drift")
+    };
+
+    assert!(drift.blocks_admission);
+    assert_eq!(drift.changes.len(), 1);
+    assert_eq!(drift.changes[0].kind, DriftKind::ScopeWidened);
+    assert_eq!(
+        drift.changes[0].before,
+        Some(vec!["all".to_owned(), "current".to_owned()])
+    );
+    assert_eq!(
+        drift.changes[0].after,
+        Some(vec!["archived".to_owned(), "current".to_owned()])
     );
 }
 
