@@ -5,7 +5,9 @@ mod registry;
 
 #[doc(hidden)]
 pub use metadata::{
-    InterfaceIdentity, MethodClassification, MethodIdentity, PolicyMethod, PolicyPermission,
+    HostImportPolicyError, HostImportPolicyMetadata, InterfaceIdentity, MethodClassification,
+    MethodIdentity, PolicyMethod, PolicyPermission, ValidatedInterfacePolicy,
+    validate_interface_policy,
 };
 pub use registry::CapabilityRegistrationError;
 pub(crate) use registry::CapabilityRegistry;

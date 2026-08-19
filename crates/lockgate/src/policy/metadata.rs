@@ -1,3 +1,5 @@
+use std::{error::Error, fmt};
+
 use lockgate_policy::{Permission, Scope, ScopeError, ScopedPermission};
 
 /// Stable identity of one generated imported WIT interface.
@@ -209,5 +211,259 @@ impl PolicyMethod {
     #[doc(hidden)]
     pub const fn classification(self) -> MethodClassification {
         self.classification
+    }
+}
+
+/// A generated host-import policy slot does not match its binding companion.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HostImportPolicyError {
+    WrongInterface {
+        expected: InterfaceIdentity,
+        found: InterfaceIdentity,
+        method: MethodIdentity,
+    },
+    UnknownMethod {
+        interface: InterfaceIdentity,
+        method: MethodIdentity,
+    },
+    DuplicateMethod {
+        interface: InterfaceIdentity,
+        method: MethodIdentity,
+    },
+    MissingMethod {
+        interface: InterfaceIdentity,
+        method: MethodIdentity,
+    },
+}
+
+impl fmt::Display for HostImportPolicyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WrongInterface {
+                expected,
+                found,
+                method,
+            } => write!(
+                formatter,
+                "host policy method `{}` names interface `{}` but binding construction expected `{}`",
+                method.rust_name(),
+                DisplayInterface(*found),
+                DisplayInterface(*expected),
+            ),
+            Self::UnknownMethod { interface, method } => write!(
+                formatter,
+                "host policy for interface `{}` names unknown method `{}` (WIT `{}`)",
+                DisplayInterface(*interface),
+                method.rust_name(),
+                method.wit_name(),
+            ),
+            Self::DuplicateMethod { interface, method } => write!(
+                formatter,
+                "host policy for interface `{}` classifies method `{}` more than once",
+                DisplayInterface(*interface),
+                method.rust_name(),
+            ),
+            Self::MissingMethod { interface, method } => write!(
+                formatter,
+                "host policy for interface `{}` does not classify method `{}` (WIT `{}`)",
+                DisplayInterface(*interface),
+                method.rust_name(),
+                method.wit_name(),
+            ),
+        }
+    }
+}
+
+impl Error for HostImportPolicyError {}
+
+struct DisplayInterface(InterfaceIdentity);
+
+impl fmt::Display for DisplayInterface {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.name())?;
+        if let Some(version) = self.0.version() {
+            write!(formatter, "@{version}")?;
+        }
+        Ok(())
+    }
+}
+
+/// One interface slot validated against its generated binding companion.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct ValidatedInterfacePolicy {
+    interface: InterfaceIdentity,
+    methods: Vec<PolicyMethod>,
+}
+
+/// Deterministic policy metadata retained by `HostBuilder` for later wiring.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+pub struct HostImportPolicyMetadata {
+    interfaces: Vec<ValidatedInterfacePolicy>,
+}
+
+impl HostImportPolicyMetadata {
+    /// Reserved for generated host bindings.
+    #[doc(hidden)]
+    pub fn __new(mut interfaces: Vec<ValidatedInterfacePolicy>) -> Self {
+        interfaces
+            .sort_by_key(|interface| (interface.interface.name(), interface.interface.version()));
+        Self { interfaces }
+    }
+
+    pub(crate) fn interfaces(&self) -> &[ValidatedInterfacePolicy] {
+        &self.interfaces
+    }
+}
+
+impl ValidatedInterfacePolicy {
+    pub(crate) const fn interface(&self) -> InterfaceIdentity {
+        self.interface
+    }
+
+    pub(crate) fn methods(&self) -> &[PolicyMethod] {
+        &self.methods
+    }
+}
+
+/// Validates and normalizes one generated interface policy slot.
+#[doc(hidden)]
+pub fn validate_interface_policy(
+    interface: InterfaceIdentity,
+    expected_methods: &[MethodIdentity],
+    policy_methods: &[PolicyMethod],
+) -> Result<ValidatedInterfacePolicy, HostImportPolicyError> {
+    if policy_methods.is_empty() {
+        return Ok(ValidatedInterfacePolicy {
+            interface,
+            methods: Vec::new(),
+        });
+    }
+
+    for (index, policy) in policy_methods.iter().enumerate() {
+        if policy.interface() != interface {
+            return Err(HostImportPolicyError::WrongInterface {
+                expected: interface,
+                found: policy.interface(),
+                method: policy.method(),
+            });
+        }
+        if !expected_methods.contains(&policy.method()) {
+            return Err(HostImportPolicyError::UnknownMethod {
+                interface,
+                method: policy.method(),
+            });
+        }
+        if policy_methods[..index]
+            .iter()
+            .any(|earlier| earlier.method() == policy.method())
+        {
+            return Err(HostImportPolicyError::DuplicateMethod {
+                interface,
+                method: policy.method(),
+            });
+        }
+    }
+
+    let mut methods = Vec::with_capacity(expected_methods.len());
+    for expected in expected_methods {
+        let Some(policy) = policy_methods
+            .iter()
+            .find(|policy| policy.method() == *expected)
+        else {
+            return Err(HostImportPolicyError::MissingMethod {
+                interface,
+                method: *expected,
+            });
+        };
+        methods.push(*policy);
+    }
+    Ok(ValidatedInterfacePolicy { interface, methods })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const INTERFACE: InterfaceIdentity = InterfaceIdentity::__new("test:policy/vm", Some("1.0.0"));
+    const OTHER_INTERFACE: InterfaceIdentity = InterfaceIdentity::__new("test:policy/other", None);
+    const FIRST: MethodIdentity = MethodIdentity::__new("first", "first");
+    const SECOND: MethodIdentity = MethodIdentity::__new("second", "second");
+    const UNKNOWN: MethodIdentity = MethodIdentity::__new("unknown", "unknown");
+    const EXPECTED: &[MethodIdentity] = &[FIRST, SECOND];
+
+    const fn free(interface: InterfaceIdentity, method: MethodIdentity) -> PolicyMethod {
+        PolicyMethod::__no_capability_required(interface, method, "metadata validator fixture")
+    }
+
+    #[test]
+    fn empty_slots_are_the_only_incomplete_slots_tolerated_during_f1() {
+        assert!(
+            validate_interface_policy(INTERFACE, EXPECTED, &[])
+                .unwrap()
+                .methods()
+                .is_empty()
+        );
+        assert!(matches!(
+            validate_interface_policy(INTERFACE, EXPECTED, &[free(INTERFACE, FIRST)]),
+            Err(HostImportPolicyError::MissingMethod { method: SECOND, .. })
+        ));
+    }
+
+    #[test]
+    fn validation_names_wrong_unknown_and_duplicate_identities() {
+        assert!(matches!(
+            validate_interface_policy(
+                INTERFACE,
+                EXPECTED,
+                &[free(OTHER_INTERFACE, FIRST), free(INTERFACE, SECOND)]
+            ),
+            Err(HostImportPolicyError::WrongInterface {
+                found: OTHER_INTERFACE,
+                method: FIRST,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_interface_policy(
+                INTERFACE,
+                EXPECTED,
+                &[free(INTERFACE, FIRST), free(INTERFACE, UNKNOWN)]
+            ),
+            Err(HostImportPolicyError::UnknownMethod {
+                method: UNKNOWN,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_interface_policy(
+                INTERFACE,
+                EXPECTED,
+                &[free(INTERFACE, FIRST), free(INTERFACE, FIRST)]
+            ),
+            Err(HostImportPolicyError::DuplicateMethod { method: FIRST, .. })
+        ));
+    }
+
+    #[test]
+    fn validated_metadata_uses_companion_order() {
+        let validated = validate_interface_policy(
+            INTERFACE,
+            EXPECTED,
+            &[free(INTERFACE, SECOND), free(INTERFACE, FIRST)],
+        )
+        .unwrap();
+        assert_eq!(validated.interface(), INTERFACE);
+        assert_eq!(
+            validated
+                .methods()
+                .iter()
+                .map(|method| method.method())
+                .collect::<Vec<_>>(),
+            [FIRST, SECOND]
+        );
     }
 }

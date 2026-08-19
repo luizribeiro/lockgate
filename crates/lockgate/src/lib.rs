@@ -20,14 +20,14 @@ mod validate;
 pub use inspection::{InspectError, Inspection, inspect};
 pub use jobs::{DetachError, DetachedJobFailure, JobId};
 pub use lifecycle::{
-    Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, InvocationCtx,
-    LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
+    Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, HostConstructionError,
+    InvocationCtx, LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
 pub use lockgate_policy::{
     CapabilityContract, Permission, Scope, ScopeError, ScopeRepr, ScopedPermission, capability,
     check_scope_laws,
 };
-pub use policy::CapabilityRegistrationError;
+pub use policy::{CapabilityRegistrationError, HostImportPolicyError};
 
 /// Generates typed application bindings for a WIT world.
 ///
@@ -66,6 +66,11 @@ impl<T: Send + Sync + 'static> CallContext for T {}
 /// returns, so later calls never observe them. Put intentionally shared state
 /// in fields such as [`std::sync::Arc`].
 pub trait HostImports<S>: Clone + Send + Sync + 'static {
+    #[doc(hidden)]
+    fn policy_metadata() -> Result<__private::HostImportPolicyMetadata, HostImportPolicyError> {
+        Ok(__private::HostImportPolicyMetadata::default())
+    }
+
     #[doc(hidden)]
     fn add_to_linker(
         &self,
@@ -126,7 +131,9 @@ pub mod __private {
     pub use crate::exec::StoreCtx;
     pub use crate::jobs::DetachedJobContext;
     pub use crate::policy::{
-        InterfaceIdentity, MethodClassification, MethodIdentity, PolicyMethod, PolicyPermission,
+        HostImportPolicyError, HostImportPolicyMetadata, InterfaceIdentity, MethodClassification,
+        MethodIdentity, PolicyMethod, PolicyPermission, ValidatedInterfacePolicy,
+        validate_interface_policy,
     };
     pub use lockgate_policy;
     pub use wasmtime;

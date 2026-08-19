@@ -96,6 +96,12 @@ pub(crate) struct CapabilityRegistry {
 }
 
 impl CapabilityRegistry {
+    pub(crate) fn contains(&self, capability: &str, permission: &str) -> bool {
+        self.capabilities
+            .get(capability)
+            .is_some_and(|permissions| permissions.contains_key(permission))
+    }
+
     pub(crate) fn register<C: CapabilityContract>(
         &mut self,
     ) -> Result<(), CapabilityRegistrationError> {

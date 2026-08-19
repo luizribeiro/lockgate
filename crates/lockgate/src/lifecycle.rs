@@ -16,7 +16,10 @@ use crate::exec::{
 };
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
 use crate::jobs::{DetachedJobContext, DetachedJobFailure, JobTracker};
-use crate::policy::{CapabilityRegistrationError, CapabilityRegistry};
+use crate::policy::{
+    CapabilityRegistrationError, CapabilityRegistry, HostImportPolicyError,
+    HostImportPolicyMetadata,
+};
 use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
 
@@ -183,6 +186,7 @@ pub struct HostBuilder<S: CallContext> {
     admitted: Vec<AdmittedPlugin<S>>,
     jobs: std::sync::Arc<JobTracker>,
     registry: CapabilityRegistry,
+    policy_metadata: HostImportPolicyMetadata,
 }
 
 struct AdmittedPlugin<S: 'static> {
@@ -217,9 +221,14 @@ impl<S: CallContext> HostBuilder<S> {
     ///
     /// Generated bindings implement [`crate::HostImports`] for the supplied
     /// value. Pass `()` when admitted plugins import no application functions.
-    pub fn new<I: crate::HostImports<S>>(imports: I) -> Result<Self, EngineError> {
-        let engine = ExecEngine::new().map_err(EngineError::new)?;
-        let jobs = JobTracker::new().map_err(EngineError::new)?;
+    pub fn new<I: crate::HostImports<S>>(imports: I) -> Result<Self, HostConstructionError> {
+        let policy_metadata = I::policy_metadata().map_err(HostConstructionError::HostImports)?;
+        let engine = ExecEngine::new()
+            .map_err(EngineError::new)
+            .map_err(HostConstructionError::Engine)?;
+        let jobs = JobTracker::new()
+            .map_err(EngineError::new)
+            .map_err(HostConstructionError::Engine)?;
         Ok(Self {
             id: HostId::next(),
             engine,
@@ -229,6 +238,7 @@ impl<S: CallContext> HostBuilder<S> {
             admitted: Vec::new(),
             jobs,
             registry: CapabilityRegistry::default(),
+            policy_metadata,
         })
     }
 
@@ -270,6 +280,7 @@ impl<S: CallContext> HostBuilder<S> {
         bytes: &[u8],
         config: PluginConfig,
     ) -> Result<Prepared, AdmissionError> {
+        self.validate_policy_permissions()?;
         let unavailable_field = config.unavailable_field();
         let sections = decode_sections(bytes).map_err(AdmissionError::from_inspection)?;
         let metadata = decode_metadata(&sections).map_err(AdmissionError::from_inspection)?;
@@ -307,6 +318,28 @@ impl<S: CallContext> HostBuilder<S> {
             inspection,
             artifact: Box::new(artifact),
         })
+    }
+
+    fn validate_policy_permissions(&self) -> Result<(), AdmissionError> {
+        for interface in self.policy_metadata.interfaces() {
+            for method in interface.methods() {
+                let Some(permission) = method.classification().permission() else {
+                    continue;
+                };
+                if !self
+                    .registry
+                    .contains(permission.capability(), permission.permission())
+                {
+                    return Err(AdmissionError::UnregisteredGuardPermission {
+                        atom: AtomKey::new(permission.capability(), permission.permission())
+                            .expect("typed permissions always contain a valid wire atom"),
+                        interface: interface.interface().name(),
+                        method: method.method().wit_name(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Rejects declared needs before consulting acceptance while need/grant
@@ -501,6 +534,34 @@ impl fmt::Display for EngineError {
 
 impl Error for EngineError {}
 
+/// A typed failure while constructing a [`HostBuilder`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum HostConstructionError {
+    /// Lockgate could not initialize its pinned execution engine.
+    Engine(EngineError),
+    /// Generated host-import policy metadata did not match its binding companion.
+    HostImports(HostImportPolicyError),
+}
+
+impl fmt::Display for HostConstructionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Engine(error) => error.fmt(formatter),
+            Self::HostImports(error) => write!(formatter, "invalid host-import policy: {error}"),
+        }
+    }
+}
+
+impl Error for HostConstructionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Engine(error) => Some(error),
+            Self::HostImports(error) => Some(error),
+        }
+    }
+}
+
 /// A typed failure while preparing a plugin for admission.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -522,6 +583,11 @@ pub enum AdmissionError {
     },
     UnregisteredCapability {
         atom: AtomKey,
+    },
+    UnregisteredGuardPermission {
+        atom: AtomKey,
+        interface: &'static str,
+        method: &'static str,
     },
     SmokeOutOfBudget,
     SmokeFailure {
@@ -656,6 +722,14 @@ impl fmt::Display for AdmissionError {
             Self::UnregisteredCapability { atom } => write!(
                 formatter,
                 "plugin declares capability `{atom}` that the application never registered"
+            ),
+            Self::UnregisteredGuardPermission {
+                atom,
+                interface,
+                method,
+            } => write!(
+                formatter,
+                "host import `{interface}.{method}` requires permission `{atom}`, but the application never registered that permission"
             ),
             Self::SmokeOutOfBudget => formatter
                 .write_str("plugin exhausted its startup budget during smoke instantiation"),

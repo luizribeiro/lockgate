@@ -1379,11 +1379,33 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                 __lockgate_host_bindings::#(#path)::*::__lockgate_register(linker)?;
             }
         });
+        let policy_interfaces = interfaces.iter().map(|interface| {
+            let path = &interface.path;
+            quote! {
+                #lockgate::__private::validate_interface_policy(
+                    __lockgate_host_bindings::#(#path)::*::__LockgateBinding::INTERFACE,
+                    __lockgate_host_bindings::#(#path)::*::__LockgateBinding::METHODS,
+                    <#imports as __lockgate_host_bindings::#(#path)::*::__LockgateHost>::
+                        __LOCKGATE_POLICY_METHODS,
+                )?
+            }
+        });
         quote! {
             impl #lockgate::HostImports<#data> for #imports
             where
                 #(#host_bounds)*
             {
+                fn policy_metadata() -> ::core::result::Result<
+                    #lockgate::__private::HostImportPolicyMetadata,
+                    #lockgate::__private::HostImportPolicyError,
+                > {
+                    ::core::result::Result::Ok(
+                        #lockgate::__private::HostImportPolicyMetadata::__new(
+                            ::std::vec![#(#policy_interfaces),*],
+                        ),
+                    )
+                }
+
                 fn add_to_linker(
                     &self,
                     linker: &mut #lockgate::__private::wasmtime::component::Linker<

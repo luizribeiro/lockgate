@@ -1,4 +1,7 @@
-use lockgate::{HostCtx, Scope, ScopeRepr};
+use lockgate::{
+    AdmissionError, HostConstructionError, HostCtx, HostImportPolicyError, PluginConfig, Scope,
+    ScopeRepr,
+};
 
 #[derive(Clone, PartialEq, Eq, ScopeRepr)]
 enum VmScope {
@@ -101,4 +104,90 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
         methods[3].classification().reason(),
         Some("returns only a static protocol version")
     );
+}
+
+#[test]
+fn generated_host_import_construction_rejects_a_mismatched_slot() {
+    let error = match lockgate::HostBuilder::new(mismatched_slot::Imports) {
+        Ok(_) => panic!("mismatched generated policy slot was accepted"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        HostConstructionError::HostImports(HostImportPolicyError::WrongInterface {
+            method,
+            ..
+        }) if method.wit_name() == "create"
+    ));
+    assert!(error.to_string().contains("test:wrong/vm"));
+    assert!(error.to_string().contains("test:guarded/vm@1.2.3"));
+}
+
+#[tokio::test]
+async fn preparation_rejects_an_unregistered_guard_permission() {
+    let mut builder = lockgate::HostBuilder::new(Imports).unwrap();
+    let error = builder
+        .prepare("unused", b"not inspected", PluginConfig::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AdmissionError::UnregisteredGuardPermission {
+            ref atom,
+            interface: "test:guarded/vm",
+            method: "create",
+        } if atom.to_string() == "vm.create"
+    ));
+
+    let mut registered = lockgate::HostBuilder::new(Imports)
+        .unwrap()
+        .register::<permissions::Contract>()
+        .unwrap();
+    let error = registered
+        .prepare("unused", b"not inspected", PluginConfig::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::Inspection(_)));
+}
+
+mod mismatched_slot {
+    use lockgate::HostCtx;
+
+    #[derive(Clone)]
+    pub struct Data;
+
+    #[derive(Clone)]
+    pub struct Imports;
+
+    lockgate::host_bindings!({
+        path: "tests/data/guarded_bindings",
+        world: "fixture",
+        imports: Imports,
+        data: Data,
+    });
+
+    impl vm::Host for Imports {
+        const __LOCKGATE_POLICY_METHODS: &'static [lockgate::__private::PolicyMethod] =
+            &[lockgate::__private::PolicyMethod::__no_capability_required(
+                lockgate::__private::InterfaceIdentity::__new("test:wrong/vm", None),
+                vm::__LockgateBinding::__LOCKGATE_METHOD_CREATE,
+                "construction validation fixture",
+            )];
+
+        async fn create(&mut self, _cx: HostCtx<'_, Data>, pool: String) -> String {
+            pool
+        }
+
+        async fn exec(&mut self, _cx: HostCtx<'_, Data>, vm: String, command: String) -> String {
+            format!("{vm}:{command}")
+        }
+
+        async fn list_pools(&mut self, _cx: HostCtx<'_, Data>) -> Vec<String> {
+            Vec::new()
+        }
+
+        async fn protocol_version(&mut self, _cx: HostCtx<'_, Data>) -> String {
+            "1".to_owned()
+        }
+    }
 }
