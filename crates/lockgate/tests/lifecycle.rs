@@ -562,6 +562,21 @@ async fn prepares_a_well_formed_sectioned_fixture() {
 }
 
 #[tokio::test]
+async fn embedded_id_does_not_gate_preparation() {
+    let bytes = well_formed_fixture();
+    let mut builder = HostBuilder::new(()).unwrap();
+
+    builder
+        .prepare(
+            "operator-assigned-instance",
+            &bytes,
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn preparation_reports_each_early_failure() {
     let base = value_component();
     let needs = NeedsManifest::empty().to_section_bytes().unwrap();
@@ -575,7 +590,6 @@ async fn preparation_reports_each_early_failure() {
         PLUGIN_NEEDS_SECTION,
         b"not JSON",
     );
-    let well_formed = well_formed_fixture();
     let mut builder = HostBuilder::new(()).unwrap();
 
     let error = builder
@@ -605,15 +619,6 @@ async fn preparation_reports_each_early_failure() {
             .to_string()
             .contains("missing required `lockgate:needs`")
     );
-
-    let configured_id = "com.example.other";
-    let error = builder
-        .prepare(configured_id, &well_formed, PluginConfig::default())
-        .await
-        .unwrap_err();
-    assert!(matches!(error, AdmissionError::PluginIdMismatch { .. }));
-    assert!(error.to_string().contains(PLUGIN_ID));
-    assert!(error.to_string().contains(configured_id));
 
     let error = builder
         .prepare(PLUGIN_ID, &malformed_needs, PluginConfig::default())

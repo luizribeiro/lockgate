@@ -365,7 +365,7 @@ impl<S: CallContext> HostBuilder<S> {
     /// 2020-12 schema, their JSON is retained for smoke and steady-state Stores.
     pub async fn prepare(
         &mut self,
-        id: &str,
+        _id: &str,
         bytes: &[u8],
         config: PluginConfig,
     ) -> Result<Prepared, AdmissionError> {
@@ -373,12 +373,6 @@ impl<S: CallContext> HostBuilder<S> {
         let unavailable_field = config.unavailable_field();
         let sections = decode_sections(bytes).map_err(AdmissionError::from_inspection)?;
         let metadata = decode_metadata(&sections).map_err(AdmissionError::from_inspection)?;
-        if metadata.id() != id {
-            return Err(AdmissionError::PluginIdMismatch {
-                configured: id.to_string(),
-                embedded: metadata.id().to_string(),
-            });
-        }
         let (needs, needs_digest) =
             decode_needs(&sections).map_err(AdmissionError::from_inspection)?;
         let exported_interfaces = validate_and_collect_exported_interfaces(bytes)
@@ -776,10 +770,6 @@ pub enum AdmissionError {
         field: &'static str,
     },
     Inspection(InspectError),
-    PluginIdMismatch {
-        configured: String,
-        embedded: String,
-    },
     UnsupportedExport(ValidationError),
     Compilation {
         message: String,
@@ -931,13 +921,6 @@ impl fmt::Display for AdmissionError {
                 "plugin {field} configuration is not yet available in this build"
             ),
             Self::Inspection(error) => error.fmt(formatter),
-            Self::PluginIdMismatch {
-                configured,
-                embedded,
-            } => write!(
-                formatter,
-                "configured plugin id `{configured}` does not match embedded id `{embedded}`"
-            ),
             Self::UnsupportedExport(error) => error.fmt(formatter),
             Self::Compilation { message } => {
                 write!(formatter, "component compilation failed: {message}")
