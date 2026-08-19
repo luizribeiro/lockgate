@@ -13,6 +13,7 @@ mod exec;
 mod inspection;
 mod jobs;
 mod lifecycle;
+mod policy;
 mod role;
 mod validate;
 
@@ -26,6 +27,7 @@ pub use lockgate_policy::{
     CapabilityContract, Permission, Scope, ScopeError, ScopeRepr, ScopedPermission, capability,
     check_scope_laws,
 };
+pub use policy::CapabilityRegistrationError;
 
 /// Generates typed application bindings for a WIT world.
 ///

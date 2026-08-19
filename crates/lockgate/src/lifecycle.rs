@@ -16,6 +16,7 @@ use crate::exec::{
 };
 use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
 use crate::jobs::{DetachedJobContext, DetachedJobFailure, JobTracker};
+use crate::policy::{CapabilityRegistrationError, CapabilityRegistry};
 use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
 
@@ -181,6 +182,7 @@ pub struct HostBuilder<S: CallContext> {
     imports: std::sync::Arc<dyn ImportsFactory<S>>,
     admitted: Vec<AdmittedPlugin<S>>,
     jobs: std::sync::Arc<JobTracker>,
+    registry: CapabilityRegistry,
 }
 
 struct AdmittedPlugin<S: 'static> {
@@ -226,7 +228,20 @@ impl<S: CallContext> HostBuilder<S> {
             })),
             admitted: Vec::new(),
             jobs,
+            registry: CapabilityRegistry::default(),
         })
+    }
+
+    /// Registers one generated capability vocabulary with the host.
+    ///
+    /// Registration validates stable names, descriptor consistency, duplicate
+    /// declarations, and every exhaustive scope domain before retaining any
+    /// part of the contract.
+    pub fn register<C: lockgate_policy::CapabilityContract>(
+        mut self,
+    ) -> Result<Self, CapabilityRegistrationError> {
+        self.registry.register::<C>()?;
+        Ok(self)
     }
 
     /// Installs the application callback for failed or panicked detached jobs.
@@ -294,8 +309,8 @@ impl<S: CallContext> HostBuilder<S> {
         })
     }
 
-    /// Rejects declared needs before consulting acceptance while no capability
-    /// registry exists, then smoke-instantiates the prepared plugin.
+    /// Rejects declared needs before consulting acceptance while need/grant
+    /// validation is unavailable, then smoke-instantiates the prepared plugin.
     /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
     /// `startup_ctx`'s fuel, so an application-chosen startup budget may reject
     /// a constructor that steady-state calls would instantiate under the full
@@ -366,6 +381,7 @@ impl<S: CallContext> HostBuilder<S> {
             engine: self.engine,
             plugins: self.admitted,
             jobs: self.jobs,
+            registry: self.registry,
         }
     }
 }
@@ -384,6 +400,11 @@ pub struct Host<S: CallContext> {
     engine: ExecEngine,
     plugins: Vec<AdmittedPlugin<S>>,
     jobs: std::sync::Arc<JobTracker>,
+    #[allow(
+        dead_code,
+        reason = "retained for prepared grants and guard lookup in later policy slices"
+    )]
+    registry: CapabilityRegistry,
 }
 
 impl<S: CallContext> Drop for Host<S> {
