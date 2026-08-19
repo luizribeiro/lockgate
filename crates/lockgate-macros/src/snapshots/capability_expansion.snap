@@ -1,0 +1,16 @@
+/// Capability docs.
+pub mod vm {
+    use crate::{Permission, ScopedPermission};
+    pub const EXEC: crate::ScopedPermission<Instance> = ::lockgate_policy::__private::qualify_scoped_permission(
+        "vm",
+        crate::ScopedPermission::new("exec"),
+    );
+    #[allow(dead_code)]
+    /// List visible pools.
+    pub const LIST: Permission = ::lockgate_policy::__private::qualify_permission(
+        "vm",
+        Permission::new("list"),
+    );
+    pub(crate) const INTERNAL: Permission = Permission::new("internal");
+    const PRIVATE: usize = 1;
+}
