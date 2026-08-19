@@ -42,3 +42,19 @@ impl exports::test::typed_settings::guest::Guest for Fixture {
 }
 
 lockgate_plugin::export!(Fixture);
+
+#[cfg(test)]
+mod tests {
+    use super::{Settings, default_suffix};
+
+    #[test]
+    fn settings_support_native_unit_tests() {
+        let settings = Settings {
+            required: "native-value".into(),
+            suffix: default_suffix(),
+        };
+
+        assert_eq!(settings.required, "native-value");
+        assert_eq!(settings.suffix, "guest-default");
+    }
+}
