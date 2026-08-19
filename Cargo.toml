@@ -46,6 +46,7 @@ syn = { version = "2.0.110", features = ["full", "visit"] }
 tokio = "1.51.1"
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", features = ["component-model", "component-model-async"] }
 wasmtime-wasi = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", default-features = false, features = ["p2", "p3"] }
+wasmtime-wasi-http = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", default-features = false, features = ["component-model-async", "default-send-request", "p3"] }
 wasmtime-wit-bindgen = { git = "https://github.com/bytecodealliance/wasmtime", rev = "45af25f4984d14c65663ed43541d2e641752f66d", package = "wasmtime-internal-wit-bindgen", features = ["component-model-async"] }
 wasm-encoder = "0.254.0"
 wasmparser = "0.254.0"
