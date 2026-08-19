@@ -1,6 +1,6 @@
 //! Application-owned resource classification and target resolution.
 
-use std::{any::TypeId, future::Future, str::FromStr};
+use std::{any::TypeId, fmt, future::Future, str::FromStr};
 
 use lockgate_policy::{Scope, ScopeError, ScopedPermission};
 use lockgate_schema::AtomKey;
@@ -14,9 +14,18 @@ use crate::PluginHandle;
 /// before resolving or classifying a scoped target. Keeping the subject as a
 /// dedicated value leaves room for future stable subject attributes without
 /// making application policy depend on Lockgate's full plugin handle.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct PluginSubject<'a> {
     plugin: &'a PluginHandle,
+}
+
+impl fmt::Debug for PluginSubject<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PluginSubject")
+            .field("plugin_id", &self.plugin_id())
+            .finish()
+    }
 }
 
 impl<'a> PluginSubject<'a> {
@@ -356,6 +365,15 @@ mod tests {
             vm::EXEC,
             &memberships,
         ));
+    }
+
+    #[test]
+    fn subject_debug_exposes_only_the_public_plugin_id() {
+        let handle =
+            PluginHandle::for_policy_test("A", effective_grants(&[InstanceScope::CreatedByCaller]));
+        let subject = PluginSubject::new(&handle);
+
+        assert_eq!(format!("{subject:?}"), "PluginSubject { plugin_id: \"A\" }");
     }
 
     #[tokio::test]
