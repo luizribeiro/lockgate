@@ -8,6 +8,7 @@ exclude = [
     "examples/configuration/plugin",
     "examples/dispatch/plugin",
     "examples/greeter/plugin",
+    "examples/provisioning/plugin",
     "examples/workbench/plugins/counter",
     "examples/workbench/plugins/tidy",
 ]
@@ -22,6 +23,8 @@ members = [
     "examples/configuration/host",
     "examples/dispatch/host",
     "examples/greeter/host",
+    "examples/provisioning/host",
+    "examples/provisioning/policy",
     "examples/workbench/host",
 ]
 

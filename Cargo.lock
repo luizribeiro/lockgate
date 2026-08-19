@@ -1376,6 +1376,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "provisioning-host"
+version = "0.1.0"
+dependencies = [
+ "lockgate",
+ "provisioning-policy",
+ "tokio",
+]
+
+[[package]]
+name = "provisioning-policy"
+version = "0.1.0"
+dependencies = [
+ "lockgate-policy",
+]
+
+[[package]]
 name = "pulley-interpreter"
 version = "48.0.0"
 source = "git+https://github.com/bytecodealliance/wasmtime?rev=45af25f4984d14c65663ed43541d2e641752f66d#45af25f4984d14c65663ed43541d2e641752f66d"

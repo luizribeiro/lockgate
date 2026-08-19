@@ -1,0 +1,15 @@
+[package]
+name = "provisioning-plugin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Exercises Lockgate's typed VM policy from a guest plugin."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lockgate-plugin = { path = "../../../crates/lockgate-plugin" }
+provisioning-policy = { path = "../policy" }
+
+[workspace]

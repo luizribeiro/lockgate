@@ -1,0 +1,10 @@
+[package]
+name = "provisioning-host"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+lockgate = { path = "../../../crates/lockgate" }
+provisioning-policy = { path = "../policy" }
+tokio = { workspace = true, features = ["macros", "rt"] }

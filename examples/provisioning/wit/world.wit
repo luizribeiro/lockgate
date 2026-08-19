@@ -1,0 +1,23 @@
+package example:provisioning;
+
+interface vm {
+  variant vm-error {
+    denied(string),
+    not-found(string),
+  }
+
+  create: func(pool: string) -> result<string, vm-error>;
+  exec: func(vm: string, command: string) -> result<string, vm-error>;
+  destroy: func(vm: string) -> result<_, vm-error>;
+  list-pools: func() -> result<list<string>, vm-error>;
+  protocol-version: func() -> string;
+}
+
+interface provisioner {
+  run: func() -> result<list<string>, string>;
+}
+
+world plugin {
+  import vm;
+  export provisioner;
+}
