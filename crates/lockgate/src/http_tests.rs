@@ -1,7 +1,7 @@
 use std::{
     any::Any,
-    io::{Read, Write},
-    net::TcpListener,
+    io::{ErrorKind, Read, Write},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     str::FromStr,
     sync::Arc,
     thread,
@@ -58,19 +58,30 @@ async fn send(hooks: &mut HttpHooks, uri: &str) -> Result<Response<WasiBody>, Wa
         .map(|(response, _io)| response)
 }
 
-fn serve_once(response: &'static [u8]) -> (String, thread::JoinHandle<()>) {
+fn serve_once(response: &'static [u8]) -> (String, thread::JoinHandle<SocketAddr>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
-        let (mut connection, _) = listener.accept().unwrap();
+        let (mut connection, peer) = listener.accept().unwrap();
         connection
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let mut request = [0; 1024];
         let _ = connection.read(&mut request).unwrap();
         connection.write_all(response).unwrap();
+        peer
     });
     (format!("http://{address}"), server)
+}
+
+fn assert_no_connection(listener: TcpListener) {
+    listener.set_nonblocking(true).unwrap();
+    thread::sleep(Duration::from_millis(50));
+    match listener.accept() {
+        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+        Err(error) => panic!("unexpected accept error: {error}"),
+        Ok((_, peer)) => panic!("request unexpectedly connected from {peer}"),
+    }
 }
 
 #[test]
@@ -136,4 +147,46 @@ async fn redirect_to_non_granted_origin_is_refused_per_hop() {
         send(&mut hooks, location).await,
         Err(WasiHttpError::HttpRequestDenied)
     ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alternate_ipv4_spellings_connect_only_to_the_checked_origin() {
+    for alternate in ["0x7f000001", "127.1"] {
+        let (allowed, server) =
+            serve_once(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+        let granted = HttpOrigin::from_str(&allowed).unwrap();
+        let port = allowed.parse::<::http::Uri>().unwrap().port_u16().unwrap();
+        let alternate_origin = HttpOrigin::from_str(&format!("http://{alternate}:{port}")).unwrap();
+        assert_eq!(alternate_origin, granted);
+        let mut hooks = hooks_with_origins(&[granted]);
+
+        assert_eq!(
+            send(
+                &mut hooks,
+                &format!("http://{alternate}:{port}/alternate-ipv4")
+            )
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(server.join().unwrap().ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn userinfo_cannot_redirect_connection_away_from_the_checked_origin() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let granted = HttpOrigin::from_str(&format!("http://{address}")).unwrap();
+    let mut hooks = hooks_with_origins(&[granted]);
+
+    let result = send(
+        &mut hooks,
+        &format!("http://blocked.example@{address}/userinfo"),
+    )
+    .await;
+
+    assert!(matches!(result, Err(WasiHttpError::Connect(_))));
+    assert_no_connection(listener);
 }
