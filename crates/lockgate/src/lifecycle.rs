@@ -97,8 +97,9 @@ impl From<RuntimeLimits> for ExecLimits {
 
 /// Acceptance of every concrete atom in one prepared plugin request.
 ///
-/// Acceptances can only be produced by [`Prepared::accept_all`]. They retain
-/// the plugin identity and exact prepared-needs digest that admission checks.
+/// Acceptances can only be produced by [`Prepared::accept_all`] or
+/// [`Prepared::accept_reviewed`]. They retain the plugin identity and exact
+/// prepared-needs digest that admission checks.
 #[derive(Clone, Debug)]
 pub struct Acceptance {
     plugin_id: String,
@@ -708,8 +709,6 @@ impl Prepared {
 
     /// Accepts every required and optional atom in this resolved request.
     pub fn accept_all(&self) -> Acceptance {
-        // TODO: Add operator review of declared egress origins during install as
-        // part of future consent and drift handling; for now accept them as-is.
         Acceptance {
             plugin_id: self.instance_id.clone(),
             digest: self.prepared_digest,

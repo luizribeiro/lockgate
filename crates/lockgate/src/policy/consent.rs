@@ -4,7 +4,7 @@ use lockgate_schema::{GrantSet, GrantValue, NeedEntry};
 use serde::{Deserialize, Serialize};
 
 use super::{PreparedNeedsDigest, ResolvedNeeds};
-use crate::Prepared;
+use crate::{Acceptance, Prepared};
 
 /// The complete resolved permission request presented for operator approval.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +34,12 @@ pub struct ConsentRecord {
     pub approved_at: String,
 }
 
+/// The operator approval needed before this prepared instance may be admitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConsentRequired {
+    FirstRun { manifest: ConsentManifest },
+}
+
 impl Prepared {
     /// Projects this prepared request into the complete operator review surface.
     pub fn review(&self) -> ConsentManifest {
@@ -53,6 +59,24 @@ impl Prepared {
             fingerprint: manifest.fingerprint,
             grants: manifest.grants,
             approved_at,
+        }
+    }
+
+    /// Returns a provenance-bound acceptance only when this exact request was approved.
+    pub fn accept_reviewed(
+        &self,
+        prior: Option<&ConsentRecord>,
+    ) -> Result<Acceptance, ConsentRequired> {
+        match prior {
+            Some(prior)
+                if prior.instance_id == self.instance_id
+                    && prior.fingerprint == self.prepared_digest =>
+            {
+                Ok(self.accept_all())
+            }
+            None | Some(_) => Err(ConsentRequired::FirstRun {
+                manifest: self.review(),
+            }),
         }
     }
 }

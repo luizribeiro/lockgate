@@ -5,7 +5,9 @@ use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
 use wasm_encoder::{ComponentSection, CustomSection};
 
-use crate::{ConsentRecord, HostBuilder, PluginConfig};
+use crate::{
+    ConsentRecord, ConsentRequired, HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits,
+};
 
 const INSTANCE_ID: &str = "sessions-prod";
 
@@ -205,4 +207,57 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
     assert_eq!(record.grants, review.grants);
     assert_eq!(decoded, record);
     assert_eq!(decoded.approved_at, "2026-08-19T14:30:00Z");
+}
+
+#[tokio::test]
+async fn first_run_refuses_acceptance_until_explicit_approval_then_admits() {
+    let needs =
+        NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap();
+    let mut builder = builder();
+    let prepared = builder
+        .prepare(INSTANCE_ID, &fixture(&needs), PluginConfig::default())
+        .await
+        .unwrap();
+
+    let required = prepared.accept_reviewed(None).unwrap_err();
+    let ConsentRequired::FirstRun { manifest } = required;
+    assert_eq!(manifest, prepared.review());
+
+    let record = prepared.approve("2026-08-19T15:00:00Z".to_owned());
+    let acceptance = prepared.accept_reviewed(Some(&record)).unwrap();
+    let admitted = builder
+        .admit(
+            prepared,
+            acceptance,
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(admitted.id(), INSTANCE_ID);
+}
+
+#[tokio::test]
+async fn approval_for_another_instance_does_not_authorize_matching_manifest() {
+    let needs =
+        NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap();
+    let bytes = fixture(&needs);
+    let mut builder = builder();
+    let approved = builder
+        .prepare("sessions-staging", &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let record = approved.approve("2026-08-19T15:00:00Z".to_owned());
+    let current = builder
+        .prepare(INSTANCE_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+
+    let required = current.accept_reviewed(Some(&record)).unwrap_err();
+
+    assert!(matches!(
+        required,
+        ConsentRequired::FirstRun { ref manifest } if manifest.instance_id == INSTANCE_ID
+    ));
 }

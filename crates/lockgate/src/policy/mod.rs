@@ -7,7 +7,7 @@ mod registry;
 mod resolution;
 mod resources;
 
-pub use consent::{ConsentManifest, ConsentRecord, GrantReview};
+pub use consent::{ConsentManifest, ConsentRecord, ConsentRequired, GrantReview};
 pub use grants::{EffectiveGrants, PreparedNeedsDigest};
 #[doc(hidden)]
 pub use metadata::{
