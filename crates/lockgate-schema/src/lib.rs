@@ -11,5 +11,5 @@ pub use metadata::{PluginMetadata, PluginMetadataField, PluginMetadataValidation
 pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedEntry, NeedEntryError, NeedKind, NeedReasonError,
     NeedsDigest, NeedsManifest, NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError,
-    ScopeValueKind,
+    ScopeValueKind, hex_encode,
 };

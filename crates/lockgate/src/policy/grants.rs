@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use lockgate_schema::{AtomKey, GrantSet, GrantValue, NeedsDigest};
+use lockgate_schema::{AtomKey, GrantSet, GrantValue, NeedsDigest, hex_encode};
 use sha2::{Digest, Sha256};
 
 use super::ResolvedNeeds;
@@ -73,21 +73,11 @@ impl PreparedNeedsDigest {
         hash_grant_set(&mut digest, b"optional", &resolved.optional);
         Self(digest.finalize().into())
     }
-
-    fn to_hex(self) -> String {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut output = String::with_capacity(64);
-        for byte in self.0 {
-            output.push(HEX[(byte >> 4) as usize] as char);
-            output.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        output
-    }
 }
 
 impl fmt::Display for PreparedNeedsDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "sha256:{}", self.to_hex())
+        write!(formatter, "sha256:{}", hex_encode(&self.0))
     }
 }
 

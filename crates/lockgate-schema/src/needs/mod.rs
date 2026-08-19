@@ -5,7 +5,7 @@ mod entry;
 mod manifest;
 mod scope_ref;
 
-pub use digest::NeedsDigest;
+pub use digest::{NeedsDigest, hex_encode};
 pub(crate) use entry::validate_reason;
 pub use entry::{MAX_SCOPES_PER_ENTRY, NeedEntry, NeedEntryError, NeedKind, NeedReasonError};
 pub(crate) use manifest::NEEDS_FORMAT;
