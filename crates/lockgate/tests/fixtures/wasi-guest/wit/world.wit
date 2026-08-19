@@ -2,6 +2,7 @@ package test:wasi;
 
 interface guest {
   clock-seconds: func() -> u64;
+  filesystem-denied: func() -> bool;
   network-denied: func() -> bool;
 }
 

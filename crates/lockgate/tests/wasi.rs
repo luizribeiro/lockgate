@@ -36,3 +36,19 @@ async fn wasi_outbound_network_is_denied_at_runtime() -> Result<()> {
     assert!(matches!(results.as_slice(), [Val::Bool(true)]));
     Ok(())
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn wasi_filesystem_access_is_denied_at_runtime() -> Result<()> {
+    let engine = ExecEngine::new()?;
+    let loaded = engine.load::<TestState>(&common::WASI_FIXTURE, |_| Ok(()))?;
+    let open = loaded
+        .export("test:wasi/guest", "filesystem-denied")
+        .expect("filesystem denial export should resolve structurally");
+
+    let results = loaded
+        .invoke(open, &[], TestState, LIMITS, INVOCATION_FUEL)
+        .await?;
+
+    assert!(matches!(results.as_slice(), [Val::Bool(true)]));
+    Ok(())
+}

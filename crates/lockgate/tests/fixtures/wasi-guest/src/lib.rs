@@ -25,6 +25,13 @@ impl exports::test::wasi::guest::Guest for Fixture {
             .kind()
             == ErrorKind::PermissionDenied
     }
+
+    fn filesystem_denied() -> bool {
+        std::fs::File::open("/lockgate-no-filesystem-grant")
+            .expect_err("the default WASI context must deny filesystem access")
+            .kind()
+            == ErrorKind::NotFound
+    }
 }
 
 export!(Fixture);
