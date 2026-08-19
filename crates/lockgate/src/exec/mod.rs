@@ -14,6 +14,7 @@ use wasmtime::component::{
 use wasmtime::{Config, Engine, ResourceLimiter, Store};
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use super::config::{SettingsState, ValidatedSettings, add_settings_to_linker};
 use super::jobs::DetachedJobContext;
@@ -23,6 +24,7 @@ use super::policy::ResourceStore;
 use lockgate::__private::ResourceStore;
 
 mod errors;
+mod wasi_http;
 
 pub(crate) use errors::{ExecError, LoadError};
 use errors::{MemoryLimitExceeded, map_call_error, map_dispatch_error, map_instantiate_error};
@@ -31,6 +33,7 @@ use errors::{MemoryLimitExceeded, map_call_error, map_dispatch_error, map_instan
     reason = "later host adapters consume the marker helper and trap detail"
 )]
 pub(crate) use errors::{TrapDetail, host_import_error};
+use wasi_http::HttpHooks;
 
 pub(crate) struct ExecEngine {
     engine: Engine,
@@ -297,6 +300,8 @@ pub struct StoreCtx<S> {
     resources: ResourceStore,
     settings: SettingsState,
     wasi: WasiCtx,
+    wasi_http: WasiHttpCtx,
+    http_hooks: HttpHooks,
     wasi_resources: ResourceTable,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
@@ -311,6 +316,7 @@ impl<S> StoreCtx<S> {
         settings: SettingsState,
         max_memory_bytes: usize,
     ) -> Self {
+        let http_hooks = HttpHooks::new(plugin.clone());
         Self {
             limiter: MemoryLimiter { max_memory_bytes },
             data: Arc::new(data),
@@ -324,6 +330,8 @@ impl<S> StoreCtx<S> {
             // these grants absent prevents plugins from bypassing Lockgate's
             // capability checks through raw WASI sockets or paths.
             wasi: WasiCtxBuilder::new().build(),
+            wasi_http: WasiHttpCtx::new(),
+            http_hooks,
             wasi_resources: ResourceTable::new(),
             #[cfg(test)]
             drop_probe: None,
@@ -384,6 +392,16 @@ impl<S: Send + Sync> WasiView for StoreCtx<S> {
         WasiCtxView {
             ctx: &mut self.wasi,
             table: &mut self.wasi_resources,
+        }
+    }
+}
+
+impl<S: Send + Sync> WasiHttpView for StoreCtx<S> {
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.wasi_http,
+            table: &mut self.wasi_resources,
+            hooks: &mut self.http_hooks,
         }
     }
 }

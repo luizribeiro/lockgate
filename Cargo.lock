@@ -1240,6 +1240,9 @@ name = "lockgate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
+ "http",
+ "http-body-util",
  "jsonschema",
  "lockgate-macros",
  "lockgate-policy",

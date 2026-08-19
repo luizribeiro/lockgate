@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow = "1"
+http.workspace = true
 jsonschema = { version = "0.49.2", default-features = false }
 lockgate-schema = { path = "../lockgate-schema" }
 lockgate-macros = { path = "../lockgate-macros" }
@@ -19,6 +20,8 @@ wasmtime-wasi-http.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
+bytes = "1"
+http-body-util = "0.1"
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 trybuild = "1"
 wasm-encoder.workspace = true
