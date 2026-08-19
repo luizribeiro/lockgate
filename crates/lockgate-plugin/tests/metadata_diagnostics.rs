@@ -2,16 +2,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const FIXTURE_PREAMBLE: &str =
+    "lockgate_plugin::generate!({ path: \"wit\", world: \"plugin\" });\n";
+const FIXTURE_WIT: &str = "package test:metadata;\nworld plugin {}\n";
+
 #[test]
 fn metadata_source_failures_have_field_specific_diagnostics() {
     check_compile_failure(
         "missing-description",
         r#"
 use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
-
-macro_rules! __lockgate_wit_export {
-    ($plugin:ident) => {};
-}
 
 struct MissingDescription;
 
@@ -35,10 +35,6 @@ export!(MissingDescription);
         r#"
 use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
 
-macro_rules! __lockgate_wit_export {
-    ($plugin:ident) => {};
-}
-
 struct AbsentName;
 
 impl Plugin for AbsentName {
@@ -61,10 +57,6 @@ export!(AbsentName);
         "absent-version",
         r#"
 use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
-
-macro_rules! __lockgate_wit_export {
-    ($plugin:ident) => {};
-}
 
 struct AbsentVersion;
 
@@ -91,8 +83,14 @@ fn check_compile_failure(case: &str, source: &str, expected: &str) {
     let target = fixture.join("target");
     let _ = fs::remove_dir_all(&fixture);
     fs::create_dir_all(fixture.join("src")).unwrap();
+    fs::create_dir_all(fixture.join("wit")).unwrap();
     fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), source).unwrap();
+    fs::write(
+        fixture.join("src/lib.rs"),
+        format!("{FIXTURE_PREAMBLE}{source}"),
+    )
+    .unwrap();
+    fs::write(fixture.join("wit/world.wit"), FIXTURE_WIT).unwrap();
 
     let output = Command::new(env!("CARGO"))
         .args([
