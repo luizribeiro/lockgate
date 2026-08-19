@@ -22,8 +22,14 @@ mod permissions {
 }
 
 #[derive(Clone)]
+struct Session {
+    owner: String,
+}
+
+#[derive(Clone)]
 struct CallData {
     vm: String,
+    session: Session,
 }
 
 #[derive(Clone)]
@@ -43,9 +49,9 @@ impl vm::Host for Imports {
         pool
     }
 
-    #[lockgate::requires(permission = permissions::EXEC, target = cx.data().vm)]
+    #[lockgate::requires(permission = permissions::EXEC, target = cx.data().session.owner)]
     async fn exec(&mut self, cx: HostCtx<'_, CallData>, vm: String, command: String) -> String {
-        let _ = &cx.data().vm;
+        let _ = (&cx.data().vm, &cx.data().session.owner);
         format!("{vm}:{command}")
     }
 
@@ -90,7 +96,7 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
         (permission.capability(), permission.permission()),
         ("vm", "exec")
     );
-    assert_eq!(exec.target(), Some("cx.data().vm"));
+    assert_eq!(exec.target(), Some("cx.data().session.owner"));
 
     let list = methods[2].classification();
     let permission = list.permission().unwrap();
