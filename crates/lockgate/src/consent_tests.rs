@@ -3,9 +3,9 @@ use std::str::FromStr;
 use lockgate_policy::{Scope, ScopeError, ScopeRepr};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
-use wasm_encoder::{ComponentSection, CustomSection};
 
 use crate::policy::diff_grants;
+use crate::test_support::{settings_schema_component, with_section};
 use crate::{
     ConsentRecord, ConsentRequired, DriftKind, GrantReview, HostBuilder, InvocationCtx,
     PluginConfig, RuntimeLimits,
@@ -92,54 +92,18 @@ fn builder() -> HostBuilder<()> {
 
 fn fixture(needs: &NeedsManifest) -> Vec<u8> {
     let schema = r#"{"type":"object","properties":{"scope":{"type":"string"}},"additionalProperties":false}"#;
-    let encoded = schema
-        .as_bytes()
-        .iter()
-        .map(|byte| format!(r"\{byte:02x}"))
-        .collect::<String>();
-    let mut bytes = wat::parse_str(format!(
-        r#"(component
-            (core module $guest
-                (memory (export "memory") 1)
-                (data (i32.const 64) "{encoded}")
-                (func (export "settings-schema") (result i32)
-                    (i32.store (i32.const 8) (i32.const 64))
-                    (i32.store offset=4 (i32.const 8) (i32.const {length}))
-                    (i32.const 8)
-                )
-            )
-            (core instance $guest-instance (instantiate $guest))
-            (func $settings-schema (result string)
-                (canon lift
-                    (core func $guest-instance "settings-schema")
-                    (memory (core memory $guest-instance "memory"))
-                )
-            )
-            (instance $schema
-                (export "settings-schema" (func $settings-schema))
-            )
-            (export "lockgate:config/schema" (instance $schema))
-        )"#,
-        length = schema.len(),
-    ))
-    .unwrap();
-    for (name, data) in [
-        (
+    with_section(
+        with_section(
+            settings_schema_component(schema),
             PLUGIN_METADATA_SECTION,
-            PluginMetadata::new("author.sessions", "Session helper", "2.0")
+            &PluginMetadata::new("author.sessions", "Session helper", "2.0")
                 .unwrap()
                 .to_section_bytes()
                 .unwrap(),
         ),
-        (PLUGIN_NEEDS_SECTION, needs.to_section_bytes().unwrap()),
-    ] {
-        CustomSection {
-            name: name.into(),
-            data: data.into(),
-        }
-        .append_to_component(&mut bytes);
-    }
-    bytes
+        PLUGIN_NEEDS_SECTION,
+        &needs.to_section_bytes().unwrap(),
+    )
 }
 
 #[tokio::test]

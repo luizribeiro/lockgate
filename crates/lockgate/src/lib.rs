@@ -24,6 +24,8 @@ mod jobs;
 mod lifecycle;
 mod policy;
 mod role;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod validate;
 
 pub use inspection::{InspectError, Inspection, inspect};
