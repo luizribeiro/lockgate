@@ -143,3 +143,53 @@ impl CapabilityRegistry {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use lockgate_policy::{
+        __private::{ErasedPermission, erase_permission, qualify_permission},
+        CapabilityContract, Permission,
+    };
+
+    use super::{CapabilityRegistrationError, CapabilityRegistry};
+
+    const READ: Permission = qualify_permission("sessions", Permission::new("read"));
+    const MALFORMED: Permission = qualify_permission("sessions", Permission::new("Read_All"));
+    static PARTIALLY_INVALID: [ErasedPermission; 2] =
+        [erase_permission(READ), erase_permission(MALFORMED)];
+    static VALID: [ErasedPermission; 1] = [erase_permission(READ)];
+
+    struct MidValidationFailure;
+
+    impl CapabilityContract for MidValidationFailure {
+        const ID: &'static str = "sessions";
+
+        fn permissions() -> &'static [ErasedPermission] {
+            &PARTIALLY_INVALID
+        }
+    }
+
+    struct ValidContract;
+
+    impl CapabilityContract for ValidContract {
+        const ID: &'static str = "sessions";
+
+        fn permissions() -> &'static [ErasedPermission] {
+            &VALID
+        }
+    }
+
+    #[test]
+    fn failed_registration_does_not_reserve_the_capability_id() {
+        let mut registry = CapabilityRegistry::default();
+
+        assert!(matches!(
+            registry.register::<MidValidationFailure>(),
+            Err(CapabilityRegistrationError::MalformedPermissionId {
+                capability: "sessions",
+                permission: "Read_All",
+            })
+        ));
+        registry.register::<ValidContract>().unwrap();
+    }
+}
