@@ -95,6 +95,8 @@ pub(crate) fn diff_grants(before: &[GrantReview], after: &[GrantReview]) -> Drif
 }
 
 fn scope_change(before: &GrantReview, after: &GrantReview) -> Option<DriftKind> {
+    // `resolve_needs` rejects declaration kinds that disagree with a capability's
+    // const-fixed scopedness, so one atom cannot transition from scoped to flag here.
     let before = before.scopes.iter().collect::<BTreeSet<_>>();
     let after = after.scopes.iter().collect::<BTreeSet<_>>();
     if before == after {
