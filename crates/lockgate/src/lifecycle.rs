@@ -595,6 +595,7 @@ fn validate_http_egress_grant(
     let Some(origin_count) = origin_count else {
         return Ok(false);
     };
+    // Needs decoding rejects empty scoped needs first; retain this as defense in depth.
     if origin_count == 0 {
         return Err(AdmissionError::EmptyHttpEgressOrigins {
             plugin: plugin.to_owned(),
@@ -1258,17 +1259,29 @@ mod grant_tests {
         ));
     }
 
-    #[test]
-    fn empty_http_egress_origin_set_is_rejected_at_grant_time() {
-        assert!(matches!(
-            validate_http_egress_grant(
-                "empty-http",
-                &["wasi:http/client@0.3.0".to_owned()],
-                Some(0),
+    #[tokio::test]
+    async fn empty_http_egress_origin_set_is_rejected_during_inspection() {
+        let metadata = PluginMetadata::new("empty-http", "Empty HTTP", "1.0").unwrap();
+        let raw_needs = br#"{"format":1,"optional":{},"reasons":{},"required":{"http.egress":[]}}"#;
+        let component = with_section(
+            with_section(
+                component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
             ),
-            Err(AdmissionError::EmptyHttpEgressOrigins { ref plugin })
-                if plugin == "empty-http"
-        ));
+            PLUGIN_NEEDS_SECTION,
+            raw_needs,
+        );
+        let mut builder = HostBuilder::new(()).unwrap();
+
+        let error = builder
+            .prepare("empty-http", &component, PluginConfig::default())
+            .await
+            .unwrap_err();
+        let message = error.to_string();
+
+        assert!(matches!(error, AdmissionError::Inspection(_)));
+        assert!(message.contains("scoped need must contain at least one scope"));
     }
 
     fn with_section(mut component: Vec<u8>, name: &str, data: &[u8]) -> Vec<u8> {
