@@ -253,6 +253,25 @@ impl PluginHandle {
         &self.registry
     }
 
+    /// Reserved for framework-owned mediated capability adapters.
+    #[doc(hidden)]
+    pub fn __scoped_access_allowed<T>(
+        &self,
+        permission: lockgate_policy::ScopedPermission<T>,
+        memberships: &[T],
+    ) -> bool
+    where
+        T: lockgate_policy::Scope,
+        <T as core::str::FromStr>::Err: Into<lockgate_policy::ScopeError>,
+    {
+        crate::policy::scoped_access_allowed(
+            self.capability_registry(),
+            self.effective_grants(),
+            permission,
+            memberships,
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn for_policy_test(plugin_id: &str, effective_grants: EffectiveGrants) -> Self {
         Self::for_policy_test_with_registry(

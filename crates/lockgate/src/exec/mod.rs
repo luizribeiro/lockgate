@@ -24,7 +24,7 @@ use super::policy::ResourceStore;
 use lockgate::__private::ResourceStore;
 
 mod errors;
-mod wasi_http;
+pub(crate) mod wasi_http;
 
 pub(crate) use errors::{ExecError, LoadError};
 use errors::{MemoryLimitExceeded, map_call_error, map_dispatch_error, map_instantiate_error};
@@ -416,7 +416,7 @@ fn add_wasi_to_linker<S: Send + Sync + 'static>(
     Ok(())
 }
 
-fn add_http_to_linker<S: Send + Sync + 'static>(
+pub(crate) fn add_http_to_linker<S: Send + Sync + 'static>(
     linker: &mut Linker<StoreCtx<S>>,
     has_http_egress: bool,
 ) -> WasmtimeResult<()> {

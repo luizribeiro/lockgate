@@ -15,6 +15,8 @@ mod config;
     )
 )]
 mod exec;
+#[cfg(test)]
+mod http_tests;
 mod inspection;
 mod jobs;
 mod lifecycle;
