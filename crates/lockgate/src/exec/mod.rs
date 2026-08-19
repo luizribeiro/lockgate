@@ -9,10 +9,11 @@ use std::sync::Arc;
 use std::{any::Any, marker::PhantomData};
 
 use wasmtime::component::{
-    Component, ComponentExportIndex, InstancePre, Linker, Val, types::ComponentItem,
+    Component, ComponentExportIndex, InstancePre, Linker, ResourceTable, Val, types::ComponentItem,
 };
 use wasmtime::{Config, Engine, ResourceLimiter, Store};
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use super::config::{SettingsState, ValidatedSettings, add_settings_to_linker};
 use super::jobs::DetachedJobContext;
@@ -82,6 +83,7 @@ impl ExecEngine {
         let component = self.compile(bytes)?;
         let mut linker = Linker::new(&self.engine);
         add_settings_to_linker(&mut linker).map_err(LoadError::link)?;
+        add_wasi_to_linker(&mut linker).map_err(LoadError::link)?;
         imports(&mut linker).map_err(LoadError::link)?;
         let instance_pre = linker
             .instantiate_pre(&component)
@@ -104,6 +106,7 @@ impl ExecEngine {
     ) -> Result<LoadedComponent<S>, LoadError> {
         let mut linker = Linker::new(&self.engine);
         add_settings_to_linker(&mut linker).map_err(LoadError::link)?;
+        add_wasi_to_linker(&mut linker).map_err(LoadError::link)?;
         imports
             .register(&mut linker, interfaces)
             .map_err(LoadError::link)?;
@@ -293,6 +296,8 @@ pub struct StoreCtx<S> {
     jobs: Option<DetachedJobContext>,
     resources: ResourceStore,
     settings: SettingsState,
+    wasi: WasiCtx,
+    wasi_resources: ResourceTable,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
 }
@@ -314,6 +319,12 @@ impl<S> StoreCtx<S> {
             jobs,
             resources: ResourceStore::__new(),
             settings,
+            // WasiCtxBuilder is deliberately left at its deny-by-default
+            // network policy and receives no filesystem preopens. Keeping
+            // these grants absent prevents plugins from bypassing Lockgate's
+            // capability checks through raw WASI sockets or paths.
+            wasi: WasiCtxBuilder::new().build(),
+            wasi_resources: ResourceTable::new(),
             #[cfg(test)]
             drop_probe: None,
         }
@@ -366,6 +377,23 @@ impl<S> StoreCtx<S> {
     pub(crate) fn observe_drop(&mut self, dropped: Arc<AtomicBool>) {
         self.drop_probe = Some(StoreDropProbe(dropped));
     }
+}
+
+impl<S: Send + Sync> WasiView for StoreCtx<S> {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.wasi_resources,
+        }
+    }
+}
+
+fn add_wasi_to_linker<S: Send + Sync + 'static>(
+    linker: &mut Linker<StoreCtx<S>>,
+) -> WasmtimeResult<()> {
+    wasmtime_wasi::p2::add_to_linker_async(linker)?;
+    wasmtime_wasi::p3::add_to_linker(linker)?;
+    Ok(())
 }
 
 pub(crate) trait ImportsFactory<S>: Send + Sync {

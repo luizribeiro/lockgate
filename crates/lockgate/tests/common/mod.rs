@@ -79,6 +79,8 @@ pub(crate) static HOST_EXPORT_VALUES_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(
         "lockgate_host_export_values_guest.wasm",
     )
 });
+pub(crate) static WASI_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("wasi-guest", "lockgate_wasi_fixture.wasm"));
 
 pub(crate) fn wire_ready_wait(linker: &mut Linker<StoreCtx<TestState>>) -> wasmtime::Result<()> {
     linker

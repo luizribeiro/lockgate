@@ -1,0 +1,10 @@
+package test:wasi;
+
+interface guest {
+  clock-seconds: func() -> u64;
+  network-denied: func() -> bool;
+}
+
+world fixture {
+  export guest;
+}

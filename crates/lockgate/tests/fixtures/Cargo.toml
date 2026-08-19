@@ -17,6 +17,7 @@ members = [
     "session-context-guest",
     "scope-reexport",
     "typed-settings-guest",
+    "wasi-guest",
 ]
 
 [workspace.dependencies]
