@@ -1,0 +1,5 @@
+error: invalid permission ID `Read_All`; expected lowercase ASCII kebab-case such as `virtual-machines`
+ --> tests/ui/capability/malformed_permission.rs:3:84
+  |
+3 |     pub const READ: lockgate_policy::Permission = lockgate_policy::Permission::new("Read_All");
+  |                                                                                    ^^^^^^^^^^

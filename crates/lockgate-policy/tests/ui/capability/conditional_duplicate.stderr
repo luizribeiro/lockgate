@@ -1,0 +1,5 @@
+error: permission ID `read` is declared more than once in this capability; permission IDs must be unique
+  --> tests/ui/capability/conditional_duplicate.rs:12:51
+   |
+12 |     pub const THIRD: Permission = Permission::new("read");
+   |                                                   ^^^^^^

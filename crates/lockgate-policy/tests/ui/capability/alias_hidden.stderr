@@ -1,0 +1,5 @@
+error: permission const `READ` hides its permission type behind an alias; spell `Permission` or `ScopedPermission<Scope>` directly so `#[lockgate::capability]` can discover it
+ --> tests/ui/capability/alias_hidden.rs:4:21
+  |
+4 |     pub const READ: Alias = Alias::new("read");
+  |                     ^^^^^

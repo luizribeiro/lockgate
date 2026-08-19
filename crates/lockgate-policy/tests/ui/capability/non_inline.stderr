@@ -1,0 +1,5 @@
+error: `#[lockgate::capability]` requires an inline module; replace `mod name;` with `mod name { ... }`
+ --> tests/ui/capability/non_inline.rs:2:1
+  |
+2 | pub mod vm;
+  | ^^^^^^^^^^^

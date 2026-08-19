@@ -1,0 +1,5 @@
+error: permission ID `read` is declared more than once in this capability; permission IDs must be unique
+ --> tests/ui/capability/duplicate_permission.rs:5:42
+  |
+5 |         lockgate_policy::Permission::new("read");
+  |                                          ^^^^^^

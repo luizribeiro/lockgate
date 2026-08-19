@@ -1,0 +1,5 @@
+error: invalid capability ID `Virtual_Machines`; expected lowercase ASCII kebab-case such as `virtual-machines`
+ --> tests/ui/capability/malformed_capability.rs:1:31
+  |
+1 | #[lockgate_policy::capability("Virtual_Machines")]
+  |                               ^^^^^^^^^^^^^^^^^^
