@@ -95,6 +95,9 @@ pub const fn validate_atom(capability: &str, permission: &str) -> Result<(), Ato
 /// host registration use this check at their respective trust boundaries.
 #[doc(hidden)]
 pub const fn is_valid_authoring_id(value: &str) -> bool {
+    // WHY: This must remain const-usable, while the proc-macro crate cannot depend back on
+    // `lockgate-policy` without a cycle. Keep this algorithm and its boundary vectors in sync
+    // with `lockgate-macros/src/capability.rs::validate_id`.
     let bytes = value.as_bytes();
     if bytes.is_empty() {
         return false;
@@ -226,23 +229,26 @@ mod tests {
     }
 
     #[test]
-    fn authoring_ids_require_lowercase_ascii_kebab_case() {
-        for valid in ["vm", "vm2", "virtual-machines", "2fa"] {
-            assert!(is_valid_authoring_id(valid), "rejected valid ID {valid:?}");
-        }
-        for invalid in [
-            "",
-            "VM",
-            "virtual_machines",
-            "-vm",
-            "vm-",
-            "virtual--machines",
-            "é",
-            "vm.exec",
-        ] {
-            assert!(
-                !is_valid_authoring_id(invalid),
-                "accepted invalid ID {invalid:?}"
+    fn authoring_id_boundary_vectors_match_macro() {
+        // Keep this literal table verbatim with capability.rs::authoring_id_boundary_vectors_match_policy.
+        let vectors = [
+            ("", false),
+            ("a", true),
+            ("-a", false),
+            ("a-", false),
+            ("a--b", false),
+            ("A", false),
+            ("a_b", false),
+            ("123", true),
+            ("é", false),
+            ("a-b2", true),
+        ];
+
+        for (id, expected_valid) in vectors {
+            assert_eq!(
+                is_valid_authoring_id(id),
+                expected_valid,
+                "unexpected authoring-ID result for {id:?}",
             );
         }
     }

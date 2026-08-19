@@ -408,6 +408,9 @@ fn peel_expression(expression: &Expr) -> &Expr {
 }
 
 fn validate_id(id: &LitStr, kind: &str) -> syn::Result<()> {
+    // WHY: `lockgate-policy` depends on this proc-macro crate, so sharing its const
+    // validator here would create a cycle. Keep this algorithm and the boundary vectors
+    // below in sync with `lockgate-policy/src/atom.rs::is_valid_authoring_id`.
     let value = id.value();
     let bytes = value.as_bytes();
     let valid = !bytes.is_empty()
@@ -472,25 +475,27 @@ mod tests {
     }
 
     #[test]
-    fn rejects_every_malformed_capability_id_shape() {
-        for id in [
-            "",
-            "VM",
-            "virtual_machines",
-            "-vm",
-            "vm-",
-            "virtual--machines",
-            "é",
-        ] {
-            assert!(
-                expansion_error(
-                    quote::quote!(#id),
-                    quote::quote!(
-                        pub mod vm {}
-                    )
-                )
-                .contains("expected lowercase ASCII kebab-case"),
-                "accepted or misdiagnosed {id:?}"
+    fn authoring_id_boundary_vectors_match_policy() {
+        // Keep this literal table verbatim with atom.rs::authoring_id_boundary_vectors_match_macro.
+        let vectors = [
+            ("", false),
+            ("a", true),
+            ("-a", false),
+            ("a-", false),
+            ("a--b", false),
+            ("A", false),
+            ("a_b", false),
+            ("123", true),
+            ("é", false),
+            ("a-b2", true),
+        ];
+
+        for (id, expected_valid) in vectors {
+            let literal = syn::LitStr::new(id, proc_macro2::Span::call_site());
+            assert_eq!(
+                super::validate_id(&literal, "capability").is_ok(),
+                expected_valid,
+                "unexpected authoring-ID result for {id:?}",
             );
         }
     }
