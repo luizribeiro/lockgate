@@ -48,6 +48,18 @@ impl exports::test::guarded::guest::Guest for Fixture {
     fn protocol_version() -> String {
         test::guarded::vm::protocol_version()
     }
+
+    fn mixed_vm() -> String {
+        render_mixed(test::guarded::mixed::vm_action())
+    }
+
+    fn mixed_admin() -> String {
+        render_mixed(test::guarded::mixed::admin_action())
+    }
+
+    fn mixed_version() -> String {
+        test::guarded::mixed::protocol_version()
+    }
 }
 
 fn render(result: Result<String, test::guarded::vm::VmError>) -> String {
@@ -61,6 +73,13 @@ fn render_error(error: test::guarded::vm::VmError) -> String {
     match error {
         test::guarded::vm::VmError::NotFound => "not-found".to_string(),
         test::guarded::vm::VmError::Denied => "denied".to_string(),
+    }
+}
+
+fn render_mixed(result: Result<String, test::guarded::mixed::MixedError>) -> String {
+    match result {
+        Ok(value) => alloc::format!("ok:{value}"),
+        Err(test::guarded::mixed::MixedError::Denied) => "denied".to_string(),
     }
 }
 

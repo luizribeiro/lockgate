@@ -70,6 +70,9 @@ struct BodyCalls {
     destroy: AtomicUsize,
     list_pools: AtomicUsize,
     protocol_version: AtomicUsize,
+    mixed_vm: AtomicUsize,
+    mixed_admin: AtomicUsize,
+    mixed_version: AtomicUsize,
 }
 
 struct VmState {
@@ -192,6 +195,12 @@ impl From<PermissionDenied> for admin::AdminError {
     }
 }
 
+impl From<PermissionDenied> for mixed::MixedError {
+    fn from(_: PermissionDenied) -> Self {
+        Self::Denied
+    }
+}
+
 #[lockgate::guarded]
 impl vm::Host for Imports {
     #[lockgate::requires(permission = permissions::CREATE, target = pool)]
@@ -256,6 +265,36 @@ impl admin::Host for Imports {
     #[lockgate::requires(permission = admin_permissions::STATUS)]
     async fn status(&mut self, _cx: HostCtx<'_, ()>) -> Result<(), admin::AdminError> {
         Ok(())
+    }
+}
+
+#[lockgate::guarded]
+impl mixed::Host for Imports {
+    #[lockgate::requires(permission = permissions::LIST_POOLS)]
+    async fn vm_action(&mut self, _cx: HostCtx<'_, ()>) -> Result<String, mixed::MixedError> {
+        self.state
+            .body_calls
+            .mixed_vm
+            .fetch_add(1, Ordering::SeqCst);
+        Ok("vm".to_owned())
+    }
+
+    #[lockgate::requires(permission = admin_permissions::STATUS)]
+    async fn admin_action(&mut self, _cx: HostCtx<'_, ()>) -> Result<String, mixed::MixedError> {
+        self.state
+            .body_calls
+            .mixed_admin
+            .fetch_add(1, Ordering::SeqCst);
+        Ok("admin".to_owned())
+    }
+
+    #[lockgate::no_capability_required(reason = "returns only a static mixed-fixture version")]
+    async fn protocol_version(&mut self, _cx: HostCtx<'_, ()>) -> String {
+        self.state
+            .body_calls
+            .mixed_version
+            .fetch_add(1, Ordering::SeqCst);
+        "mixed-v1".to_owned()
     }
 }
 
@@ -330,6 +369,26 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
         [
             ("restart", "admin", "restart"),
             ("status", "admin", "status")
+        ]
+    );
+
+    let mixed_methods = <Imports as mixed::Host>::__LOCKGATE_POLICY_METHODS;
+    assert_eq!(mixed_methods.len(), 3);
+    assert_eq!(
+        mixed_methods
+            .iter()
+            .map(|method| (
+                method.method().wit_name(),
+                method
+                    .classification()
+                    .permission()
+                    .map(|permission| (permission.capability(), permission.permission())),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("vm-action", Some(("vm", "list-pools"))),
+            ("admin-action", Some(("admin", "status"))),
+            ("protocol-version", None),
         ]
     );
 }
@@ -473,7 +532,7 @@ async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
 }
 
 const ADMIN_IMPORT: &str = "package test:guarded@1.2.3; interface admin { enum admin-error { denied } restart: func() -> result<_, admin-error>; status: func() -> result<_, admin-error>; } world fixture { import admin; }";
-const MIXED_IMPORT: &str = "package test:guarded@1.2.3; interface vm { enum vm-error { not-found, denied } create: func(pool: string) -> result<string, vm-error>; exec: func(vm: string, command: string) -> result<string, vm-error>; destroy: func(vm: string) -> result<_, vm-error>; list-pools: func() -> result<list<string>, vm-error>; protocol-version: func() -> string; } world fixture { import vm; }";
+const MIXED_IMPORT: &str = "package test:guarded@1.2.3; interface mixed { enum mixed-error { denied } vm-action: func() -> result<string, mixed-error>; admin-action: func() -> result<string, mixed-error>; protocol-version: func() -> string; } world fixture { import mixed; }";
 const BASELINE_IMPORT: &str = "package lockgate:config; interface settings { enum get-error { not-ready } get-json: func() -> result<string, get-error>; } world fixture { import settings; }";
 const NO_IMPORTS: &str = "package test:no-imports; world fixture {}";
 
@@ -515,9 +574,43 @@ async fn either_required_or_optional_mapped_need_wires_an_all_guarded_import() {
 }
 
 #[tokio::test]
-async fn capability_free_method_wires_a_mixed_import_without_declared_needs() {
+async fn capability_free_method_wires_a_cross_capability_import_without_declared_needs() {
     let bytes = fixture(MIXED_IMPORT, &NeedsManifest::empty());
     admit(&mut host_builder(), &bytes).await;
+}
+
+#[tokio::test]
+async fn cross_capability_mixed_methods_deny_independently_after_interface_wiring() {
+    for (atom, vm_result, admin_result) in [
+        ("vm.list-pools", "ok:vm", "denied"),
+        ("admin.status", "denied", "ok:admin"),
+    ] {
+        let imports = Imports::default();
+        let needs =
+            NeedsManifest::new(vec![NeedEntry::flag(atom.parse().unwrap())], vec![]).unwrap();
+        let (host, plugin) = runtime_host(imports.clone(), "mixed-plugin", &needs).await;
+        let guest = host.guest(&plugin).unwrap();
+
+        assert_eq!(guest.mixed_version(call()).await.unwrap(), "mixed-v1");
+        assert_eq!(guest.mixed_vm(call()).await.unwrap(), vm_result);
+        assert_eq!(guest.mixed_admin(call()).await.unwrap(), admin_result);
+        assert_eq!(
+            imports
+                .state
+                .body_calls
+                .mixed_version
+                .load(Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            imports.state.body_calls.mixed_vm.load(Ordering::SeqCst),
+            usize::from(vm_result != "denied")
+        );
+        assert_eq!(
+            imports.state.body_calls.mixed_admin.load(Ordering::SeqCst),
+            usize::from(admin_result != "denied")
+        );
+    }
 }
 
 #[tokio::test]

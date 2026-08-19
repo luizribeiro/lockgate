@@ -22,17 +22,31 @@ interface admin {
   status: func() -> result<_, admin-error>;
 }
 
+interface mixed {
+  enum mixed-error {
+    denied,
+  }
+
+  vm-action: func() -> result<string, mixed-error>;
+  admin-action: func() -> result<string, mixed-error>;
+  protocol-version: func() -> string;
+}
+
 interface guest {
   create: func(pool: string) -> string;
   exec: func(vm: string, command: string) -> string;
   destroy: func(vm: string) -> string;
   list-pools: func() -> string;
   protocol-version: func() -> string;
+  mixed-vm: func() -> string;
+  mixed-admin: func() -> string;
+  mixed-version: func() -> string;
 }
 
 world fixture {
   import vm;
   import admin;
+  import mixed;
   export guest;
 }
 
@@ -42,5 +56,6 @@ world vm-only {
 
 world vm-runtime {
   import vm;
+  import mixed;
   export guest;
 }
