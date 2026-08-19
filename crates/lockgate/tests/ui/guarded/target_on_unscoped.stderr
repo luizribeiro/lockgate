@@ -1,0 +1,16 @@
+error[E0308]: mismatched types
+  --> tests/ui/guarded/target_on_unscoped.rs:10:39
+   |
+ 8 | #[lockgate::guarded]
+   | -------------------- arguments to this function are incorrect
+ 9 | impl vm::Host for Imports {
+10 |     #[lockgate::requires(permission = permissions::LIST, target = target.id)]
+   |                                       ^^^^^^^^^^^^^^^^^ expected `ScopedPermission<_>`, found `Permission`
+   |
+   = note: expected struct `ScopedPermission<_>`
+              found struct `Permission`
+note: associated function defined here
+  --> src/policy/metadata.rs
+   |
+   |     pub const fn __requires_scoped<S: Scope>(
+   |                  ^^^^^^^^^^^^^^^^^

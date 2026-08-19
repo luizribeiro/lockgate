@@ -1,0 +1,12 @@
+package test:guarded@1.2.3;
+
+interface vm {
+  create: func(pool: string) -> string;
+  exec: func(vm: string, command: string) -> string;
+  list-pools: func() -> list<string>;
+  protocol-version: func() -> string;
+}
+
+world fixture {
+  import vm;
+}

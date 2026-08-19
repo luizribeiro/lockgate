@@ -1,0 +1,5 @@
+error: `no_capability_required` needs a non-empty `reason = "..."`
+  --> tests/ui/guarded/missing_reason.rs:10:5
+   |
+10 |     #[lockgate::no_capability_required]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

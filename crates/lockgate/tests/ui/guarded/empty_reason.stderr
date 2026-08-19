@@ -1,0 +1,5 @@
+error: `no_capability_required` reason must not be empty or whitespace-only
+  --> tests/ui/guarded/empty_reason.rs:10:49
+   |
+10 |     #[lockgate::no_capability_required(reason = "  ")]
+   |                                                 ^^^^

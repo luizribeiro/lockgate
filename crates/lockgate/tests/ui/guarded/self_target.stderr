@@ -1,0 +1,5 @@
+error: policy targets cannot contain `self`; use a named method parameter or a path rooted at `HostCtx::data()`
+  --> tests/ui/guarded/self_target.rs:10:67
+   |
+10 |     #[lockgate::requires(permission = permissions::EXEC, target = self.target)]
+   |                                                                   ^^^^

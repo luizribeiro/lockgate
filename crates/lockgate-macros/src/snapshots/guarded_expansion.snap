@@ -1,0 +1,25 @@
+impl vm::Host for Imports {
+    async fn exec(
+        &mut self,
+        cx: lockgate::HostCtx<'_, Data>,
+        request: Request,
+    ) -> Result<(), Error> {
+        self.execute(cx, request).await
+    }
+    async fn version(&mut self, _cx: lockgate::HostCtx<'_, Data>) -> String {
+        "1".to_owned()
+    }
+    const __LOCKGATE_POLICY_METHODS: &'static [::lockgate::__private::PolicyMethod] = &[
+        ::lockgate::__private::PolicyMethod::__requires_scoped(
+            vm::__LockgateBinding::INTERFACE,
+            vm::__LockgateBinding::__LOCKGATE_METHOD_EXEC,
+            permissions::EXEC,
+            ::core::stringify!(request.id),
+        ),
+        ::lockgate::__private::PolicyMethod::__no_capability_required(
+            vm::__LockgateBinding::INTERFACE,
+            vm::__LockgateBinding::__LOCKGATE_METHOD_VERSION,
+            "static protocol version",
+        ),
+    ];
+}

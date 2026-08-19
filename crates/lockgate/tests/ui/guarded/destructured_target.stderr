@@ -1,0 +1,5 @@
+error: policy target `id` comes from a destructured parameter; give that parameter one identifier and target a path from it
+  --> tests/ui/guarded/destructured_target.rs:10:67
+   |
+10 |     #[lockgate::requires(permission = permissions::EXEC, target = id)]
+   |                                                                   ^^

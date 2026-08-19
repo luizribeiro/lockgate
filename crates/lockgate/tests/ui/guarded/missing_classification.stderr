@@ -1,0 +1,5 @@
+error: host method `action` is missing a policy classification; add `#[lockgate::requires(...)]` or `#[lockgate::no_capability_required(reason = "...")]`
+  --> tests/ui/guarded/missing_classification.rs:10:14
+   |
+10 |     async fn action(&mut self, _cx: HostCtx<'_, Data>, _target: Target) {}
+   |              ^^^^^^

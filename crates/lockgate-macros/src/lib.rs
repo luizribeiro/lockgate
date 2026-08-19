@@ -13,6 +13,7 @@ use wasmtime_wit_bindgen::{FunctionConfig, FunctionFilter, FunctionFlags, Opts};
 use wit_parser::{InterfaceId, Resolve, Type, TypeDefKind, TypeId, TypeOwner, WorldItem};
 
 mod capability;
+mod guarded;
 mod scope_repr;
 
 /// Declares one stable capability vocabulary from an inline Rust module.
@@ -26,6 +27,51 @@ pub fn capability(arguments: TokenStream, item: TokenStream) -> TokenStream {
     capability::expand(capability_id, item)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// Classifies every method in an application implementation of a generated
+/// host-import trait.
+#[proc_macro_attribute]
+pub fn guarded(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let arguments = TokenStream2::from(arguments);
+    let item = syn::parse_macro_input!(item as syn::ItemImpl);
+    if !arguments.is_empty() {
+        return syn::Error::new_spanned(arguments, "`guarded` takes no arguments")
+            .into_compile_error()
+            .into();
+    }
+    let lockgate = match lockgate_path(&item) {
+        Ok(lockgate) => lockgate,
+        Err(error) => return error.into_compile_error().into(),
+    };
+    guarded::expand(item, &lockgate)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Classifies a generated host-import method with a typed permission.
+#[proc_macro_attribute]
+pub fn requires(_arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let item = TokenStream2::from(item);
+    syn::Error::new_spanned(
+        item,
+        "`#[lockgate::requires(...)]` is only valid on a method inside a `#[lockgate::guarded]` impl",
+    )
+    .into_compile_error()
+    .into()
+}
+
+/// Documents that a generated host-import method intentionally requires no
+/// capability.
+#[proc_macro_attribute]
+pub fn no_capability_required(_arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let item = TokenStream2::from(item);
+    syn::Error::new_spanned(
+        item,
+        "`#[lockgate::no_capability_required(...)]` is only valid on a method inside a `#[lockgate::guarded]` impl",
+    )
+    .into_compile_error()
+    .into()
 }
 
 /// Derives Lockgate's representational scope trait for a closed enum.

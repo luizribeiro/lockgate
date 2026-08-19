@@ -1,0 +1,5 @@
+error: policy targets cannot contain control flow; use a direct parameter path or `HostCtx::data()` path
+  --> tests/ui/guarded/control_flow_target.rs:12:18
+   |
+12 |         target = if target.id.is_empty() { &target } else { &target }
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

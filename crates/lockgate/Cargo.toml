@@ -17,6 +17,7 @@ wit-parser.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+trybuild = "1"
 wasm-encoder.workspace = true
 wit-component = { workspace = true, features = ["dummy-module"] }
 wat.workspace = true

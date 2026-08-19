@@ -33,7 +33,7 @@ pub use policy::CapabilityRegistrationError;
 ///
 /// For worlds with imported interfaces, the `data` option names the
 /// [`CallContext`] type.
-pub use lockgate_macros::host_bindings;
+pub use lockgate_macros::{guarded, host_bindings, no_capability_required, requires};
 pub use role::{CallError, Role, RoleError, RoleInvocation, Value};
 pub use validate::ValidationError;
 

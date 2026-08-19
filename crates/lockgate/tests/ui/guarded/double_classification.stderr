@@ -1,0 +1,5 @@
+error: host method `action` has more than one policy classification; keep exactly one `requires` or `no_capability_required` attribute
+  --> tests/ui/guarded/double_classification.rs:11:5
+   |
+11 |     #[lockgate::no_capability_required(reason = "duplicate for the diagnostic")]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
