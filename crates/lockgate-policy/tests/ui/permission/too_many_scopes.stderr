@@ -1,0 +1,21 @@
+error[E0080]: evaluation panicked: Lockgate scoped need exceeds 128 scope references
+  --> tests/ui/permission/too_many_scopes.rs:18:24
+   |
+18 | const TOO_MANY: Need = documents::READ.need(SCOPES);
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `TOO_MANY` failed inside this call
+   |
+note: inside `ScopedPermission::<DocumentScope>::need`
+  --> src/permission.rs
+   |
+   |         Need::scoped(self.atom, scopes)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `Need::scoped`
+  --> $RUST/core/src/panic.rs
+   |
+   |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/need.rs
+   |
+   |             panic!("Lockgate scoped need exceeds 128 scope references");
+   |             ----------------------------------------------------------- in this macro invocation

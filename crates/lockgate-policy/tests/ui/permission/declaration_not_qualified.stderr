@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+ --> tests/ui/permission/declaration_not_qualified.rs:6:24
+  |
+6 |     requires_qualified(Permission::new("read"));
+  |     ------------------ ^^^^^^^^^^^^^^^^^^^^^^^ expected `Permission`, found `PermissionDecl`
+  |     |
+  |     arguments to this function are incorrect
+  |
+note: function defined here
+ --> tests/ui/permission/declaration_not_qualified.rs:3:4
+  |
+3 | fn requires_qualified(_: Permission) {}
+  |    ^^^^^^^^^^^^^^^^^^ -------------

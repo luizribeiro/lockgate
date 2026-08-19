@@ -1,0 +1,24 @@
+error[E0080]: evaluation panicked: Lockgate duplicate atom: a required need repeats an earlier required atom; declare each permission atom only once
+  --> tests/ui/permission/duplicate_required.rs:11:5
+   |
+11 |     Needs::required(&[documents::LIST.need(), documents::LIST.need()]);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `DUPLICATE` failed inside this call
+   |
+note: inside `Needs::required`
+  --> src/need.rs
+   |
+   |         validate_unique_entries(required, Requirement::Required);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `lockgate_policy::need::validate_unique_entries`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/need.rs
+   |
+   |   ...   Requirement::Required => panic!(
+   |  ________________________________-
+   | | ...       "Lockgate duplicate atom: a required need repeats an earlier required atom; declare each permission atom only once"
+   | | ...   ),
+   | |_______- in this macro invocation

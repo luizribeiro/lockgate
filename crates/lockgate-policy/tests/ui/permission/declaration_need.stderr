@@ -1,0 +1,5 @@
+error[E0599]: no method named `need` found for struct `lockgate_policy::__private::PermissionDecl` in the current scope
+ --> tests/ui/permission/declaration_need.rs:4:29
+  |
+4 |     Permission::new("read").need();
+  |                             ^^^^ method not found in `lockgate_policy::__private::PermissionDecl`

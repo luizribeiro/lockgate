@@ -1,0 +1,11 @@
+error: cannot construct `Needs` with struct literal syntax due to private fields
+ --> tests/ui/permission/needs_private.rs:4:13
+  |
+4 |     let _ = Needs {};
+  |             ^^^^^
+  |
+help: you might have meant to use the `required` associated function
+  |
+4 -     let _ = Needs {};
+4 +     let _ = Needs::required(_);
+  |

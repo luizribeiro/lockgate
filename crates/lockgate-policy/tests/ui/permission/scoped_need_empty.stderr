@@ -1,0 +1,23 @@
+error[E0080]: evaluation panicked: Lockgate scoped need must request at least one scope; pass a non-empty `&[ScopeRef]`
+  --> tests/ui/permission/scoped_need_empty.rs:17:21
+   |
+17 | const EMPTY: Need = documents::READ.need(&[]);
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `EMPTY` failed inside this call
+   |
+note: inside `ScopedPermission::<DocumentScope>::need`
+  --> src/permission.rs
+   |
+   |         Need::scoped(self.atom, scopes)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `Need::scoped`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/need.rs
+   |
+   | /             panic!(
+   | |                 "Lockgate scoped need must request at least one scope; pass a non-empty `&[ScopeRef]`"
+   | |             );
+   | |_____________- in this macro invocation

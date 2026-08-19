@@ -1,0 +1,5 @@
+error: cannot construct `lockgate_policy::__private::ErasedPermission` with struct literal syntax due to private fields
+ --> tests/ui/permission/erased_descriptor_private.rs:4:13
+  |
+4 |     let _ = ErasedPermission {};
+  |             ^^^^^^^^^^^^^^^^
