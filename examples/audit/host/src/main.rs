@@ -31,7 +31,11 @@ lockgate::host_bindings!({
 
 use tasks::HostExt;
 
+#[lockgate::guarded]
 impl audit::Host for Imports {
+    #[lockgate::no_capability_required(
+        reason = "demonstrates call-origin propagation in the audit example"
+    )]
     async fn log(&mut self, cx: HostCtx<'_, CallOrigin>, message: String) {
         self.lines
             .lock()

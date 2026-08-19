@@ -26,7 +26,11 @@ lockgate::host_bindings!({
 
 use tasks::HostExt;
 
+#[lockgate::guarded]
 impl dispatch::Host for Imports {
+    #[lockgate::no_capability_required(
+        reason = "demonstrates detached host work in the dispatch example"
+    )]
     async fn send(&mut self, cx: HostCtx<'_, ()>, report: String) {
         let delay = match report.as_str() {
             "index report" => INDEX_DELAY,
