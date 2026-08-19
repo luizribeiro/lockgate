@@ -367,7 +367,6 @@ pub fn export(input: TokenStream) -> TokenStream {
                 needs: <#plugin as #facade::Plugin>::NEEDS,
             };
 
-        #[cfg(target_arch = "wasm32")]
         const __LOCKGATE_PLUGIN_METADATA_LEN: usize =
             #facade::__private::metadata_len(&__LOCKGATE_PLUGIN_MANIFEST);
         #[cfg(target_arch = "wasm32")]
@@ -376,7 +375,6 @@ pub fn export(input: TokenStream) -> TokenStream {
         static __LOCKGATE_PLUGIN_METADATA: [u8; __LOCKGATE_PLUGIN_METADATA_LEN] =
             #facade::__private::metadata_bytes(&__LOCKGATE_PLUGIN_MANIFEST);
 
-        #[cfg(target_arch = "wasm32")]
         const __LOCKGATE_PLUGIN_NEEDS_LEN: usize =
             #facade::__private::needs_len(&__LOCKGATE_PLUGIN_MANIFEST.needs);
         #[cfg(target_arch = "wasm32")]

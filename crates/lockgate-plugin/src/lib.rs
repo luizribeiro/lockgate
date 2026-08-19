@@ -130,10 +130,13 @@ pub use lockgate_plugin_macros::generate;
 ///
 /// ```compile_fail,E0046
 /// use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
-///
-/// macro_rules! __lockgate_wit_export {
-///     ($plugin:ident) => {};
-/// }
+/// # mod exports {
+/// #     pub mod lockgate { pub mod config { pub mod schema {
+/// #         pub trait Guest {
+/// #             fn settings_schema() -> lockgate_plugin::alloc::string::String;
+/// #         }
+/// #     }} }
+/// # }
 ///
 /// struct MissingIdentity;
 /// impl Plugin for MissingIdentity {
@@ -151,10 +154,13 @@ pub use lockgate_plugin_macros::generate;
 ///
 /// ```compile_fail,E0080
 /// use lockgate_plugin::{MetadataSource, Needs, NoSettings, Plugin, export};
-///
-/// macro_rules! __lockgate_wit_export {
-///     ($plugin:ident) => {};
-/// }
+/// # mod exports {
+/// #     pub mod lockgate { pub mod config { pub mod schema {
+/// #         pub trait Guest {
+/// #             fn settings_schema() -> lockgate_plugin::alloc::string::String;
+/// #         }
+/// #     }} }
+/// # }
 ///
 /// struct EmptyIdentity;
 /// impl Plugin for EmptyIdentity {
