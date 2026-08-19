@@ -19,5 +19,6 @@ fn guarded_classification_errors_are_teaching_diagnostics() {
     ] {
         cases.compile_fail(format!("tests/ui/guarded/{case}.rs"));
     }
+    cases.pass("tests/ui/guarded/call_context_target.rs");
     cases.pass("tests/ui/guarded/hygienic_identifiers.rs");
 }

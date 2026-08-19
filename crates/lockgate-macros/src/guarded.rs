@@ -631,6 +631,31 @@ mod tests {
     }
 
     #[test]
+    fn call_context_guard_matches_the_expansion_snapshot() {
+        let implementation = syn::parse_quote! {
+            impl sessions::Host for Imports {
+                #[lockgate::requires(
+                    permission = permissions::READ,
+                    target = cx.data().session
+                )]
+                async fn read(
+                    &mut self,
+                    cx: lockgate::HostCtx<'_, SageCall>,
+                ) -> Result<(), Error> {
+                    self.read_session(cx).await
+                }
+            }
+        };
+        let expansion = super::expand(implementation, &quote!(::lockgate)).unwrap();
+        let expansion = prettyplease::unparse(&syn::parse2(expansion).unwrap());
+
+        assert_eq!(
+            expansion,
+            include_str!("snapshots/call_context_guarded_expansion.snap")
+        );
+    }
+
+    #[test]
     fn resource_guard_matches_the_expansion_snapshot() {
         let implementation = syn::parse_quote! {
             impl sessions::HostSession for Imports {

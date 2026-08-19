@@ -1,0 +1,23 @@
+impl sessions::Host for Imports {
+    async fn read(&mut self, cx: lockgate::HostCtx<'_, SageCall>) -> Result<(), Error> {
+        let __lockgate_subject = cx.subject();
+        let __lockgate_target = &(cx.data().session);
+        let __lockgate_resource = ::lockgate::__private::resolve_scoped_resource(
+                &*self,
+                &__lockgate_subject,
+                __lockgate_target,
+                permissions::READ,
+            )
+            .await?;
+        cx.require_scoped(permissions::READ, &__lockgate_resource)?;
+        { self.read_session(cx).await }
+    }
+    const __LOCKGATE_POLICY_METHODS: &'static [::lockgate::__private::PolicyMethod] = &[
+        ::lockgate::__private::PolicyMethod::__requires_scoped(
+            sessions::__LockgateBinding::INTERFACE,
+            sessions::__LockgateBinding::__LOCKGATE_METHOD_READ,
+            permissions::READ,
+            ::core::stringify!(cx.data().session),
+        ),
+    ];
+}
