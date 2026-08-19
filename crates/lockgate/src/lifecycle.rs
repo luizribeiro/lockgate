@@ -339,6 +339,7 @@ impl<S: CallContext> HostBuilder<S> {
         artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
+            host: self.id,
             inspection,
             resolved,
             prepared_digest,
@@ -424,11 +425,17 @@ impl<S: CallContext> HostBuilder<S> {
         startup_ctx: InvocationCtx<S>,
     ) -> Result<PluginHandle, AdmissionError> {
         let Prepared {
+            host,
             inspection,
             resolved,
             prepared_digest,
             artifact,
         } = prepared;
+        if host != self.id {
+            return Err(AdmissionError::PreparedHostMismatch {
+                plugin: inspection.metadata().id().to_owned(),
+            });
+        }
         let effective_grants = bind_effective_grants(
             inspection.metadata().id(),
             prepared_digest,
@@ -552,6 +559,7 @@ impl<S: CallContext> Host<S> {
 
 /// A validated, compiled, and prelinked plugin artifact.
 pub struct Prepared {
+    host: HostId,
     inspection: Inspection,
     resolved: ResolvedNeeds,
     prepared_digest: PreparedNeedsDigest,
@@ -693,6 +701,9 @@ pub enum AdmissionError {
         message: String,
     },
     ScopeResolution(ScopeResolutionError),
+    PreparedHostMismatch {
+        plugin: String,
+    },
     AcceptancePluginMismatch {
         prepared: String,
         acceptance: String,
@@ -867,6 +878,10 @@ impl fmt::Display for AdmissionError {
                 )
             }
             Self::ScopeResolution(error) => error.fmt(formatter),
+            Self::PreparedHostMismatch { plugin } => write!(
+                formatter,
+                "prepared plugin `{plugin}` belongs to another HostBuilder and cannot be admitted here; prepare it with this builder"
+            ),
             Self::AcceptancePluginMismatch {
                 prepared,
                 acceptance,
@@ -940,6 +955,30 @@ mod grant_tests {
 
     impl Scope for SessionScope {}
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum ConflictingSessionScope {
+        Other,
+    }
+
+    impl FromStr for ConflictingSessionScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            match value {
+                "other" => Ok(Self::Other),
+                _ => Err(ScopeError::unknown(value)),
+            }
+        }
+    }
+
+    impl ScopeRepr for ConflictingSessionScope {
+        fn canonical(&self) -> String {
+            "other".to_owned()
+        }
+    }
+
+    impl Scope for ConflictingSessionScope {}
+
     #[lockgate_policy::capability("sessions")]
     mod permissions {
         use super::SessionScope;
@@ -947,6 +986,14 @@ mod grant_tests {
 
         pub const READ: ScopedPermission<SessionScope> = ScopedPermission::new("read");
         pub const SEND: Permission = Permission::new("send");
+    }
+
+    #[lockgate_policy::capability("sessions")]
+    mod conflicting_permissions {
+        use super::ConflictingSessionScope;
+        use lockgate_policy::ScopedPermission;
+
+        pub const READ: ScopedPermission<ConflictingSessionScope> = ScopedPermission::new("read");
     }
 
     fn atom(value: &str) -> AtomKey {
@@ -1000,6 +1047,7 @@ mod grant_tests {
         .unwrap();
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
         let prepared = Prepared {
+            host: HostId::next(),
             inspection: Inspection::new(metadata, needs, needs_digest, Vec::new()),
             resolved,
             prepared_digest,
@@ -1036,6 +1084,62 @@ mod grant_tests {
         }
         .append_to_component(&mut component);
         component
+    }
+
+    #[tokio::test]
+    async fn prepared_artifacts_cannot_cross_builder_registry_boundaries() {
+        let metadata = PluginMetadata::new("host-bound", "Host bound", "1.0").unwrap();
+        let needs = NeedsManifest::new(
+            vec![
+                NeedEntry::scoped(
+                    atom("sessions.read"),
+                    vec![ScopeRef::literal("everything").unwrap()],
+                )
+                .unwrap(),
+            ],
+            vec![],
+        )
+        .unwrap();
+        let component = with_section(
+            with_section(
+                component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
+            ),
+            PLUGIN_NEEDS_SECTION,
+            &needs.to_section_bytes().unwrap(),
+        );
+        let mut originating = HostBuilder::new(())
+            .unwrap()
+            .register::<permissions::Contract>()
+            .unwrap();
+        let prepared = originating
+            .prepare("host-bound", &component, PluginConfig::default())
+            .await
+            .unwrap();
+        let acceptance = prepared.accept_all();
+        let mut conflicting = HostBuilder::new(())
+            .unwrap()
+            .register::<conflicting_permissions::Contract>()
+            .unwrap();
+
+        let error = conflicting
+            .admit(
+                prepared,
+                acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(1_000_000),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AdmissionError::PreparedHostMismatch { ref plugin } if plugin == "host-bound"
+        ));
+        let message = error.to_string();
+        assert!(message.contains("host-bound"));
+        assert!(message.contains("another HostBuilder"));
     }
 
     #[tokio::test]
