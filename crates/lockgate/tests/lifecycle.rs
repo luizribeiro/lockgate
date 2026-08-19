@@ -175,40 +175,6 @@ fn schema_component(schema_body: &str) -> Vec<u8> {
     .unwrap()
 }
 
-fn constant_schema_component(schema: &str) -> Vec<u8> {
-    let encoded = schema
-        .as_bytes()
-        .iter()
-        .map(|byte| format!(r"\{byte:02x}"))
-        .collect::<String>();
-    wat::parse_str(format!(
-        r#"(component
-            (core module $guest
-                (memory (export "memory") 1)
-                (data (i32.const 64) "{encoded}")
-                (func (export "settings-schema") (result i32)
-                    (i32.store (i32.const 8) (i32.const 64))
-                    (i32.store offset=4 (i32.const 8) (i32.const {length}))
-                    (i32.const 8)
-                )
-            )
-            (core instance $guest-instance (instantiate $guest))
-            (func $settings-schema (result string)
-                (canon lift
-                    (core func $guest-instance "settings-schema")
-                    (memory (core memory $guest-instance "memory"))
-                )
-            )
-            (instance $schema
-                (export "settings-schema" (func $settings-schema))
-            )
-            (export "lockgate:config/schema" (instance $schema))
-        )"#,
-        length = schema.len(),
-    ))
-    .unwrap()
-}
-
 fn component_with_unwired_import() -> Vec<u8> {
     component(
         "package test:unwired; interface host { wait: func(); } interface guest { value: func() -> u32; } world fixture { import host; export guest; }",
@@ -485,13 +451,13 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
 async fn settings_follow_the_schema_presence_matrix() {
     let without_schema = well_formed_fixture();
     let empty_schema = common::sectioned_fixture(
-        &constant_schema_component(
+        &common::constant_schema_component(
             r#"{"type":"object","maxProperties":0,"additionalProperties":false}"#,
         ),
         &metadata(),
     );
     let configured_schema = common::sectioned_fixture(
-        &constant_schema_component(
+        &common::constant_schema_component(
             r#"{"type":"object","required":["enabled"],"properties":{"enabled":{"type":"boolean"}},"additionalProperties":false}"#,
         ),
         &metadata(),
@@ -563,7 +529,8 @@ async fn settings_follow_the_schema_presence_matrix() {
 
 #[tokio::test]
 async fn malformed_schema_json_is_a_typed_preparation_error() {
-    let bytes = common::sectioned_fixture(&constant_schema_component("not JSON"), &metadata());
+    let bytes =
+        common::sectioned_fixture(&common::constant_schema_component("not JSON"), &metadata());
     let mut builder = HostBuilder::new(()).unwrap();
     let error = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
