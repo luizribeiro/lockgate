@@ -28,6 +28,13 @@ impl Clone for Imports {
 }
 
 impl HostImports<u32> for Imports {
+    fn policy_metadata()
+    -> Result<lockgate::__private::HostImportPolicyMetadata, lockgate::HostImportPolicyError> {
+        // This test deliberately exercises the unsupported handwritten linker
+        // seam, so its policy-wiring bypass must be explicit and reviewable.
+        Ok(lockgate::__private::HostImportPolicyMetadata::__empty())
+    }
+
     fn add_to_linker(
         &self,
         linker: &mut wasmtime::component::Linker<StoreCtx<u32>>,

@@ -320,12 +320,20 @@ pub struct ValidatedInterfacePolicy {
 
 /// Deterministic policy metadata retained by `HostBuilder` for later wiring.
 #[doc(hidden)]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct HostImportPolicyMetadata {
     interfaces: Vec<ValidatedInterfacePolicy>,
 }
 
 impl HostImportPolicyMetadata {
+    /// Reserved for the unit host-import implementation.
+    #[doc(hidden)]
+    pub fn __empty() -> Self {
+        Self {
+            interfaces: Vec::new(),
+        }
+    }
+
     /// Reserved for generated host bindings.
     #[doc(hidden)]
     pub fn __new(mut interfaces: Vec<ValidatedInterfacePolicy>) -> Self {
