@@ -6,6 +6,8 @@ extern crate alloc;
 extern crate self as lockgate;
 
 mod config;
+#[cfg(test)]
+mod consent_tests;
 #[cfg_attr(
     test,
     allow(
@@ -35,10 +37,11 @@ pub use lockgate_policy::{
     capability, check_scope_laws, http,
 };
 pub use policy::{
-    CapabilityRegistrationError, EffectiveGrants, HostImportPolicyError, InvalidScopeValue,
-    JsonValueKind, NeedValueKind, PermissionDenied, PluginSubject, ResolveCtx,
-    ResolveScopedResource, ResolveScopedResourceHandle, ResourceLookupError, ScopeReference,
-    ScopeResolutionError, ScopedResource,
+    CapabilityRegistrationError, ConsentManifest, ConsentRecord, EffectiveGrants, GrantReview,
+    HostImportPolicyError, InvalidScopeValue, JsonValueKind, NeedValueKind, PermissionDenied,
+    PluginSubject, PreparedNeedsDigest, ResolveCtx, ResolveScopedResource,
+    ResolveScopedResourceHandle, ResourceLookupError, ScopeReference, ScopeResolutionError,
+    ScopedResource,
 };
 /// Typed handle used by generated host bindings for a WIT resource.
 pub use wasmtime::component::Resource;

@@ -1247,6 +1247,7 @@ dependencies = [
  "lockgate-macros",
  "lockgate-policy",
  "lockgate-schema",
+ "serde",
  "serde_json",
  "sha2",
  "tokio",

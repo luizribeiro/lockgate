@@ -683,10 +683,10 @@ impl<S: CallContext> Host<S> {
 /// A validated, compiled, and prelinked plugin artifact.
 pub struct Prepared {
     host: HostId,
-    instance_id: String,
-    inspection: Inspection,
-    resolved: ResolvedNeeds,
-    prepared_digest: PreparedNeedsDigest,
+    pub(crate) instance_id: String,
+    pub(crate) inspection: Inspection,
+    pub(crate) resolved: ResolvedNeeds,
+    pub(crate) prepared_digest: PreparedNeedsDigest,
     artifact: Box<dyn Any + Send>,
 }
 

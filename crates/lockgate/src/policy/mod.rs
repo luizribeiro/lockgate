@@ -1,13 +1,14 @@
 //! Stateful host policy registration and enforcement.
 
+mod consent;
 mod grants;
 mod metadata;
 mod registry;
 mod resolution;
 mod resources;
 
-pub use grants::EffectiveGrants;
-pub(crate) use grants::PreparedNeedsDigest;
+pub use consent::{ConsentManifest, ConsentRecord, GrantReview};
+pub use grants::{EffectiveGrants, PreparedNeedsDigest};
 #[doc(hidden)]
 pub use metadata::{
     HostImportPolicyError, HostImportPolicyMetadata, InterfaceIdentity, MethodClassification,

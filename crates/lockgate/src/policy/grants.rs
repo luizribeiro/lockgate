@@ -3,6 +3,7 @@
 use std::fmt;
 
 use lockgate_schema::{AtomKey, GrantSet, GrantValue, NeedsDigest, hex_encode};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha2::{Digest, Sha256};
 
 use super::ResolvedNeeds;
@@ -62,7 +63,7 @@ impl EffectiveGrants {
 /// symbolic root changes a concrete canonical scope, even if the component's
 /// static manifest bytes are unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PreparedNeedsDigest([u8; 32]);
+pub struct PreparedNeedsDigest([u8; 32]);
 
 impl PreparedNeedsDigest {
     pub(crate) fn compute(symbolic: NeedsDigest, resolved: &ResolvedNeeds) -> Self {
@@ -78,6 +79,51 @@ impl PreparedNeedsDigest {
 impl fmt::Display for PreparedNeedsDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "sha256:{}", hex_encode(&self.0))
+    }
+}
+
+impl Serialize for PreparedNeedsDigest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for PreparedNeedsDigest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let hex = value.strip_prefix("sha256:").ok_or_else(|| {
+            de::Error::custom(
+                "prepared needs digest must be `sha256:` followed by 64 lowercase hexadecimal characters",
+            )
+        })?;
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(de::Error::custom(
+                "prepared needs digest must be `sha256:` followed by 64 lowercase hexadecimal characters",
+            ));
+        }
+        let mut bytes = [0; 32];
+        for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
+            bytes[index] = (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]);
+        }
+        Ok(Self(bytes))
+    }
+}
+
+fn hex_nibble(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        _ => unreachable!("digest spelling was checked before decoding"),
     }
 }
 
