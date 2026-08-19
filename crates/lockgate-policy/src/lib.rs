@@ -24,8 +24,8 @@ pub use scope::{
 pub use lockgate_macros::{ScopeRepr, capability};
 
 /// Built-in outbound HTTP authority.
-#[capability("http")]
-pub mod http {
+#[capability("net")]
+pub mod net {
     use crate::{HttpOrigin, ScopedPermission};
 
     /// Send outbound HTTP requests to the granted exact origins.
