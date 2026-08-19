@@ -188,10 +188,11 @@ async fn preparation_rejects_an_unregistered_guard_permission() {
         error,
         AdmissionError::UnregisteredGuardPermission {
             ref atom,
-            interface: "test:guarded/admin",
+            ref interface,
             method: "restart",
-        } if atom.to_string() == "vm.restart"
+        } if atom.to_string() == "vm.restart" && interface == "test:guarded/admin@1.2.3"
     ));
+    assert!(error.to_string().contains("test:guarded/admin@1.2.3"));
 
     let mut registered = lockgate::HostBuilder::new(Imports)
         .unwrap()

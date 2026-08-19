@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
     path::PathBuf,
@@ -344,9 +344,8 @@ impl<S: CallContext> HostBuilder<S> {
                     .contains(permission.capability(), permission.permission())
                 {
                     return Err(AdmissionError::UnregisteredGuardPermission {
-                        atom: AtomKey::new(permission.capability(), permission.permission())
-                            .expect("typed permissions always contain a valid wire atom"),
-                        interface: interface.interface().name(),
+                        atom: permission.atom(),
+                        interface: interface.interface().imported_name(),
                         method: method.method().wit_name(),
                     });
                 }
@@ -365,7 +364,7 @@ impl<S: CallContext> HostBuilder<S> {
             .iter()
             .chain(needs.optional())
             .map(|entry| entry.atom())
-            .collect::<std::collections::BTreeSet<_>>();
+            .collect::<BTreeSet<_>>();
         let mut wired = Vec::new();
         for interface in self.policy_metadata.interfaces() {
             let identity = interface.interface();
@@ -376,19 +375,16 @@ impl<S: CallContext> HostBuilder<S> {
                 continue;
             }
 
-            let permissions = interface
-                .methods()
-                .iter()
-                .filter_map(|method| method.classification().permission())
-                .map(|permission| {
-                    AtomKey::new(permission.capability(), permission.permission())
-                        .expect("typed permissions always contain a valid wire atom")
-                })
-                .collect::<std::collections::BTreeSet<_>>();
-            let has_capability_free_method = interface
-                .methods()
-                .iter()
-                .any(|method| method.classification().permission().is_none());
+            let mut permissions = BTreeSet::new();
+            let mut has_capability_free_method = false;
+            for method in interface.methods() {
+                match method.classification().permission() {
+                    Some(permission) => {
+                        permissions.insert(permission.atom());
+                    }
+                    None => has_capability_free_method = true,
+                }
+            }
             if has_capability_free_method || permissions.iter().any(|atom| declared.contains(atom))
             {
                 wired.push(identity.imported_name());
@@ -650,7 +646,7 @@ pub enum AdmissionError {
     },
     UnregisteredGuardPermission {
         atom: AtomKey,
-        interface: &'static str,
+        interface: String,
         method: &'static str,
     },
     HostImportManifestMismatch {

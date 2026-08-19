@@ -1,6 +1,7 @@
 use std::{error::Error, fmt};
 
 use lockgate_policy::{Permission, Scope, ScopeError, ScopedPermission};
+use lockgate_schema::AtomKey;
 
 /// Stable identity of one generated imported WIT interface.
 #[doc(hidden)]
@@ -106,6 +107,11 @@ impl PolicyPermission {
     #[doc(hidden)]
     pub const fn permission(self) -> &'static str {
         self.permission
+    }
+
+    pub(crate) fn atom(self) -> AtomKey {
+        AtomKey::new(self.capability, self.permission)
+            .expect("typed permissions always contain a valid wire atom")
     }
 }
 
