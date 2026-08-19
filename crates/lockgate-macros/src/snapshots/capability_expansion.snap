@@ -13,4 +13,18 @@ pub mod vm {
     );
     pub(crate) const INTERNAL: Permission = Permission::new("internal");
     const PRIVATE: usize = 1;
+    #[allow(deprecated)]
+    static __LOCKGATE_CAPABILITY_PERMISSIONS: &'static [::lockgate_policy::__private::ErasedPermission] = &[
+        ::lockgate_policy::__private::erase_scoped_permission(EXEC),
+        ::lockgate_policy::__private::erase_permission(LIST),
+    ];
+    /// Registration anchor generated for this capability vocabulary.
+    pub struct Contract;
+    impl ::lockgate_policy::CapabilityContract for Contract {
+        const ID: &'static str = "vm";
+        #[doc(hidden)]
+        fn permissions() -> &'static [::lockgate_policy::__private::ErasedPermission] {
+            __LOCKGATE_CAPABILITY_PERMISSIONS
+        }
+    }
 }

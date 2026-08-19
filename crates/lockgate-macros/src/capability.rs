@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Expr, GenericArgument, Item, ItemConst, Lit, LitStr, PathArguments, Type, Visibility};
+use syn::{
+    Expr, GenericArgument, Item, ItemConst, Lit, LitStr, Meta, PathArguments, Type, Visibility,
+    ext::IdentExt, parse::Parser, punctuated::Punctuated, spanned::Spanned,
+};
 
 pub(super) fn expand(capability_id: LitStr, item: Item) -> syn::Result<TokenStream> {
     let Item::Mod(module) = item else {
@@ -58,8 +61,10 @@ fn expand_with_path(
         }
         permission_aliases.extend(newly_discovered);
     }
-    let mut permission_ids = BTreeMap::new();
-    for item in items {
+    let mut permission_ids = BTreeMap::<String, Vec<Vec<syn::Attribute>>>::new();
+    let mut conditional_duplicate_errors = Vec::new();
+    let mut permissions = Vec::new();
+    for item in items.iter_mut() {
         let Item::Const(item) = item else { continue };
         if !matches!(item.vis, Visibility::Public(_)) {
             continue;
@@ -87,27 +92,158 @@ fn expand_with_path(
             ));
         }
         validate_id(&permission_id, "permission")?;
-        if permission_ids
-            .insert(permission_id.value(), permission_id.span())
-            .is_some()
-        {
-            return Err(syn::Error::new(
-                permission_id.span(),
-                format!(
-                    "permission ID `{}` is declared more than once in this capability; permission IDs must be unique",
-                    permission_id.value()
-                ),
-            ));
+        let conditionals = conditional_attributes(&item.attrs)?;
+        let previous_declarations = permission_ids.entry(permission_id.value()).or_default();
+        for previous_conditionals in previous_declarations.iter() {
+            let message = format!(
+                "permission ID `{}` is declared more than once in this capability; permission IDs must be unique",
+                permission_id.value()
+            );
+            if previous_conditionals.is_empty() && conditionals.is_empty() {
+                return Err(syn::Error::new(permission_id.span(), message));
+            }
+            conditional_duplicate_errors.push(quote::quote_spanned! { permission_id.span() =>
+                #(#previous_conditionals)*
+                #(#conditionals)*
+                ::core::compile_error!(#message);
+            });
         }
+        previous_declarations.push(conditionals.clone());
 
         let declaration = item.expr.clone();
         let qualifier = kind.qualifier();
         *item.expr = syn::parse_quote_spanned! { permission_id.span() =>
             #lockgate_policy::__private::#qualifier(#capability_id, #declaration)
         };
+        permissions.push((item.ident.clone(), kind, conditionals));
     }
 
+    let descriptors = permissions.iter().map(|(permission, kind, conditionals)| {
+        let eraser = kind.eraser();
+        quote!(#(#conditionals)* #lockgate_policy::__private::#eraser(#permission))
+    });
+    for item in items.iter() {
+        if item_defines_reserved_name(item) {
+            return Err(syn::Error::new_spanned(
+                item,
+                "`#[lockgate::capability]` reserves `Contract` and `__LOCKGATE_CAPABILITY_PERMISSIONS` for generated registration metadata",
+            ));
+        }
+    }
+    for duplicate_error in conditional_duplicate_errors {
+        items.push(syn::parse2(duplicate_error)?);
+    }
+    items.push(syn::parse_quote! {
+        #[allow(deprecated)]
+        static __LOCKGATE_CAPABILITY_PERMISSIONS:
+            &'static [#lockgate_policy::__private::ErasedPermission] =
+            &[#(#descriptors),*];
+    });
+    items.push(syn::parse_quote! {
+        /// Registration anchor generated for this capability vocabulary.
+        pub struct Contract;
+    });
+    items.push(syn::parse_quote! {
+        impl #lockgate_policy::CapabilityContract for Contract {
+            const ID: &'static str = #capability_id;
+
+            #[doc(hidden)]
+            fn permissions() -> &'static [#lockgate_policy::__private::ErasedPermission] {
+                __LOCKGATE_CAPABILITY_PERMISSIONS
+            }
+        }
+    });
+
     Ok(quote!(#module))
+}
+
+fn conditional_attributes(attributes: &[syn::Attribute]) -> syn::Result<Vec<syn::Attribute>> {
+    let mut conditionals = Vec::new();
+    for attribute in attributes {
+        if attribute.path().is_ident("cfg") {
+            conditionals.push(attribute.clone());
+        } else if attribute.path().is_ident("cfg_attr")
+            && let Some(meta) = sanitize_cfg_attr(&attribute.meta)?
+        {
+            conditionals.push(syn::parse_quote_spanned!(attribute.path().span()=> #[#meta]));
+        }
+    }
+    Ok(conditionals)
+}
+
+fn sanitize_cfg_attr(meta: &Meta) -> syn::Result<Option<Meta>> {
+    let Meta::List(list) = meta else {
+        return Err(syn::Error::new_spanned(
+            meta,
+            "malformed `cfg_attr`; expected `cfg_attr(condition, attribute)`",
+        ));
+    };
+    let parsed = Punctuated::<Meta, syn::Token![,]>::parse_terminated.parse2(list.tokens.clone());
+    let mut metas = parsed?.into_iter();
+    let condition = metas.next().ok_or_else(|| {
+        syn::Error::new_spanned(meta, "`cfg_attr` requires a condition and an attribute")
+    })?;
+    let mut nested = Vec::new();
+    for meta in metas {
+        if meta.path().is_ident("cfg") {
+            nested.push(meta);
+        } else if meta.path().is_ident("cfg_attr")
+            && let Some(meta) = sanitize_cfg_attr(&meta)?
+        {
+            nested.push(meta);
+        }
+    }
+    if nested.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(
+        syn::parse_quote_spanned!(list.path.span()=> cfg_attr(#condition, #(#nested),*)),
+    ))
+}
+
+fn item_defines_reserved_name(item: &Item) -> bool {
+    let reserved = |ident: &syn::Ident| {
+        matches!(
+            ident.unraw().to_string().as_str(),
+            "Contract" | "__LOCKGATE_CAPABILITY_PERMISSIONS"
+        )
+    };
+    match item {
+        Item::Const(item) => reserved(&item.ident),
+        Item::Enum(item) => reserved(&item.ident),
+        Item::ExternCrate(item) => {
+            reserved(item.rename.as_ref().map_or(&item.ident, |(_, name)| name))
+        }
+        Item::Fn(item) => reserved(&item.sig.ident),
+        Item::Macro(item) => item.ident.as_ref().is_some_and(reserved),
+        Item::Mod(item) => reserved(&item.ident),
+        Item::Static(item) => reserved(&item.ident),
+        Item::Struct(item) => reserved(&item.ident),
+        Item::Trait(item) => reserved(&item.ident),
+        Item::TraitAlias(item) => reserved(&item.ident),
+        Item::Type(item) => reserved(&item.ident),
+        Item::Union(item) => reserved(&item.ident),
+        Item::Use(item) => use_tree_defines_name(&item.tree, &reserved, None),
+        _ => false,
+    }
+}
+
+fn use_tree_defines_name(
+    tree: &syn::UseTree,
+    reserved: &impl Fn(&syn::Ident) -> bool,
+    parent: Option<&syn::Ident>,
+) -> bool {
+    match tree {
+        syn::UseTree::Path(path) => use_tree_defines_name(&path.tree, reserved, Some(&path.ident)),
+        syn::UseTree::Name(name) if name.ident == "self" => parent.is_some_and(reserved),
+        syn::UseTree::Name(name) => reserved(&name.ident),
+        syn::UseTree::Rename(rename) => reserved(&rename.rename),
+        syn::UseTree::Group(group) => group
+            .items
+            .iter()
+            .any(|tree| use_tree_defines_name(tree, reserved, parent)),
+        syn::UseTree::Glob(_) => false,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -121,6 +257,13 @@ impl PermissionKind {
         match self {
             Self::Unscoped => quote::format_ident!("qualify_permission"),
             Self::Scoped => quote::format_ident!("qualify_scoped_permission"),
+        }
+    }
+
+    fn eraser(self) -> syn::Ident {
+        match self {
+            Self::Unscoped => quote::format_ident!("erase_permission"),
+            Self::Scoped => quote::format_ident!("erase_scoped_permission"),
         }
     }
 
@@ -508,6 +651,31 @@ mod tests {
             .unwrap_err()
             .to_string();
             assert!(error.contains("hides its permission type behind an alias"));
+        }
+    }
+
+    #[test]
+    fn rejects_grouped_self_imports_of_generated_names() {
+        for module in [
+            quote::quote! {
+                pub mod vm {
+                    use crate::Contract::{self};
+                }
+            },
+            quote::quote! {
+                pub mod vm {
+                    pub struct r#Contract;
+                }
+            },
+        ] {
+            let error = expand_with_path(
+                syn::parse_quote!("vm"),
+                syn::parse2(module).unwrap(),
+                &quote::quote!(::lockgate_policy),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("reserves `Contract`"));
         }
     }
 }
