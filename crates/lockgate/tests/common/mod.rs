@@ -49,6 +49,8 @@ pub(crate) static EXEC_CONCURRENT_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| 
         "lockgate_exec_concurrent_fixture.wasm",
     )
 });
+pub(crate) static ASYNC_RECORD_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("async-record-guest", "lockgate_async_record_fixture.wasm"));
 pub(crate) static EXEC_FUEL_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("exec-fuel-guest", "lockgate_exec_fuel_fixture.wasm"));
 pub(crate) static PUBLIC_FIXTURE: LazyLock<Vec<u8>> =

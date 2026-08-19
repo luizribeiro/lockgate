@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "async-record-guest",
     "config-guest",
     "detached-jobs-guest",
     "exec-concurrent-guest",

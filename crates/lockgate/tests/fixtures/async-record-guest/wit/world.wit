@@ -1,0 +1,24 @@
+package test:async-record;
+
+interface guest {
+  record request {
+    prompt: string,
+    limit: u32,
+  }
+
+  variant piece {
+    text(string),
+    stop,
+  }
+
+  record reply {
+    pieces: list<piece>,
+    model: string,
+  }
+
+  run: async func(req: request) -> result<reply, string>;
+}
+
+world fixture {
+  export guest;
+}
