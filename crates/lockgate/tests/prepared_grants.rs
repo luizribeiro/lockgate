@@ -358,9 +358,12 @@ async fn dash_prefix_declaration_orders_admit_identically() {
     );
 
     let mut builder = host_builder();
-    for needs in [&forward, &reversed] {
+    for (instance_id, needs) in ["forward-order", "reversed-order"]
+        .into_iter()
+        .zip([&forward, &reversed])
+    {
         let prepared = builder
-            .prepare(PLUGIN_ID, &fixture(needs), PluginConfig::default())
+            .prepare(instance_id, &fixture(needs), PluginConfig::default())
             .await
             .unwrap();
         let acceptance = prepared.accept_all();
@@ -373,6 +376,6 @@ async fn dash_prefix_declaration_orders_admit_identically() {
             )
             .await
             .unwrap();
-        assert_eq!(handle.id(), PLUGIN_ID);
+        assert_eq!(handle.id(), instance_id);
     }
 }

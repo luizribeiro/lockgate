@@ -590,6 +590,49 @@ async fn embedded_label_can_differ_from_the_admitted_instance_id() {
 }
 
 #[tokio::test]
+async fn duplicate_instance_id_is_rejected() {
+    let bytes = well_formed_fixture();
+    let mut builder = HostBuilder::new(()).unwrap();
+    let first = builder
+        .prepare("reused-instance", &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let first_acceptance = first.accept_all();
+    builder
+        .admit(
+            first,
+            first_acceptance,
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+    let duplicate = builder
+        .prepare("reused-instance", &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let duplicate_acceptance = duplicate.accept_all();
+
+    let error = builder
+        .admit(
+            duplicate,
+            duplicate_acceptance,
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AdmissionError::DuplicateInstanceId { ref instance_id }
+            if instance_id == "reused-instance"
+    ));
+    assert!(error.to_string().contains("reused-instance"));
+    assert!(error.to_string().contains("already admitted"));
+}
+
+#[tokio::test]
 async fn preparation_reports_each_early_failure() {
     let base = value_component();
     let needs = NeedsManifest::empty().to_section_bytes().unwrap();

@@ -514,6 +514,13 @@ impl<S: CallContext> HostBuilder<S> {
                 plugin: instance_id,
             });
         }
+        if self
+            .admitted
+            .iter()
+            .any(|plugin| plugin.handle.id() == instance_id.as_str())
+        {
+            return Err(AdmissionError::DuplicateInstanceId { instance_id });
+        }
         let effective_grants =
             bind_effective_grants(&instance_id, prepared_digest, resolved, &acceptance)?;
 
@@ -826,6 +833,9 @@ pub enum AdmissionError {
     PreparedHostMismatch {
         plugin: String,
     },
+    DuplicateInstanceId {
+        instance_id: String,
+    },
     AcceptancePluginMismatch {
         prepared: String,
         acceptance: String,
@@ -1004,6 +1014,10 @@ impl fmt::Display for AdmissionError {
             Self::PreparedHostMismatch { plugin } => write!(
                 formatter,
                 "prepared plugin `{plugin}` belongs to another HostBuilder and cannot be admitted here; prepare it with this builder"
+            ),
+            Self::DuplicateInstanceId { instance_id } => write!(
+                formatter,
+                "plugin instance id `{instance_id}` is already admitted to this HostBuilder"
             ),
             Self::AcceptancePluginMismatch {
                 prepared,
