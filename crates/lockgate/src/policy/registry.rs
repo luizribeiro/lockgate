@@ -6,25 +6,27 @@ use lockgate_policy::{__private::ErasedPermission, CapabilityContract, ScopeErro
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum CapabilityRegistrationError {
-    MalformedCapabilityId {
-        capability: &'static str,
-    },
-    DuplicateCapability {
-        capability: &'static str,
-    },
+    /// The contract's capability ID does not satisfy the authoring grammar.
+    MalformedCapabilityId { capability: &'static str },
+    /// A contract with the same capability ID is already registered.
+    DuplicateCapability { capability: &'static str },
+    /// A permission ID does not satisfy the authoring grammar.
     MalformedPermissionId {
         capability: &'static str,
         permission: &'static str,
     },
+    /// A contract declares the same permission ID more than once.
     DuplicatePermission {
         capability: &'static str,
         permission: &'static str,
     },
+    /// A descriptor carries a different capability ID than its contract.
     InconsistentDescriptor {
         contract_capability: &'static str,
         descriptor_capability: &'static str,
         permission: &'static str,
     },
+    /// A scoped permission's exhaustive domain violates the scope laws.
     ScopeLawViolation {
         capability: &'static str,
         permission: &'static str,
