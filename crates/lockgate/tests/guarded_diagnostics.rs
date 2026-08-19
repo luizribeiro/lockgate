@@ -12,6 +12,7 @@ fn guarded_classification_errors_are_teaching_diagnostics() {
         "missing_target_on_scoped",
         "no_matching_resolver",
         "resolver_error_not_convertible",
+        "resource_handle_path",
         "self_target",
         "target_on_unscoped",
         "wrong_scoped_resource",

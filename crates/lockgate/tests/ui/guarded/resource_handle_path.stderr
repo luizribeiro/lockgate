@@ -1,0 +1,5 @@
+error: a WIT resource-handle policy target must be the handle parameter itself, not a path through it
+  --> tests/ui/guarded/resource_handle_path.rs:33:67
+   |
+33 |     #[lockgate::requires(permission = permissions::READ, target = session.rep)]
+   |                                                                   ^^^^^^^^^^^
