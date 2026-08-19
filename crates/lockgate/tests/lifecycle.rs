@@ -562,11 +562,10 @@ async fn prepares_a_well_formed_sectioned_fixture() {
 }
 
 #[tokio::test]
-async fn embedded_id_does_not_gate_preparation() {
+async fn embedded_label_can_differ_from_the_admitted_instance_id() {
     let bytes = well_formed_fixture();
     let mut builder = HostBuilder::new(()).unwrap();
-
-    builder
+    let prepared = builder
         .prepare(
             "operator-assigned-instance",
             &bytes,
@@ -574,6 +573,20 @@ async fn embedded_id_does_not_gate_preparation() {
         )
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
+
+    let handle = builder
+        .admit(
+            prepared,
+            acceptance,
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(handle.id(), "operator-assigned-instance");
+    assert_eq!(handle.metadata().id(), PLUGIN_ID);
 }
 
 #[tokio::test]

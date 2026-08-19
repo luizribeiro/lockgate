@@ -249,23 +249,16 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
 }
 
 #[tokio::test]
-async fn acceptance_for_one_plugin_cannot_admit_another() {
+async fn acceptance_for_one_instance_cannot_admit_another() {
     let needs = required(NeedEntry::flag(atom("sessions.send")));
+    let bytes = fixture_for("shared-code", &needs);
     let mut builder = host_builder();
     let prepared_a = builder
-        .prepare(
-            "author.plugin-a",
-            &fixture_for("author.plugin-a", &needs),
-            PluginConfig::default(),
-        )
+        .prepare("instance-a", &bytes, PluginConfig::default())
         .await
         .unwrap();
     let prepared_b = builder
-        .prepare(
-            "author.plugin-b",
-            &fixture_for("author.plugin-b", &needs),
-            PluginConfig::default(),
-        )
+        .prepare("instance-b", &bytes, PluginConfig::default())
         .await
         .unwrap();
     let acceptance_b = prepared_b.accept_all();
@@ -285,10 +278,10 @@ async fn acceptance_for_one_plugin_cannot_admit_another() {
         AdmissionError::AcceptancePluginMismatch {
             ref prepared,
             ref acceptance,
-        } if prepared == "author.plugin-a" && acceptance == "author.plugin-b"
+        } if prepared == "instance-a" && acceptance == "instance-b"
     ));
-    assert!(error.to_string().contains("author.plugin-a"));
-    assert!(error.to_string().contains("author.plugin-b"));
+    assert!(error.to_string().contains("instance-a"));
+    assert!(error.to_string().contains("instance-b"));
 }
 
 #[tokio::test]

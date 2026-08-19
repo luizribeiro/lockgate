@@ -202,6 +202,7 @@ struct AdmittedPlugin<S: 'static> {
 pub struct PluginHandle {
     host: HostId,
     index: usize,
+    instance_id: String,
     metadata: PluginMetadata,
     effective_grants: EffectiveGrants,
     registry: std::sync::Arc<CapabilityRegistry>,
@@ -213,6 +214,7 @@ impl fmt::Debug for PluginHandle {
             .debug_struct("PluginHandle")
             .field("host", &self.host)
             .field("index", &self.index)
+            .field("instance_id", &self.instance_id)
             .field("metadata", &self.metadata)
             .field("effective_grants", &self.effective_grants)
             .finish_non_exhaustive()
@@ -223,6 +225,7 @@ impl PartialEq for PluginHandle {
     fn eq(&self, other: &Self) -> bool {
         self.host == other.host
             && self.index == other.index
+            && self.instance_id == other.instance_id
             && self.metadata == other.metadata
             && self.effective_grants == other.effective_grants
     }
@@ -231,9 +234,9 @@ impl PartialEq for PluginHandle {
 impl Eq for PluginHandle {}
 
 impl PluginHandle {
-    /// Returns the stable plugin identifier.
+    /// Returns the operator-assigned instance identifier.
     pub fn id(&self) -> &str {
-        self.metadata.id()
+        &self.instance_id
     }
 
     /// Returns the plugin's validated display metadata.
@@ -273,9 +276,9 @@ impl PluginHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn for_policy_test(plugin_id: &str, effective_grants: EffectiveGrants) -> Self {
+    pub(crate) fn for_policy_test(instance_id: &str, effective_grants: EffectiveGrants) -> Self {
         Self::for_policy_test_with_registry(
-            plugin_id,
+            instance_id,
             effective_grants,
             CapabilityRegistry::default(),
         )
@@ -283,14 +286,15 @@ impl PluginHandle {
 
     #[cfg(test)]
     pub(crate) fn for_policy_test_with_registry(
-        plugin_id: &str,
+        instance_id: &str,
         effective_grants: EffectiveGrants,
         registry: CapabilityRegistry,
     ) -> Self {
         Self {
             host: HostId(0),
             index: 0,
-            metadata: PluginMetadata::new(plugin_id, "Policy test plugin", "1.0").unwrap(),
+            instance_id: instance_id.to_owned(),
+            metadata: PluginMetadata::new(instance_id, "Policy test plugin", "1.0").unwrap(),
             effective_grants,
             registry: std::sync::Arc::new(registry),
         }
@@ -365,7 +369,7 @@ impl<S: CallContext> HostBuilder<S> {
     /// 2020-12 schema, their JSON is retained for smoke and steady-state Stores.
     pub async fn prepare(
         &mut self,
-        _id: &str,
+        id: &str,
         bytes: &[u8],
         config: PluginConfig,
     ) -> Result<Prepared, AdmissionError> {
@@ -380,11 +384,8 @@ impl<S: CallContext> HostBuilder<S> {
         let imported_interfaces =
             decode_imported_interfaces(bytes).map_err(AdmissionError::from_inspection)?;
         let wired_interfaces = self.select_host_imports(&imported_interfaces, &needs)?;
-        let has_http_egress = validate_http_egress_grant(
-            metadata.id(),
-            &imported_interfaces,
-            http_egress_origin_count(&needs),
-        )?;
+        let has_http_egress =
+            validate_http_egress_grant(id, &imported_interfaces, http_egress_origin_count(&needs))?;
         if let Some(field) = unavailable_field {
             return Err(AdmissionError::ConfigFeatureUnavailable { field });
         }
@@ -415,6 +416,7 @@ impl<S: CallContext> HostBuilder<S> {
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             host: self.id,
+            instance_id: id.to_owned(),
             inspection,
             resolved,
             prepared_digest,
@@ -501,6 +503,7 @@ impl<S: CallContext> HostBuilder<S> {
     ) -> Result<PluginHandle, AdmissionError> {
         let Prepared {
             host,
+            instance_id,
             inspection,
             resolved,
             prepared_digest,
@@ -508,15 +511,11 @@ impl<S: CallContext> HostBuilder<S> {
         } = prepared;
         if host != self.id {
             return Err(AdmissionError::PreparedHostMismatch {
-                plugin: inspection.metadata().id().to_owned(),
+                plugin: instance_id,
             });
         }
-        let effective_grants = bind_effective_grants(
-            inspection.metadata().id(),
-            prepared_digest,
-            resolved,
-            &acceptance,
-        )?;
+        let effective_grants =
+            bind_effective_grants(&instance_id, prepared_digest, resolved, &acceptance)?;
 
         let mut artifact = artifact
             .downcast::<LoadedComponent<S>>()
@@ -524,6 +523,7 @@ impl<S: CallContext> HostBuilder<S> {
         let handle = PluginHandle {
             host: self.id,
             index: self.admitted.len(),
+            instance_id,
             metadata: inspection.metadata().clone(),
             effective_grants,
             registry: std::sync::Arc::new(self.registry.clone()),
@@ -676,6 +676,7 @@ impl<S: CallContext> Host<S> {
 /// A validated, compiled, and prelinked plugin artifact.
 pub struct Prepared {
     host: HostId,
+    instance_id: String,
     inspection: Inspection,
     resolved: ResolvedNeeds,
     prepared_digest: PreparedNeedsDigest,
@@ -686,6 +687,7 @@ impl fmt::Debug for Prepared {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Prepared")
+            .field("instance_id", &self.instance_id)
             .field("inspection", &self.inspection)
             .finish_non_exhaustive()
     }
@@ -702,7 +704,7 @@ impl Prepared {
         // TODO: Add operator review of declared egress origins during install as
         // part of future consent and drift handling; for now accept them as-is.
         Acceptance {
-            plugin_id: self.inspection.metadata().id().to_owned(),
+            plugin_id: self.instance_id.clone(),
             digest: self.prepared_digest,
         }
     }
@@ -1147,6 +1149,41 @@ mod grant_tests {
             .unwrap()
     }
 
+    fn settings_schema_component() -> Vec<u8> {
+        let schema = r#"{"type":"object","required":["scope"],"properties":{"scope":{"type":"string"}},"additionalProperties":false}"#;
+        let encoded = schema
+            .as_bytes()
+            .iter()
+            .map(|byte| format!(r"\{byte:02x}"))
+            .collect::<String>();
+        wat::parse_str(format!(
+            r#"(component
+                (core module $guest
+                    (memory (export "memory") 1)
+                    (data (i32.const 64) "{encoded}")
+                    (func (export "settings-schema") (result i32)
+                        (i32.store (i32.const 8) (i32.const 64))
+                        (i32.store offset=4 (i32.const 8) (i32.const {length}))
+                        (i32.const 8)
+                    )
+                )
+                (core instance $guest-instance (instantiate $guest))
+                (func $settings-schema (result string)
+                    (canon lift
+                        (core func $guest-instance "settings-schema")
+                        (memory (core memory $guest-instance "memory"))
+                    )
+                )
+                (instance $schema
+                    (export "settings-schema" (func $settings-schema))
+                )
+                (export "lockgate:config/schema" (instance $schema))
+            )"#,
+            length = schema.len(),
+        ))
+        .unwrap()
+    }
+
     #[test]
     fn pure_declared_needs_resolve_accept_and_freeze_for_queries() {
         let metadata = PluginMetadata::new("pure-grants", "Pure grants", "1.0").unwrap();
@@ -1177,6 +1214,7 @@ mod grant_tests {
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
         let prepared = Prepared {
             host: HostId::next(),
+            instance_id: "pure-instance".to_owned(),
             inspection: Inspection::new(metadata, needs, needs_digest, Vec::new()),
             resolved,
             prepared_digest,
@@ -1184,25 +1222,107 @@ mod grant_tests {
         };
         let acceptance = prepared.accept_all();
         let Prepared {
-            inspection,
+            instance_id,
             resolved,
             prepared_digest,
             ..
         } = prepared;
 
-        let grants = bind_effective_grants(
-            inspection.metadata().id(),
-            prepared_digest,
-            resolved,
-            &acceptance,
-        )
-        .unwrap();
+        let grants =
+            bind_effective_grants(&instance_id, prepared_digest, resolved, &acceptance).unwrap();
 
         assert!(grants.has_unscoped(&atom("sessions.send")));
         assert!(!grants.has_unscoped(&atom("sessions.missing")));
         assert_eq!(
             grants.scoped_values(&atom("sessions.read")),
             Some(["all".to_owned()].as_slice())
+        );
+    }
+
+    #[tokio::test]
+    async fn identical_component_bytes_admit_as_instances_with_distinct_grants() {
+        let metadata = PluginMetadata::new("shared-code", "Shared code", "1.0").unwrap();
+        let needs = NeedsManifest::new(
+            vec![
+                NeedEntry::scoped(
+                    atom("sessions.read"),
+                    vec![ScopeRef::setting("/scope").unwrap()],
+                )
+                .unwrap(),
+            ],
+            vec![],
+        )
+        .unwrap();
+        let bytes = with_section(
+            with_section(
+                settings_schema_component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
+            ),
+            PLUGIN_NEEDS_SECTION,
+            &needs.to_section_bytes().unwrap(),
+        );
+        let mut builder = HostBuilder::new(())
+            .unwrap()
+            .register::<permissions::Contract>()
+            .unwrap();
+        let prod = builder
+            .prepare(
+                "openai-prod",
+                &bytes,
+                PluginConfig {
+                    settings: Some(serde_json::json!({ "scope": "all" })),
+                    ..PluginConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+        let staging = builder
+            .prepare(
+                "openai-staging",
+                &bytes,
+                PluginConfig {
+                    settings: Some(serde_json::json!({ "scope": "current" })),
+                    ..PluginConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+        let prod_acceptance = prod.accept_all();
+        let staging_acceptance = staging.accept_all();
+
+        let prod = builder
+            .admit(
+                prod,
+                prod_acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(1_000_000),
+            )
+            .await
+            .unwrap();
+        let staging = builder
+            .admit(
+                staging,
+                staging_acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(1_000_000),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(prod.id(), "openai-prod");
+        assert_eq!(staging.id(), "openai-staging");
+        assert_ne!(prod.effective_grants(), staging.effective_grants());
+        assert_eq!(
+            prod.effective_grants()
+                .scoped_values(&atom("sessions.read")),
+            Some(["all".to_owned()].as_slice())
+        );
+        assert_eq!(
+            staging
+                .effective_grants()
+                .scoped_values(&atom("sessions.read")),
+            Some(["current".to_owned()].as_slice())
         );
     }
 
