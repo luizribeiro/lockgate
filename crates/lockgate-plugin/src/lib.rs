@@ -1,14 +1,16 @@
 //! Guest authoring facade for Lockgate plugins.
 //!
-//! The default `runtime` feature supplies the allocator, canonical ABI realloc
-//! export, and trap-on-panic handler required by `no_std` WebAssembly guests.
+//! This facade is `no_std` on WebAssembly and uses `std` on native targets so
+//! dependent guest crates can use the native test harness. The default
+//! `runtime` feature supplies the allocator, canonical ABI realloc export, and
+//! trap-on-panic handler required by `no_std` WebAssembly guests.
 //! Disable it when the final guest supplies its own program-wide runtime floor,
 //! such as for a custom allocator or a future standard-library guest.
 //!
 //! A guest panic traps and fails only its current invocation. Capturing panic
 //! messages is intentionally deferred to a future runtime diagnostics feature.
 //! Direct `cargo test --target wasm32-wasip2` fails for this crate by construction because the runtime feature's panic handler collides with std's in the test harness; test through the dependent fixtures instead.
-#![no_std]
+#![cfg_attr(target_arch = "wasm32", no_std)]
 
 #[doc(hidden)]
 pub extern crate alloc;
