@@ -99,6 +99,7 @@ mod tests {
     use lockgate_schema::GrantSet;
     use wasmtime_wasi_http::{Error as WasiHttpError, WasiBody, WasiHttpHooks};
 
+    use super::super::{ExecEngine, StoreCtx, add_http_to_linker};
     use super::HttpHooks;
     use crate::{
         PluginHandle, http,
@@ -155,6 +156,32 @@ mod tests {
             connection.write_all(response).unwrap();
         });
         (format!("http://{address}"), server)
+    }
+
+    #[test]
+    fn wasi_http_provider_is_linked_only_for_an_egress_grant() {
+        let engine = ExecEngine::new().unwrap();
+        let mut denied = wasmtime::component::Linker::<StoreCtx<()>>::new(engine.engine());
+        add_http_to_linker(&mut denied, false).unwrap();
+        assert!(
+            denied
+                .instance("wasi:http/client@0.3.0")
+                .unwrap()
+                .func_wrap_concurrent("send", |_, (): ()| Box::pin(async { Ok(()) }))
+                .is_ok(),
+            "a component without an egress grant must have no wasi:http provider"
+        );
+
+        let mut allowed = wasmtime::component::Linker::<StoreCtx<()>>::new(engine.engine());
+        add_http_to_linker(&mut allowed, true).unwrap();
+        assert!(
+            allowed
+                .instance("wasi:http/client@0.3.0")
+                .unwrap()
+                .func_wrap_concurrent("send", |_, (): ()| Box::pin(async { Ok(()) }))
+                .is_err(),
+            "an egress grant must make the wasi:http provider available"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

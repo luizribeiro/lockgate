@@ -106,10 +106,12 @@ impl ExecEngine {
         component: &Component,
         imports: Arc<dyn ImportsFactory<S>>,
         interfaces: &[String],
+        has_http_egress: bool,
     ) -> Result<LoadedComponent<S>, LoadError> {
         let mut linker = Linker::new(&self.engine);
         add_settings_to_linker(&mut linker).map_err(LoadError::link)?;
         add_wasi_to_linker(&mut linker).map_err(LoadError::link)?;
+        add_http_to_linker(&mut linker, has_http_egress).map_err(LoadError::link)?;
         imports
             .register(&mut linker, interfaces)
             .map_err(LoadError::link)?;
@@ -411,6 +413,16 @@ fn add_wasi_to_linker<S: Send + Sync + 'static>(
 ) -> WasmtimeResult<()> {
     wasmtime_wasi::p2::add_to_linker_async(linker)?;
     wasmtime_wasi::p3::add_to_linker(linker)?;
+    Ok(())
+}
+
+fn add_http_to_linker<S: Send + Sync + 'static>(
+    linker: &mut Linker<StoreCtx<S>>,
+    has_http_egress: bool,
+) -> WasmtimeResult<()> {
+    if has_http_egress {
+        wasmtime_wasi_http::p3::add_to_linker(linker)?;
+    }
     Ok(())
 }
 

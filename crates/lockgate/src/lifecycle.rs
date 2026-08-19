@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use lockgate_schema::{AtomKey, NeedsManifest, PluginMetadata};
+use lockgate_schema::{AtomKey, GrantValue, NeedsManifest, PluginMetadata};
 
 use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
@@ -292,6 +292,10 @@ impl<S: CallContext> HostBuilder<S> {
         let jobs = JobTracker::new()
             .map_err(EngineError::new)
             .map_err(HostConstructionError::Engine)?;
+        let mut registry = CapabilityRegistry::default();
+        registry
+            .register::<lockgate_policy::http::Contract>()
+            .expect("Lockgate's built-in HTTP capability must be valid");
         Ok(Self {
             id: HostId::next(),
             engine,
@@ -303,7 +307,7 @@ impl<S: CallContext> HostBuilder<S> {
             )),
             admitted: Vec::new(),
             jobs,
-            registry: CapabilityRegistry::default(),
+            registry,
             policy_metadata,
         })
     }
@@ -370,14 +374,6 @@ impl<S: CallContext> HostBuilder<S> {
             .engine
             .compile(bytes)
             .map_err(AdmissionError::from_load)?;
-        let mut artifact = self
-            .engine
-            .load_hosted_component::<S>(
-                &component,
-                std::sync::Arc::clone(&self.imports),
-                &wired_interfaces,
-            )
-            .map_err(AdmissionError::from_load)?;
         let schema = self
             .engine
             .fetch_settings_schema(&component, RuntimeLimits::default().into())
@@ -387,6 +383,16 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(AdmissionError::from_settings_validation)?;
         let resolved = resolve_needs(&needs, settings.value(), &config.roots, &self.registry)
             .map_err(AdmissionError::ScopeResolution)?;
+        let has_http_egress = has_http_egress(&resolved);
+        let mut artifact = self
+            .engine
+            .load_hosted_component::<S>(
+                &component,
+                std::sync::Arc::clone(&self.imports),
+                &wired_interfaces,
+                has_http_egress,
+            )
+            .map_err(AdmissionError::from_load)?;
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
         artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
@@ -541,6 +547,16 @@ impl<S: CallContext> HostBuilder<S> {
             registry: self.registry,
         }
     }
+}
+
+fn has_http_egress(resolved: &ResolvedNeeds) -> bool {
+    let (capability, permission) =
+        lockgate_policy::__private::scoped_permission_ids(lockgate_policy::http::EGRESS);
+    let atom = AtomKey::new(capability, permission)
+        .expect("typed permissions always contain a valid wire atom");
+    [&resolved.required, &resolved.optional]
+        .into_iter()
+        .any(|grants| matches!(grants.get(&atom), Some(GrantValue::Scopes(_))))
 }
 
 /// Steady-state owner of the execution engine and admitted plugins.
