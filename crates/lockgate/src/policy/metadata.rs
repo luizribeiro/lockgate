@@ -26,6 +26,18 @@ impl InterfaceIdentity {
     pub const fn version(self) -> Option<&'static str> {
         self.version
     }
+
+    pub(crate) fn imported_name(self) -> String {
+        match self.version {
+            Some(version) => format!("{}@{version}", self.name),
+            None => self.name.to_owned(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn matches_import(self, imported: &str) -> bool {
+        self.imported_name() == imported
+    }
 }
 
 /// Rust and WIT names of one generated imported method.

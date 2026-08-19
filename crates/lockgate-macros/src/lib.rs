@@ -1376,7 +1376,12 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         let registrations = interfaces.iter().map(|interface| {
             let path = &interface.path;
             quote! {
-                __lockgate_host_bindings::#(#path)::*::__lockgate_register(linker)?;
+                if interfaces.iter().any(|interface| {
+                    __lockgate_host_bindings::#(#path)::*::__LockgateBinding::INTERFACE
+                        .matches_import(interface)
+                }) {
+                    __lockgate_host_bindings::#(#path)::*::__lockgate_register(linker)?;
+                }
             }
         });
         let policy_interfaces = interfaces.iter().map(|interface| {
@@ -1411,6 +1416,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                     linker: &mut #lockgate::__private::wasmtime::component::Linker<
                         #lockgate::__private::StoreCtx<#data>,
                     >,
+                    interfaces: &[::std::string::String],
                 ) -> #lockgate::__private::wasmtime::Result<()> {
                     #(#registrations)*
                     Ok(())

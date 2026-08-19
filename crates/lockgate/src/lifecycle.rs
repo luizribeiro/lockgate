@@ -14,7 +14,10 @@ use crate::config::{SettingsValidationError, validate_settings};
 use crate::exec::{
     ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError, LoadedComponent, TypedImports,
 };
-use crate::inspection::{InspectError, Inspection, decode_metadata, decode_needs, decode_sections};
+use crate::inspection::{
+    InspectError, Inspection, decode_imported_interfaces, decode_metadata, decode_needs,
+    decode_sections,
+};
 use crate::jobs::{DetachedJobContext, DetachedJobFailure, JobTracker};
 use crate::policy::{
     CapabilityRegistrationError, CapabilityRegistry, HostImportPolicyError,
@@ -117,8 +120,8 @@ fn validate_acceptance(
     needs: &NeedsManifest,
     acceptance: &Acceptance,
 ) -> Result<(), AdmissionError> {
-    // Intentionally a no-op: non-empty needs are rejected before this point,
-    // and accepted-but-never-declared grants remain inert by design.
+    // Intentionally a no-op: declared atoms are registration-checked before
+    // this point, and accepted-but-never-declared grants remain inert by design.
     // FIXME(grant-system): the grant-algebra join computes effective = declared
     // ∩ accepted ∩ limits, parses accepted values through registered scope
     // types, and changes this return type to the effective-grants value.
@@ -232,9 +235,12 @@ impl<S: CallContext> HostBuilder<S> {
         Ok(Self {
             id: HostId::next(),
             engine,
-            imports: std::sync::Arc::new(TypedImports::new(imports, |imports, linker| {
-                crate::HostImports::add_to_linker(imports, linker)
-            })),
+            imports: std::sync::Arc::new(TypedImports::new(
+                imports,
+                |imports, linker, interfaces| {
+                    crate::HostImports::add_to_linker(imports, linker, interfaces)
+                },
+            )),
             admitted: Vec::new(),
             jobs,
             registry: CapabilityRegistry::default(),
@@ -294,6 +300,9 @@ impl<S: CallContext> HostBuilder<S> {
             decode_needs(&sections).map_err(AdmissionError::from_inspection)?;
         let exported_interfaces = validate_and_collect_exported_interfaces(bytes)
             .map_err(AdmissionError::from_validation)?;
+        let imported_interfaces =
+            decode_imported_interfaces(bytes).map_err(AdmissionError::from_inspection)?;
+        let wired_interfaces = self.select_host_imports(&imported_interfaces, &needs)?;
         if let Some(field) = unavailable_field {
             return Err(AdmissionError::ConfigFeatureUnavailable { field });
         }
@@ -303,7 +312,11 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(AdmissionError::from_load)?;
         let mut artifact = self
             .engine
-            .load_hosted_component::<S>(&component, std::sync::Arc::clone(&self.imports))
+            .load_hosted_component::<S>(
+                &component,
+                std::sync::Arc::clone(&self.imports),
+                &wired_interfaces,
+            )
             .map_err(AdmissionError::from_load)?;
         let schema = self
             .engine
@@ -342,8 +355,55 @@ impl<S: CallContext> HostBuilder<S> {
         Ok(())
     }
 
-    /// Rejects declared needs before consulting acceptance while need/grant
-    /// validation is unavailable, then smoke-instantiates the prepared plugin.
+    fn select_host_imports(
+        &self,
+        imported_interfaces: &[String],
+        needs: &NeedsManifest,
+    ) -> Result<Vec<String>, AdmissionError> {
+        let declared = needs
+            .required()
+            .iter()
+            .chain(needs.optional())
+            .map(|entry| entry.atom())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut wired = Vec::new();
+        for interface in self.policy_metadata.interfaces() {
+            let identity = interface.interface();
+            if !imported_interfaces
+                .iter()
+                .any(|imported| identity.matches_import(imported))
+            {
+                continue;
+            }
+
+            let permissions = interface
+                .methods()
+                .iter()
+                .filter_map(|method| method.classification().permission())
+                .map(|permission| {
+                    AtomKey::new(permission.capability(), permission.permission())
+                        .expect("typed permissions always contain a valid wire atom")
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            let has_capability_free_method = interface
+                .methods()
+                .iter()
+                .any(|method| method.classification().permission().is_none());
+            if has_capability_free_method || permissions.iter().any(|atom| declared.contains(atom))
+            {
+                wired.push(identity.imported_name());
+            } else {
+                return Err(AdmissionError::HostImportManifestMismatch {
+                    interface: identity.imported_name(),
+                    permissions: permissions.into_iter().collect(),
+                });
+            }
+        }
+        Ok(wired)
+    }
+
+    /// Rejects unregistered declared needs before consulting acceptance, then
+    /// smoke-instantiates the prepared plugin.
     /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
     /// `startup_ctx`'s fuel, so an application-chosen startup budget may reject
     /// a constructor that steady-state calls would instantiate under the full
@@ -364,7 +424,11 @@ impl<S: CallContext> HostBuilder<S> {
             .required()
             .iter()
             .chain(inspection.needs().optional())
-            .next()
+            .find(|entry| {
+                !self
+                    .registry
+                    .contains(entry.atom().capability(), entry.atom().operation())
+            })
         {
             return Err(AdmissionError::UnregisteredCapability {
                 atom: entry.atom().clone(),
@@ -589,6 +653,10 @@ pub enum AdmissionError {
         interface: &'static str,
         method: &'static str,
     },
+    HostImportManifestMismatch {
+        interface: String,
+        permissions: Vec<AtomKey>,
+    },
     SmokeOutOfBudget,
     SmokeFailure {
         message: String,
@@ -730,6 +798,18 @@ impl fmt::Display for AdmissionError {
             } => write!(
                 formatter,
                 "host import `{interface}.{method}` requires permission `{atom}`, but the application never registered that permission"
+            ),
+            Self::HostImportManifestMismatch {
+                interface,
+                permissions,
+            } => write!(
+                formatter,
+                "plugin imports host interface `{interface}` but declares none of its permissions [{}]; add at least one as a required or optional need, or remove the interface import",
+                permissions
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
             ),
             Self::SmokeOutOfBudget => formatter
                 .write_str("plugin exhausted its startup budget during smoke instantiation"),

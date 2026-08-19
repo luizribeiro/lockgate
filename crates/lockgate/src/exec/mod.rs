@@ -96,10 +96,13 @@ impl ExecEngine {
         &self,
         component: &Component,
         imports: Arc<dyn ImportsFactory<S>>,
+        interfaces: &[String],
     ) -> Result<LoadedComponent<S>, LoadError> {
         let mut linker = Linker::new(&self.engine);
         add_settings_to_linker(&mut linker).map_err(LoadError::link)?;
-        imports.register(&mut linker).map_err(LoadError::link)?;
+        imports
+            .register(&mut linker, interfaces)
+            .map_err(LoadError::link)?;
         let instance_pre = linker.instantiate_pre(component).map_err(LoadError::link)?;
 
         Ok(LoadedComponent {
@@ -354,21 +357,24 @@ impl<S> StoreCtx<S> {
 }
 
 pub(crate) trait ImportsFactory<S>: Send + Sync {
-    fn register(&self, linker: &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>;
+    fn register(
+        &self,
+        linker: &mut Linker<StoreCtx<S>>,
+        interfaces: &[String],
+    ) -> WasmtimeResult<()>;
     fn create(&self) -> Box<dyn Any + Send>;
 }
 
+type RegisterImports<S, I> = fn(&I, &mut Linker<StoreCtx<S>>, &[String]) -> WasmtimeResult<()>;
+
 pub(crate) struct TypedImports<S: 'static, I> {
     imports: I,
-    register: fn(&I, &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>,
+    register: RegisterImports<S, I>,
     marker: PhantomData<fn() -> S>,
 }
 
 impl<S: 'static, I> TypedImports<S, I> {
-    pub(crate) fn new(
-        imports: I,
-        register: fn(&I, &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()>,
-    ) -> Self {
+    pub(crate) fn new(imports: I, register: RegisterImports<S, I>) -> Self {
         Self {
             imports,
             register,
@@ -382,8 +388,12 @@ where
     S: Send + Sync + 'static,
     I: Clone + Send + Sync + 'static,
 {
-    fn register(&self, linker: &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()> {
-        (self.register)(&self.imports, linker)
+    fn register(
+        &self,
+        linker: &mut Linker<StoreCtx<S>>,
+        interfaces: &[String],
+    ) -> WasmtimeResult<()> {
+        (self.register)(&self.imports, linker, interfaces)
     }
 
     fn create(&self) -> Box<dyn Any + Send> {
@@ -395,7 +405,11 @@ where
 struct UnitImports;
 
 impl<S> ImportsFactory<S> for UnitImports {
-    fn register(&self, _linker: &mut Linker<StoreCtx<S>>) -> WasmtimeResult<()> {
+    fn register(
+        &self,
+        _linker: &mut Linker<StoreCtx<S>>,
+        _interfaces: &[String],
+    ) -> WasmtimeResult<()> {
         Ok(())
     }
 

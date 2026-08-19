@@ -75,6 +75,7 @@ pub trait HostImports<S>: Clone + Send + Sync + 'static {
     fn add_to_linker(
         &self,
         linker: &mut wasmtime::component::Linker<exec::StoreCtx<S>>,
+        interfaces: &[String],
     ) -> wasmtime::Result<()>;
 }
 
@@ -82,6 +83,7 @@ impl HostImports<()> for () {
     fn add_to_linker(
         &self,
         _linker: &mut wasmtime::component::Linker<exec::StoreCtx<()>>,
+        _interfaces: &[String],
     ) -> wasmtime::Result<()> {
         Ok(())
     }

@@ -7,6 +7,16 @@ interface vm {
   protocol-version: func() -> string;
 }
 
+interface admin {
+  restart: func();
+  status: func();
+}
+
 world fixture {
+  import vm;
+  import admin;
+}
+
+world vm-only {
   import vm;
 }

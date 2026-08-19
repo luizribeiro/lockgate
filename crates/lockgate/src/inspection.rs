@@ -152,6 +152,24 @@ pub(crate) fn decode_exported_interfaces(bytes: &[u8]) -> Result<Vec<String>, In
     Ok(exported_interface_names(&resolve, world))
 }
 
+pub(crate) fn decode_imported_interfaces(bytes: &[u8]) -> Result<Vec<String>, InspectError> {
+    let decoded =
+        wit_parser::decoding::decode(bytes).map_err(|error| InspectError::InvalidWit {
+            message: error.to_string(),
+        })?;
+    let DecodedWasm::Component(resolve, world) = decoded else {
+        return Err(InspectError::NotComponent);
+    };
+    Ok(resolve.worlds[world]
+        .imports
+        .iter()
+        .filter_map(|(key, item)| match item {
+            WorldItem::Interface { .. } => Some(world_key_name(&resolve, key)),
+            WorldItem::Function(_) | WorldItem::Type { .. } => None,
+        })
+        .collect())
+}
+
 pub(crate) fn exported_interface_names(resolve: &Resolve, world: WorldId) -> Vec<String> {
     resolve.worlds[world]
         .exports

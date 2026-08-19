@@ -1,7 +1,15 @@
 use lockgate::{
-    AdmissionError, HostConstructionError, HostCtx, HostImportPolicyError, PluginConfig, Scope,
-    ScopeRepr,
+    Acceptance, AdmissionError, HostConstructionError, HostCtx, HostImportPolicyError,
+    InvocationCtx, PluginConfig, RuntimeLimits, Scope, ScopeRepr,
 };
+use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata};
+use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
+use wit_parser::{ManglingAndAbi, Resolve};
+
+mod common;
+
+const PLUGIN_ID: &str = "guarded-wiring";
 
 #[derive(Clone, PartialEq, Eq, ScopeRepr)]
 enum VmScope {
@@ -19,6 +27,8 @@ mod permissions {
     pub const CREATE: ScopedPermission<VmScope> = ScopedPermission::new("create");
     pub const EXEC: ScopedPermission<VmScope> = ScopedPermission::new("exec");
     pub const LIST_POOLS: Permission = Permission::new("list-pools");
+    pub const RESTART: Permission = Permission::new("restart");
+    pub const STATUS: Permission = Permission::new("status");
 }
 
 #[derive(Clone)]
@@ -66,6 +76,15 @@ impl vm::Host for Imports {
     }
 }
 
+#[lockgate::guarded]
+impl admin::Host for Imports {
+    #[lockgate::requires(permission = permissions::RESTART)]
+    async fn restart(&mut self, _cx: HostCtx<'_, CallData>) {}
+
+    #[lockgate::requires(permission = permissions::STATUS)]
+    async fn status(&mut self, _cx: HostCtx<'_, CallData>) {}
+}
+
 #[test]
 fn guarded_impl_fills_complete_typed_method_metadata() {
     let interface = vm::__LockgateBinding::INTERFACE;
@@ -109,6 +128,19 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
     assert_eq!(
         methods[3].classification().reason(),
         Some("returns only a static protocol version")
+    );
+
+    let admin_methods = <Imports as admin::Host>::__LOCKGATE_POLICY_METHODS;
+    assert_eq!(admin_methods.len(), 2);
+    assert_eq!(
+        admin_methods
+            .iter()
+            .map(|method| {
+                let permission = method.classification().permission().unwrap();
+                (method.method().wit_name(), permission.permission())
+            })
+            .collect::<Vec<_>>(),
+        [("restart", "restart"), ("status", "status")]
     );
 }
 
@@ -156,9 +188,9 @@ async fn preparation_rejects_an_unregistered_guard_permission() {
         error,
         AdmissionError::UnregisteredGuardPermission {
             ref atom,
-            interface: "test:guarded/vm",
-            method: "create",
-        } if atom.to_string() == "vm.create"
+            interface: "test:guarded/admin",
+            method: "restart",
+        } if atom.to_string() == "vm.restart"
     ));
 
     let mut registered = lockgate::HostBuilder::new(Imports)
@@ -172,6 +204,130 @@ async fn preparation_rejects_an_unregistered_guard_permission() {
     assert!(matches!(error, AdmissionError::Inspection(_)));
 }
 
+fn component(wit: &str) -> Vec<u8> {
+    let mut resolve = Resolve::new();
+    let package = resolve.push_str("fixture.wit", wit).unwrap();
+    let world = resolve.select_world(&[package], None).unwrap();
+    let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+    embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+    ComponentEncoder::default()
+        .module(&module)
+        .unwrap()
+        .encode()
+        .unwrap()
+}
+
+fn fixture(wit: &str, needs: &NeedsManifest) -> Vec<u8> {
+    let metadata = PluginMetadata::new(PLUGIN_ID, "Guarded wiring fixture", "1.0").unwrap();
+    let bytes = common::with_custom_section(
+        &component(wit),
+        PLUGIN_METADATA_SECTION,
+        &metadata.to_section_bytes().unwrap(),
+    );
+    common::with_custom_section(
+        &bytes,
+        PLUGIN_NEEDS_SECTION,
+        &needs.to_section_bytes().unwrap(),
+    )
+}
+
+fn host_builder() -> lockgate::HostBuilder<CallData> {
+    lockgate::HostBuilder::new(Imports)
+        .unwrap()
+        .register::<permissions::Contract>()
+        .unwrap()
+}
+
+fn startup_context() -> InvocationCtx<CallData> {
+    InvocationCtx::new(
+        CallData {
+            vm: "startup-vm".to_owned(),
+            session: Session {
+                owner: "startup-owner".to_owned(),
+            },
+        },
+        lockgate::BudgetClass::Bounded { fuel: 1_000_000 },
+    )
+}
+
+async fn admit(builder: &mut lockgate::HostBuilder<CallData>, bytes: &[u8]) {
+    let prepared = builder
+        .prepare(PLUGIN_ID, bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    builder
+        .admit(
+            prepared,
+            Acceptance::all_declared(),
+            RuntimeLimits::default(),
+            startup_context(),
+        )
+        .await
+        .unwrap();
+}
+
+const ADMIN_IMPORT: &str = "package test:guarded@1.2.3; interface admin { restart: func(); status: func(); } world fixture { import admin; }";
+const MIXED_IMPORT: &str = "package test:guarded@1.2.3; interface vm { create: func(pool: string) -> string; exec: func(vm: string, command: string) -> string; list-pools: func() -> list<string>; protocol-version: func() -> string; } world fixture { import vm; }";
+const BASELINE_IMPORT: &str = "package lockgate:config; interface settings { enum get-error { not-ready } get-json: func() -> result<string, get-error>; } world fixture { import settings; }";
+const NO_IMPORTS: &str = "package test:no-imports; world fixture {}";
+
+#[tokio::test]
+async fn all_guarded_import_without_a_mapped_need_is_a_manifest_mismatch() {
+    let bytes = fixture(ADMIN_IMPORT, &NeedsManifest::empty());
+    let mut builder = host_builder();
+    let error = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AdmissionError::HostImportManifestMismatch {
+            ref interface,
+            ref permissions,
+        } if interface == "test:guarded/admin@1.2.3"
+            && permissions.iter().map(ToString::to_string).collect::<Vec<_>>()
+                == ["vm.restart", "vm.status"]
+    ));
+    let message = error.to_string();
+    assert!(message.contains("test:guarded/admin@1.2.3"));
+    assert!(message.contains("vm.restart"));
+    assert!(message.contains("vm.status"));
+    assert!(message.contains("required or optional need"));
+}
+
+#[tokio::test]
+async fn either_required_or_optional_mapped_need_wires_an_all_guarded_import() {
+    let atom: AtomKey = "vm.restart".parse().unwrap();
+    for needs in [
+        NeedsManifest::new(vec![NeedEntry::flag(atom.clone())], vec![]).unwrap(),
+        NeedsManifest::new(vec![], vec![NeedEntry::flag(atom.clone())]).unwrap(),
+    ] {
+        let bytes = fixture(ADMIN_IMPORT, &needs);
+        admit(&mut host_builder(), &bytes).await;
+    }
+}
+
+#[tokio::test]
+async fn capability_free_method_wires_a_mixed_import_without_declared_needs() {
+    let bytes = fixture(MIXED_IMPORT, &NeedsManifest::empty());
+    admit(&mut host_builder(), &bytes).await;
+}
+
+#[tokio::test]
+async fn framework_settings_import_stays_on_its_dedicated_linker_path() {
+    let bytes = fixture(BASELINE_IMPORT, &NeedsManifest::empty());
+    admit(&mut host_builder(), &bytes).await;
+}
+
+#[tokio::test]
+async fn declared_need_without_a_matching_import_still_admits() {
+    let atom: AtomKey = "vm.restart".parse().unwrap();
+    let needs = NeedsManifest::new(vec![NeedEntry::flag(atom)], vec![]).unwrap();
+    let bytes = fixture(NO_IMPORTS, &needs);
+    admit(&mut host_builder(), &bytes).await;
+}
+
 mod mismatched_slot {
     use lockgate::HostCtx;
 
@@ -183,7 +339,7 @@ mod mismatched_slot {
 
     lockgate::host_bindings!({
         path: "tests/data/guarded_bindings",
-        world: "fixture",
+        world: "vm-only",
         imports: Imports,
         data: Data,
     });
@@ -225,7 +381,7 @@ mod unguarded {
 
     lockgate::host_bindings!({
         path: "tests/data/guarded_bindings",
-        world: "fixture",
+        world: "vm-only",
         imports: Imports,
         data: Data,
     });

@@ -31,6 +31,7 @@ impl HostImports<u32> for Imports {
     fn add_to_linker(
         &self,
         linker: &mut wasmtime::component::Linker<StoreCtx<u32>>,
+        _interfaces: &[String],
     ) -> wasmtime::Result<()> {
         linker
             .instance("test:manual/host")?
