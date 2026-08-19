@@ -10,6 +10,19 @@ fn capability_authoring_errors_are_teaching_diagnostics() {
         "requires an inline module",
     );
     check_fails(
+        "alias-hidden",
+        r#"
+use lockgate_policy::Permission;
+#[lockgate_policy::capability("vm")]
+pub mod vm {
+    use super::Permission;
+    type Alias = Permission;
+    pub const READ: Alias = Alias::new("read");
+}
+"#,
+        "hides its permission type behind an alias",
+    );
+    check_fails(
         "duplicate-permission",
         r#"
 use lockgate_policy::Permission;

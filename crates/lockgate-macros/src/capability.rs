@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Expr, GenericArgument, Item, Lit, LitStr, PathArguments, Type, Visibility};
+use syn::{Expr, GenericArgument, Item, ItemConst, Lit, LitStr, PathArguments, Type, Visibility};
 
 pub(super) fn expand(capability_id: LitStr, item: Item) -> syn::Result<TokenStream> {
     let Item::Mod(module) = item else {
@@ -32,6 +32,32 @@ fn expand_with_path(
         .content
         .as_mut()
         .expect("inline module was validated");
+    let mut permission_aliases = BTreeSet::new();
+    let mut alias_targets = BTreeMap::new();
+    for item in items.iter() {
+        if let Item::Type(alias) = item {
+            if matches!(permission_kind(&alias.ty), Ok(Some(_)))
+                || is_projected_permission_alias(&alias.ty)
+            {
+                permission_aliases.insert(alias.ident.to_string());
+            } else if let Some(target) = local_type_alias_ident(&alias.ty) {
+                alias_targets.insert(alias.ident.to_string(), target.to_string());
+            }
+        }
+    }
+    loop {
+        let newly_discovered = alias_targets
+            .iter()
+            .filter(|(alias, target)| {
+                !permission_aliases.contains(*alias) && permission_aliases.contains(*target)
+            })
+            .map(|(alias, _)| alias.clone())
+            .collect::<Vec<_>>();
+        if newly_discovered.is_empty() {
+            break;
+        }
+        permission_aliases.extend(newly_discovered);
+    }
     let mut permission_ids = BTreeMap::new();
     for item in items {
         let Item::Const(item) = item else { continue };
@@ -40,6 +66,7 @@ fn expand_with_path(
         }
 
         let Some(kind) = permission_kind(&item.ty)? else {
+            reject_likely_alias(item, &permission_aliases)?;
             continue;
         };
         let (constructor, permission_id) = declaration_initializer(&item.expr).ok_or_else(|| {
@@ -141,6 +168,52 @@ fn permission_kind(ty: &Type) -> syn::Result<Option<PermissionKind>> {
         ));
     }
     Ok(Some(PermissionKind::Scoped))
+}
+
+fn reject_likely_alias(item: &ItemConst, permission_aliases: &BTreeSet<String>) -> syn::Result<()> {
+    let local_alias = local_type_alias_ident(&item.ty)
+        .is_some_and(|ident| permission_aliases.contains(&ident.to_string()));
+    if local_alias
+        || is_projected_permission_alias(&item.ty)
+        || declaration_initializer(&item.expr).is_some()
+    {
+        Err(syn::Error::new_spanned(
+            &item.ty,
+            format!(
+                "permission const `{}` hides its permission type behind an alias; spell `Permission` or `ScopedPermission<Scope>` directly so `#[lockgate::capability]` can discover it",
+                item.ident
+            ),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn local_type_alias_ident(ty: &Type) -> Option<&syn::Ident> {
+    let Type::Path(ty) = peel_type(ty) else {
+        return None;
+    };
+    if ty.qself.is_some() {
+        return None;
+    }
+    match ty.path.segments.len() {
+        1 => Some(&ty.path.segments.first()?.ident),
+        2 if ty.path.segments.first()?.ident == "self" => Some(&ty.path.segments.last()?.ident),
+        _ => None,
+    }
+}
+
+fn is_projected_permission_alias(ty: &Type) -> bool {
+    let Type::Path(ty) = peel_type(ty) else {
+        return false;
+    };
+    ty.qself.is_some()
+        && ty.path.segments.last().is_some_and(|segment| {
+            matches!(
+                segment.ident.to_string().as_str(),
+                "Permission" | "ScopedPermission"
+            )
+        })
 }
 
 fn peel_type(ty: &Type) -> &Type {
@@ -305,8 +378,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicates_and_malformed_permission_ids() {
+    fn rejects_aliases_duplicates_and_malformed_permission_ids() {
         let cases = [
+            (
+                quote::quote! {
+                    pub mod vm {
+                        type Alias = Permission;
+                        pub const READ: Alias = Alias::new("read");
+                    }
+                },
+                "hides its permission type behind an alias",
+            ),
+            (
+                quote::quote! {
+                    pub mod vm {
+                        pub const READ: <Marker as Contract>::Permission =
+                            make_permission();
+                    }
+                },
+                "hides its permission type behind an alias",
+            ),
             (
                 quote::quote! {
                     pub mod vm {
@@ -354,6 +445,27 @@ mod tests {
     }
 
     #[test]
+    fn preserves_unrelated_qualified_aliases_and_constructor_consts() {
+        let module = syn::parse_quote! {
+            pub mod vm {
+                type Foreign = other::Permission<u8>;
+                type Alias = Permission;
+                pub const OTHER: other::Alias = other::Alias::new("other");
+            }
+        };
+
+        let expansion = expand_with_path(
+            syn::parse_quote!("vm"),
+            module,
+            &quote::quote!(::lockgate_policy),
+        )
+        .unwrap()
+        .to_string();
+        assert!(expansion.contains("other :: Permission < u8 >"));
+        assert!(expansion.contains("other :: Alias :: new"));
+    }
+
+    #[test]
     fn accepts_parenthesized_literal_initializers() {
         let module = syn::parse_quote! {
             pub mod vm {
@@ -367,5 +479,35 @@ mod tests {
             &quote::quote!(::lockgate_policy),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn rejects_self_qualified_and_chained_aliases_of_qualified_handles() {
+        for module in [
+            quote::quote! {
+                pub mod vm {
+                    type Alias = Permission;
+                    pub const READ: Permission = Permission::new("read");
+                    pub const COPY: self::Alias = READ;
+                }
+            },
+            quote::quote! {
+                pub mod vm {
+                    type First = Permission;
+                    type Alias = First;
+                    pub const READ: Permission = Permission::new("read");
+                    pub const COPY: Alias = READ;
+                }
+            },
+        ] {
+            let error = expand_with_path(
+                syn::parse_quote!("vm"),
+                syn::parse2(module).unwrap(),
+                &quote::quote!(::lockgate_policy),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("hides its permission type behind an alias"));
+        }
     }
 }
