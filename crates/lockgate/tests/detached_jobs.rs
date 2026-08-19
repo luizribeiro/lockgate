@@ -85,7 +85,9 @@ lockgate::host_bindings!({
     data: (),
 });
 
+#[lockgate::guarded]
 impl application::Host for Imports {
+    #[lockgate::no_capability_required(reason = "test-only detached-job lifecycle control")]
     async fn start(&mut self, cx: HostCtx<'_, ()>, kind: u8) -> Result<String, String> {
         let future = job(kind, self.control.clone());
         match cx.detach(future) {
@@ -98,6 +100,7 @@ impl application::Host for Imports {
         }
     }
 
+    #[lockgate::no_capability_required(reason = "test-only import cancellation control")]
     async fn suspend(&mut self, _cx: HostCtx<'_, ()>) {
         let _drop_marker = ImportDropMarker {
             dropped: Arc::clone(&self.control.import_dropped),

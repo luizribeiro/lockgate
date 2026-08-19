@@ -129,6 +129,22 @@ fn generated_host_import_construction_rejects_a_mismatched_slot() {
     assert!(error.to_string().contains("test:guarded/vm@1.2.3"));
 }
 
+#[test]
+fn generated_host_import_construction_rejects_an_unguarded_impl() {
+    let error = match lockgate::HostBuilder::new(unguarded::Imports) {
+        Ok(_) => panic!("unguarded generated host implementation was accepted"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        HostConstructionError::HostImports(
+            HostImportPolicyError::MissingGuardedImplementation { interface }
+        ) if interface.name() == "test:guarded/vm" && interface.version() == Some("1.2.3")
+    ));
+    assert!(error.to_string().contains("test:guarded/vm@1.2.3"));
+    assert!(error.to_string().contains("#[lockgate::guarded]"));
+}
+
 #[tokio::test]
 async fn preparation_rejects_an_unregistered_guard_permission() {
     let mut builder = lockgate::HostBuilder::new(Imports).unwrap();
@@ -180,6 +196,41 @@ mod mismatched_slot {
                 "construction validation fixture",
             )];
 
+        async fn create(&mut self, _cx: HostCtx<'_, Data>, pool: String) -> String {
+            pool
+        }
+
+        async fn exec(&mut self, _cx: HostCtx<'_, Data>, vm: String, command: String) -> String {
+            format!("{vm}:{command}")
+        }
+
+        async fn list_pools(&mut self, _cx: HostCtx<'_, Data>) -> Vec<String> {
+            Vec::new()
+        }
+
+        async fn protocol_version(&mut self, _cx: HostCtx<'_, Data>) -> String {
+            "1".to_owned()
+        }
+    }
+}
+
+mod unguarded {
+    use lockgate::HostCtx;
+
+    #[derive(Clone)]
+    pub struct Data;
+
+    #[derive(Clone)]
+    pub struct Imports;
+
+    lockgate::host_bindings!({
+        path: "tests/data/guarded_bindings",
+        world: "fixture",
+        imports: Imports,
+        data: Data,
+    });
+
+    impl vm::Host for Imports {
         async fn create(&mut self, _cx: HostCtx<'_, Data>, pool: String) -> String {
             pool
         }

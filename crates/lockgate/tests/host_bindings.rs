@@ -57,19 +57,26 @@ fn generated_import_companion_preserves_stable_wit_identity_and_method_order() {
             ("startup", "startup"),
         ]
     );
-    assert!(<Imports as application::Host>::__LOCKGATE_POLICY_METHODS.is_empty());
+    assert_eq!(
+        <Imports as application::Host>::__LOCKGATE_POLICY_METHODS.len(),
+        application::__LockgateBinding::METHODS.len()
+    );
 }
 
+#[lockgate::guarded]
 impl application::Host for Imports {
+    #[lockgate::no_capability_required(reason = "test-only invocation-data plumbing")]
     async fn read_data(&mut self, cx: HostCtx<'_, CallData>) -> String {
         self.barrier.wait().await;
         cx.data().label.clone()
     }
 
+    #[lockgate::no_capability_required(reason = "test-only caller-identity plumbing")]
     async fn caller(&mut self, cx: HostCtx<'_, CallData>) -> String {
         cx.plugin().id().to_owned()
     }
 
+    #[lockgate::no_capability_required(reason = "test-only generated type plumbing")]
     async fn transform(
         &mut self,
         _cx: HostCtx<'_, CallData>,
@@ -82,16 +89,19 @@ impl application::Host for Imports {
         }
     }
 
+    #[lockgate::no_capability_required(reason = "test-only concurrency plumbing")]
     async fn first(&mut self, _cx: HostCtx<'_, CallData>) {
         self.entries.fetch_add(1, Ordering::SeqCst);
         self.barrier.wait().await;
     }
 
+    #[lockgate::no_capability_required(reason = "test-only concurrency plumbing")]
     async fn second(&mut self, _cx: HostCtx<'_, CallData>) {
         self.entries.fetch_add(1, Ordering::SeqCst);
         self.barrier.wait().await;
     }
 
+    #[lockgate::no_capability_required(reason = "test-only startup-context plumbing")]
     async fn startup(&mut self, cx: HostCtx<'_, CallData>) -> u32 {
         self.startups.lock().unwrap().push(cx.data().startup);
         cx.data().startup

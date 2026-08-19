@@ -219,6 +219,9 @@ impl PolicyMethod {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HostImportPolicyError {
+    MissingGuardedImplementation {
+        interface: InterfaceIdentity,
+    },
     WrongInterface {
         expected: InterfaceIdentity,
         found: InterfaceIdentity,
@@ -241,6 +244,11 @@ pub enum HostImportPolicyError {
 impl fmt::Display for HostImportPolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingGuardedImplementation { interface } => write!(
+                formatter,
+                "host import interface `{}` has no policy classifications; annotate its generated `Host` implementation with `#[lockgate::guarded]`",
+                DisplayInterface(*interface),
+            ),
             Self::WrongInterface {
                 expected,
                 found,
@@ -337,10 +345,7 @@ pub fn validate_interface_policy(
     policy_methods: &[PolicyMethod],
 ) -> Result<ValidatedInterfacePolicy, HostImportPolicyError> {
     if policy_methods.is_empty() {
-        return Ok(ValidatedInterfacePolicy {
-            interface,
-            methods: Vec::new(),
-        });
+        return Err(HostImportPolicyError::MissingGuardedImplementation { interface });
     }
 
     for (index, policy) in policy_methods.iter().enumerate() {
@@ -400,13 +405,13 @@ mod tests {
     }
 
     #[test]
-    fn empty_slots_are_the_only_incomplete_slots_tolerated_during_f1() {
-        assert!(
-            validate_interface_policy(INTERFACE, EXPECTED, &[])
-                .unwrap()
-                .methods()
-                .is_empty()
-        );
+    fn empty_and_partially_filled_slots_are_rejected() {
+        assert!(matches!(
+            validate_interface_policy(INTERFACE, EXPECTED, &[]),
+            Err(HostImportPolicyError::MissingGuardedImplementation {
+                interface: INTERFACE,
+            })
+        ));
         assert!(matches!(
             validate_interface_policy(INTERFACE, EXPECTED, &[free(INTERFACE, FIRST)]),
             Err(HostImportPolicyError::MissingMethod { method: SECOND, .. })
