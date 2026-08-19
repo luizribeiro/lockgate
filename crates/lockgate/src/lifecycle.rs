@@ -1204,5 +1204,9 @@ mod grant_tests {
                 .scoped_values(&atom("sessions.read")),
             Some(["all".to_owned()].as_slice())
         );
+        assert_eq!(
+            crate::PluginSubject::new(&handle).plugin_id(),
+            "grant-query"
+        );
     }
 }

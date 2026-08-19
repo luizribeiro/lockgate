@@ -29,7 +29,8 @@ pub use lockgate_policy::{
 };
 pub use policy::{
     CapabilityRegistrationError, EffectiveGrants, HostImportPolicyError, InvalidScopeValue,
-    JsonValueKind, NeedValueKind, ScopeReference, ScopeResolutionError,
+    JsonValueKind, NeedValueKind, PluginSubject, ResolveScopedResource, ScopeReference,
+    ScopeResolutionError, ScopedResource,
 };
 
 /// Generates typed application bindings for a WIT world.
