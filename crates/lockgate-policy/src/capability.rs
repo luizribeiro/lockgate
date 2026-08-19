@@ -12,6 +12,7 @@ type IntersectScopes = fn(
     &ErasedScopeValue,
     &ErasedScopeValue,
 ) -> Result<Option<ErasedScopeValue>, ErasedScopeTypeError>;
+type ContainsScope = fn(&ErasedScopeValue, &dyn Any) -> Result<bool, ErasedScopeTypeError>;
 type ValidateScopeLaws = fn() -> Result<(), ScopeError>;
 
 /// The generated registration anchor for one capability family.
@@ -112,6 +113,31 @@ impl ErasedPermission {
         self.scope.map(|scope| (scope.intersect)(left, right))
     }
 
+    /// Tests containment through the registered concrete scope implementation.
+    ///
+    /// `None` means this permission is unscoped. The inner error rejects a
+    /// parsed outer value or typed membership witness belonging to a different
+    /// scope type.
+    #[doc(hidden)]
+    pub fn contains_scope<S: Scope>(
+        &self,
+        outer: &ErasedScopeValue,
+        inner: &S,
+    ) -> Option<Result<bool, ErasedScopeTypeError>>
+    where
+        <S as FromStr>::Err: Into<ScopeError>,
+    {
+        self.scope.map(|scope| {
+            if scope.type_id != TypeId::of::<S>() {
+                return Err(ErasedScopeTypeError {
+                    expected: (scope.type_name)(),
+                    actual: type_name::<S>(),
+                });
+            }
+            (scope.contains)(outer, inner)
+        })
+    }
+
     /// Runs exhaustive scope-law validation when the scope type is closed.
     ///
     /// `None` means this permission is unscoped. Open scope types return
@@ -129,6 +155,7 @@ struct ErasedScope {
     parse: ParseScope,
     canonicalize: CanonicalizeScope,
     intersect: IntersectScopes,
+    contains: ContainsScope,
     validate_laws: ValidateScopeLaws,
 }
 
@@ -217,6 +244,7 @@ where
             parse: parse_scope::<S>,
             canonicalize: canonicalize_scope::<S>,
             intersect: intersect_scopes::<S>,
+            contains: contains_scope::<S>,
             validate_laws: check_scope_laws_for_registration::<S>,
         }),
     }
@@ -268,6 +296,24 @@ where
         type_name: type_name::<S>(),
         value: Box::new(value),
     }))
+}
+
+fn contains_scope<S>(
+    outer: &ErasedScopeValue,
+    inner: &dyn Any,
+) -> Result<bool, ErasedScopeTypeError>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    let outer = outer
+        .value
+        .downcast_ref::<S>()
+        .ok_or_else(|| wrong_scope_type::<S>(outer))?;
+    let inner = inner
+        .downcast_ref::<S>()
+        .expect("the descriptor checked the typed membership witness");
+    Ok(outer.contains(inner))
 }
 
 fn wrong_scope_type<S>(value: &ErasedScopeValue) -> ErasedScopeTypeError {
@@ -442,6 +488,19 @@ mod tests {
                 .unwrap(),
             concrete_intersection.canonical()
         );
+        assert_eq!(
+            descriptor
+                .contains_scope(&broad, &PoolScope::Named("gpu".to_string()))
+                .unwrap()
+                .unwrap(),
+            PoolScope::Any.contains(&PoolScope::Named("gpu".to_string()))
+        );
+        assert!(
+            !descriptor
+                .contains_scope(&named, &PoolScope::Named("cpu".to_string()))
+                .unwrap()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -454,6 +513,13 @@ mod tests {
         let pool = ERASED_EXEC.parse_scope("gpu").unwrap().unwrap();
         let error = ERASED_OTHER.canonicalize_scope(&pool).unwrap().unwrap_err();
 
+        assert_eq!(error.expected(), type_name::<InstanceScope>());
+        assert_eq!(error.actual(), type_name::<PoolScope>());
+
+        let error = ERASED_OTHER
+            .contains_scope(&pool, &PoolScope::Named("gpu".to_string()))
+            .unwrap()
+            .unwrap_err();
         assert_eq!(error.expected(), type_name::<InstanceScope>());
         assert_eq!(error.actual(), type_name::<PoolScope>());
     }
