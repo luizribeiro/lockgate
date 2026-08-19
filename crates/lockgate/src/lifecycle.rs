@@ -1163,8 +1163,8 @@ mod grant_tests {
             .unwrap()
     }
 
-    fn settings_schema_component() -> Vec<u8> {
-        let schema = r#"{"type":"object","required":["scope"],"properties":{"scope":{"type":"string"}},"additionalProperties":false}"#;
+    // Mirrors tests/common::constant_schema_component; separate test crates cannot share it.
+    fn settings_schema_component(schema: &str) -> Vec<u8> {
         let encoded = schema
             .as_bytes()
             .iter()
@@ -1269,7 +1269,9 @@ mod grant_tests {
         .unwrap();
         let bytes = with_section(
             with_section(
-                settings_schema_component(),
+                settings_schema_component(
+                    r#"{"type":"object","required":["scope"],"properties":{"scope":{"type":"string"}},"additionalProperties":false}"#,
+                ),
                 PLUGIN_METADATA_SECTION,
                 &metadata.to_section_bytes().unwrap(),
             ),
