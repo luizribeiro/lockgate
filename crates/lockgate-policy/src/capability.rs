@@ -36,11 +36,18 @@ pub trait CapabilityContract {
 /// storage shape only; it does not weaken validation.
 #[derive(Clone, Copy)]
 pub struct ErasedPermission {
+    capability_id: &'static str,
     permission_id: &'static str,
     scope: Option<ErasedScope>,
 }
 
 impl ErasedPermission {
+    /// Returns the capability ID carried by the qualified source handle.
+    #[doc(hidden)]
+    pub const fn capability_id(&self) -> &'static str {
+        self.capability_id
+    }
+
     /// Returns the explicit stable permission ID without the capability prefix.
     #[doc(hidden)]
     pub const fn permission_id(&self) -> &'static str {
@@ -188,6 +195,7 @@ impl Error for ErasedScopeTypeError {}
 #[doc(hidden)]
 pub const fn erase_permission(permission: Permission) -> ErasedPermission {
     ErasedPermission {
+        capability_id: permission.atom().capability(),
         permission_id: permission.atom().permission(),
         scope: None,
     }
@@ -201,6 +209,7 @@ where
     <S as FromStr>::Err: Into<ScopeError>,
 {
     ErasedPermission {
+        capability_id: permission.atom().capability(),
         permission_id: permission.atom().permission(),
         scope: Some(ErasedScope {
             type_id: TypeId::of::<S>(),
@@ -391,6 +400,7 @@ mod tests {
     fn erased_metadata_retains_scope_identity_and_law_validation() {
         assert_eq!(Contract::ID, "vm");
         assert_eq!(Contract::permissions().len(), 2);
+        assert_eq!(ERASED_EXEC.capability_id(), "vm");
         assert_eq!(ERASED_EXEC.permission_id(), "exec");
         assert!(ERASED_EXEC.is_scoped());
         assert_eq!(ERASED_EXEC.scope_type_id(), Some(TypeId::of::<PoolScope>()));
