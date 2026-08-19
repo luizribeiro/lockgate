@@ -72,9 +72,14 @@ struct SchemaMemoryLimiter {
 
 pub(crate) struct ValidatedSettings {
     json: String,
+    value: serde_json::Value,
 }
 
 impl ValidatedSettings {
+    pub(crate) fn value(&self) -> &serde_json::Value {
+        &self.value
+    }
+
     pub(crate) fn into_state(self) -> SettingsState {
         SettingsState::Ready(self.json.into())
     }
@@ -122,6 +127,7 @@ pub(crate) fn validate_settings(
             Some(_) => Err(SettingsValidationError::SettingsWithoutSchema),
             None => Ok(ValidatedSettings {
                 json: "{}".to_owned(),
+                value: serde_json::json!({}),
             }),
         };
     };
@@ -164,6 +170,7 @@ pub(crate) fn validate_settings(
     Ok(ValidatedSettings {
         json: serde_json::to_string(&settings)
             .expect("serializing a serde_json::Value cannot fail"),
+        value: settings,
     })
 }
 

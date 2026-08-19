@@ -2,6 +2,7 @@
 
 mod metadata;
 mod registry;
+mod resolution;
 
 #[doc(hidden)]
 pub use metadata::{
@@ -11,3 +12,7 @@ pub use metadata::{
 };
 pub use registry::CapabilityRegistrationError;
 pub(crate) use registry::CapabilityRegistry;
+pub use resolution::{
+    InvalidScopeValue, JsonValueKind, NeedValueKind, ScopeReference, ScopeResolutionError,
+};
+pub(crate) use resolution::{ResolvedNeeds, resolve_needs};

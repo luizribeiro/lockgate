@@ -2,7 +2,7 @@ mod common;
 
 use lockgate::{
     Acceptance, AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet,
-    PluginConfig, Role, RoleError, RoleInvocation, RuntimeLimits, SymbolicRoots, inspect,
+    PluginConfig, Role, RoleError, RoleInvocation, RuntimeLimits, inspect,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, GrantSet, NeedEntry, NeedsDigest, NeedsManifest, PluginMetadata};
@@ -353,31 +353,23 @@ async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
 }
 
 #[tokio::test]
-async fn unregistered_declared_capability_fails_before_smoke() {
+async fn unregistered_declared_capability_fails_during_prepare() {
     let atom: AtomKey = "http.request".parse().unwrap();
     let needs = NeedsManifest::new(vec![NeedEntry::flag(atom.clone())], vec![]).unwrap();
     let bytes = fixture_with_needs(&needs);
     let mut builder = HostBuilder::new(()).unwrap();
-    let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
-        .await
-        .unwrap();
-
     let error = builder
-        .admit(
-            prepared,
-            Acceptance::all_declared(),
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(0),
-        )
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
         .unwrap_err();
     assert!(matches!(
         error,
-        AdmissionError::UnregisteredCapability { atom: ref found } if found == &atom
+        AdmissionError::ScopeResolution(lockgate::ScopeResolutionError::UnregisteredPermission {
+            atom: ref found
+        }) if found == &atom
     ));
     assert!(error.to_string().contains("http.request"));
-    assert!(error.to_string().contains("application never registered"));
+    assert!(error.to_string().contains("application did not register"));
 }
 
 #[tokio::test]
@@ -754,54 +746,37 @@ async fn linker_preflight_precedes_settings_matrix_validation() {
 }
 
 #[tokio::test]
-async fn unresolved_config_fields_are_rejected_instead_of_ignored() {
+async fn grant_limits_are_rejected_instead_of_ignored() {
     let mut builder = HostBuilder::new(()).unwrap();
-    let mut roots = SymbolicRoots::default();
-    roots.insert("workspace", "/tmp/workspace");
-    let cases = [
-        (
-            PluginConfig {
-                settings: Some(serde_json::json!({ "would": "lack a schema" })),
-                roots,
-                ..PluginConfig::default()
-            },
-            "symbolic roots",
-        ),
-        (
-            PluginConfig {
-                settings: Some(serde_json::json!({ "would": "lack a schema" })),
-                limits: LimitSet::Constrained,
-                ..PluginConfig::default()
-            },
-            "grant limits",
-        ),
-    ];
+    let config = PluginConfig {
+        settings: Some(serde_json::json!({ "would": "lack a schema" })),
+        limits: LimitSet::Constrained,
+        ..PluginConfig::default()
+    };
     let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
 
-    for (config, field) in cases {
-        let error = builder
-            .prepare(PLUGIN_ID, &bytes, config)
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            AdmissionError::ConfigFeatureUnavailable { field: found } if found == field
-        ));
-        assert!(
-            error
-                .to_string()
-                .contains("not yet available in this build")
-        );
-    }
+    let error = builder
+        .prepare(PLUGIN_ID, &bytes, config)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AdmissionError::ConfigFeatureUnavailable {
+            field: "grant limits"
+        }
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("not yet available in this build")
+    );
 }
 
 #[tokio::test]
 async fn artifact_validation_precedes_unresolved_config_rejection() {
     let mut builder = HostBuilder::new(()).unwrap();
-    let mut roots = SymbolicRoots::default();
-    roots.insert("workspace", "/tmp/workspace");
     let config = PluginConfig {
-        roots,
+        limits: LimitSet::Constrained,
         ..PluginConfig::default()
     };
 

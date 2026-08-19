@@ -21,7 +21,7 @@ use crate::inspection::{
 use crate::jobs::{DetachedJobContext, DetachedJobFailure, JobTracker};
 use crate::policy::{
     CapabilityRegistrationError, CapabilityRegistry, HostImportPolicyError,
-    HostImportPolicyMetadata,
+    HostImportPolicyMetadata, ResolvedNeeds, ScopeResolutionError, resolve_needs,
 };
 use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
@@ -145,8 +145,8 @@ impl SymbolicRoots {
         self.0.insert(name.into(), path.into());
     }
 
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    pub(crate) fn get(&self, name: &str) -> Option<&std::path::Path> {
+        self.0.get(name).map(PathBuf::as_path)
     }
 }
 
@@ -171,9 +171,7 @@ pub struct PluginConfig {
 
 impl PluginConfig {
     fn unavailable_field(&self) -> Option<&'static str> {
-        if !self.roots.is_empty() {
-            Some("symbolic roots")
-        } else if self.limits != LimitSet::Unconstrained {
+        if self.limits != LimitSet::Unconstrained {
             Some("grant limits")
         } else {
             None
@@ -325,10 +323,13 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(AdmissionError::from_schema_fetch)?;
         let settings = validate_settings(schema.as_deref(), config.settings)
             .map_err(AdmissionError::from_settings_validation)?;
+        let resolved = resolve_needs(&needs, settings.value(), &config.roots, &self.registry)
+            .map_err(AdmissionError::ScopeResolution)?;
         artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             inspection,
+            resolved,
             artifact: Box::new(artifact),
         })
     }
@@ -413,6 +414,7 @@ impl<S: CallContext> HostBuilder<S> {
     ) -> Result<PluginHandle, AdmissionError> {
         let Prepared {
             inspection,
+            resolved: _,
             artifact,
         } = prepared;
         if let Some(entry) = inspection
@@ -549,6 +551,11 @@ impl<S: CallContext> Host<S> {
 /// A validated, compiled, and prelinked plugin artifact.
 pub struct Prepared {
     inspection: Inspection,
+    #[allow(
+        dead_code,
+        reason = "retained for immutable effective grants in the next policy lifecycle step"
+    )]
+    resolved: ResolvedNeeds,
     artifact: Box<dyn Any + Send>,
 }
 
@@ -681,6 +688,7 @@ pub enum AdmissionError {
     SettingsValidation {
         message: String,
     },
+    ScopeResolution(ScopeResolutionError),
 }
 
 impl AdmissionError {
@@ -849,6 +857,7 @@ impl fmt::Display for AdmissionError {
                     "plugin settings do not match their schema: {message}"
                 )
             }
+            Self::ScopeResolution(error) => error.fmt(formatter),
         }
     }
 }
@@ -858,6 +867,7 @@ impl Error for AdmissionError {
         match self {
             Self::Inspection(error) => Some(error),
             Self::UnsupportedExport(error) => Some(error),
+            Self::ScopeResolution(error) => Some(error),
             _ => None,
         }
     }

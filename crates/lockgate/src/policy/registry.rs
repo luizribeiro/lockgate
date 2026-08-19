@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use lockgate_policy::{__private::ErasedPermission, CapabilityContract, ScopeError};
+use lockgate_schema::AtomKey;
 
 /// A capability contract could not be registered safely.
 #[derive(Debug)]
@@ -100,6 +101,13 @@ impl CapabilityRegistry {
         self.capabilities
             .get(capability)
             .is_some_and(|permissions| permissions.contains_key(permission))
+    }
+
+    pub(crate) fn permission(&self, atom: &AtomKey) -> Option<ErasedPermission> {
+        self.capabilities
+            .get(atom.capability())
+            .and_then(|permissions| permissions.get(atom.operation()))
+            .copied()
     }
 
     pub(crate) fn register<C: CapabilityContract>(

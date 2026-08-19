@@ -38,6 +38,16 @@ impl GrantSet {
         scopes.dedup();
         Ok(self.0.insert(atom, GrantValue::Scopes(scopes)))
     }
+
+    /// Returns the concrete value stored for `atom`.
+    pub fn get(&self, atom: &AtomKey) -> Option<&GrantValue> {
+        self.0.get(atom)
+    }
+
+    /// Iterates over concrete grants in canonical atom wire order.
+    pub fn iter(&self) -> impl Iterator<Item = (&AtomKey, &GrantValue)> {
+        self.0.iter()
+    }
 }
 
 /// A malformed concrete grant value.
