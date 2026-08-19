@@ -1111,6 +1111,14 @@ struct ImportedInterface {
     path: Vec<Ident>,
     public_module: Ident,
     public_types: Vec<Ident>,
+    identity: String,
+    version: Option<String>,
+    methods: Vec<ImportedMethod>,
+}
+
+struct ImportedMethod {
+    rust_name: Ident,
+    wit_name: String,
 }
 
 struct ExportedInterface {
@@ -1168,10 +1176,25 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
             .keys()
             .map(|name| format_ident!("{}", rust_type_ident(name)))
             .collect();
+        let package = &resolve.packages[interface.package.expect("named imports have a package")];
+        let identity = format!("{}:{}/{}", package.name.namespace, package.name.name, name);
+        let version = package.name.version.as_ref().map(ToString::to_string);
+        let methods = interface
+            .functions
+            .values()
+            .filter(|function| function.kind.resource().is_none())
+            .map(|function| ImportedMethod {
+                rust_name: format_ident!("{}", rust_ident(function.item_name())),
+                wit_name: function.item_name().to_owned(),
+            })
+            .collect();
         interfaces.push(ImportedInterface {
             path: interface_module_path(&resolve, *id),
             public_module,
             public_types,
+            identity,
+            version,
+            methods,
         });
     }
 
@@ -1250,7 +1273,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                         ),
                     )
                 })?;
-            items.extend(adapter_items(&host, &lockgate)?);
+            items.extend(adapter_items(&host, interface, &lockgate)?);
         }
     }
 
@@ -1279,6 +1302,8 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                         .map(|ty| quote!(pub use #raw::#ty;));
                     quote! {
                         pub mod #module {
+                            #[doc(hidden)]
+                            pub use #raw::__LockgateBinding;
                             pub use #raw::__LockgateHost as Host;
                             #(#type_reexports)*
                         }
@@ -1360,7 +1385,11 @@ fn validate_import_options(
     }
 }
 
-fn adapter_items(host: &ItemTrait, lockgate: &TokenStream2) -> syn::Result<Vec<Item>> {
+fn adapter_items(
+    host: &ItemTrait,
+    interface: &ImportedInterface,
+    lockgate: &TokenStream2,
+) -> syn::Result<Vec<Item>> {
     let imports = quote!(super::super::super::__LockgateImports);
     let data = quote!(super::super::super::__LockgateData);
     let mut public_methods = Vec::new();
@@ -1454,9 +1483,49 @@ fn adapter_items(host: &ItemTrait, lockgate: &TokenStream2) -> syn::Result<Vec<I
         });
     }
 
+    let interface_name = &interface.identity;
+    let interface_version = match interface.version.as_deref() {
+        Some(version) => quote!(::core::option::Option::Some(#version)),
+        None => quote!(::core::option::Option::None),
+    };
+    let method_consts = interface.methods.iter().map(|method| {
+        let rust_name = method.rust_name.to_string();
+        let wit_name = &method.wit_name;
+        let constant = format_ident!("__LOCKGATE_METHOD_{}", rust_name.to_shouty_snake_case());
+        quote! {
+            pub const #constant: #lockgate::__private::MethodIdentity =
+                #lockgate::__private::MethodIdentity::__new(#rust_name, #wit_name);
+        }
+    });
+    let ordered_methods = interface.methods.iter().map(|method| {
+        let constant = format_ident!(
+            "__LOCKGATE_METHOD_{}",
+            method.rust_name.to_string().to_shouty_snake_case()
+        );
+        quote!(Self::#constant)
+    });
+
     syn::parse2::<syn::File>(quote! {
+        #[doc(hidden)]
+        pub struct __LockgateBinding;
+
+        impl __LockgateBinding {
+            pub const INTERFACE: #lockgate::__private::InterfaceIdentity =
+                #lockgate::__private::InterfaceIdentity::__new(
+                    #interface_name,
+                    #interface_version,
+                );
+            #(#method_consts)*
+            pub const METHODS: &'static [#lockgate::__private::MethodIdentity] = &[
+                #(#ordered_methods),*
+            ];
+        }
+
         #[doc = "Application implementation of this imported WIT interface."]
         pub trait __LockgateHost: Send {
+            #[doc(hidden)]
+            const __LOCKGATE_POLICY_METHODS: &'static [#lockgate::__private::PolicyMethod] = &[];
+
             #(#public_methods)*
         }
 

@@ -33,7 +33,8 @@ pub mod __private {
         needs_required, scope_ref_wire_byte, scope_ref_wire_len,
     };
     pub use crate::permission::{
-        PermissionDecl, ScopedPermissionDecl, qualify_permission, qualify_scoped_permission,
+        PermissionDecl, ScopedPermissionDecl, permission_ids, qualify_permission,
+        qualify_scoped_permission, scoped_permission_ids,
     };
     pub use alloc::{string::String, vec};
 }

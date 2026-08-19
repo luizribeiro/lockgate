@@ -277,6 +277,23 @@ where
     }
 }
 
+/// Copies the stable identity from a qualified unscoped permission.
+#[doc(hidden)]
+pub const fn permission_ids(permission: Permission) -> (&'static str, &'static str) {
+    (permission.atom.capability(), permission.atom.permission())
+}
+
+/// Copies the stable identity from a qualified scoped permission.
+#[doc(hidden)]
+pub const fn scoped_permission_ids<S: Scope>(
+    permission: ScopedPermission<S>,
+) -> (&'static str, &'static str)
+where
+    <S as FromStr>::Err: Into<ScopeError>,
+{
+    (permission.atom.capability(), permission.atom.permission())
+}
+
 const fn assert_valid_capability_id(capability: &str) {
     match validate_capability_id(capability) {
         Ok(()) => {}

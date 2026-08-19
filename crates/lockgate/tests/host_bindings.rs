@@ -36,6 +36,30 @@ lockgate::host_bindings!({
 
 use guest::HostExt;
 
+#[test]
+fn generated_import_companion_preserves_stable_wit_identity_and_method_order() {
+    let interface = application::__LockgateBinding::INTERFACE;
+    assert_eq!(interface.name(), "test:host-bindings/application");
+    assert_eq!(interface.version(), None);
+
+    let methods = application::__LockgateBinding::METHODS
+        .iter()
+        .map(|method| (method.rust_name(), method.wit_name()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        methods,
+        [
+            ("read_data", "read-data"),
+            ("caller", "caller"),
+            ("transform", "transform"),
+            ("first", "first"),
+            ("second", "second"),
+            ("startup", "startup"),
+        ]
+    );
+    assert!(<Imports as application::Host>::__LOCKGATE_POLICY_METHODS.is_empty());
+}
+
 impl application::Host for Imports {
     async fn read_data(&mut self, cx: HostCtx<'_, CallData>) -> String {
         self.barrier.wait().await;

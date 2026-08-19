@@ -125,6 +125,9 @@ impl<'a, S> HostCtx<'a, S> {
 pub mod __private {
     pub use crate::exec::StoreCtx;
     pub use crate::jobs::DetachedJobContext;
+    pub use crate::policy::{
+        InterfaceIdentity, MethodClassification, MethodIdentity, PolicyMethod, PolicyPermission,
+    };
     pub use lockgate_policy;
     pub use wasmtime;
 }
