@@ -383,7 +383,11 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(AdmissionError::from_settings_validation)?;
         let resolved = resolve_needs(&needs, settings.value(), &config.roots, &self.registry)
             .map_err(AdmissionError::ScopeResolution)?;
-        let has_http_egress = has_http_egress(&resolved);
+        let has_http_egress = validate_http_egress_grant(
+            metadata.id(),
+            &imported_interfaces,
+            http_egress_origins(&resolved),
+        )?;
         let mut artifact = self
             .engine
             .load_hosted_component::<S>(
@@ -549,14 +553,41 @@ impl<S: CallContext> HostBuilder<S> {
     }
 }
 
-fn has_http_egress(resolved: &ResolvedNeeds) -> bool {
+fn http_egress_origins(resolved: &ResolvedNeeds) -> Option<&[String]> {
     let (capability, permission) =
         lockgate_policy::__private::scoped_permission_ids(lockgate_policy::http::EGRESS);
     let atom = AtomKey::new(capability, permission)
         .expect("typed permissions always contain a valid wire atom");
     [&resolved.required, &resolved.optional]
         .into_iter()
-        .any(|grants| matches!(grants.get(&atom), Some(GrantValue::Scopes(_))))
+        .find_map(|grants| match grants.get(&atom) {
+            Some(GrantValue::Scopes(origins)) => Some(origins.as_slice()),
+            Some(GrantValue::Flag) | None => None,
+        })
+}
+
+fn validate_http_egress_grant(
+    plugin: &str,
+    imported_interfaces: &[String],
+    origins: Option<&[String]>,
+) -> Result<bool, AdmissionError> {
+    let Some(origins) = origins else {
+        return Ok(false);
+    };
+    if origins.is_empty() {
+        return Err(AdmissionError::EmptyHttpEgressOrigins {
+            plugin: plugin.to_owned(),
+        });
+    }
+    if !imported_interfaces
+        .iter()
+        .any(|interface| interface == "wasi:http/client@0.3.0")
+    {
+        return Err(AdmissionError::HttpEgressUnavailable {
+            plugin: plugin.to_owned(),
+        });
+    }
+    Ok(true)
 }
 
 /// Steady-state owner of the execution engine and admitted plugins.
@@ -652,6 +683,8 @@ impl Prepared {
 
     /// Accepts every required and optional atom in this resolved request.
     pub fn accept_all(&self) -> Acceptance {
+        // TODO: Add operator review of declared egress origins during install as
+        // part of future consent and drift handling; for now accept them as-is.
         Acceptance {
             plugin_id: self.inspection.metadata().id().to_owned(),
             digest: self.prepared_digest,
@@ -740,6 +773,12 @@ pub enum AdmissionError {
     HostImportManifestMismatch {
         interface: String,
         permissions: Vec<AtomKey>,
+    },
+    HttpEgressUnavailable {
+        plugin: String,
+    },
+    EmptyHttpEgressOrigins {
+        plugin: String,
     },
     SmokeOutOfBudget,
     SmokeFailure {
@@ -903,6 +942,14 @@ impl fmt::Display for AdmissionError {
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", "),
+            ),
+            Self::HttpEgressUnavailable { plugin } => write!(
+                formatter,
+                "plugin `{plugin}` has an HTTP egress grant but does not import `wasi:http/client@0.3.0`"
+            ),
+            Self::EmptyHttpEgressOrigins { plugin } => write!(
+                formatter,
+                "plugin `{plugin}` cannot hold an HTTP egress grant with no origins"
             ),
             Self::SmokeOutOfBudget => formatter
                 .write_str("plugin exhausted its startup budget during smoke instantiation"),
@@ -1152,6 +1199,55 @@ mod grant_tests {
             grants.scoped_values(&atom("sessions.read")),
             Some(["all".to_owned()].as_slice())
         );
+    }
+
+    #[tokio::test]
+    async fn http_egress_grant_requires_the_wasi_http_client_import() {
+        let metadata = PluginMetadata::new("http-no-import", "HTTP no import", "1.0").unwrap();
+        let needs = NeedsManifest::new(
+            vec![
+                NeedEntry::scoped(
+                    atom("http.egress"),
+                    vec![ScopeRef::literal("https://example.com").unwrap()],
+                )
+                .unwrap(),
+            ],
+            vec![],
+        )
+        .unwrap();
+        let component = with_section(
+            with_section(
+                component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
+            ),
+            PLUGIN_NEEDS_SECTION,
+            &needs.to_section_bytes().unwrap(),
+        );
+        let mut builder = HostBuilder::new(()).unwrap();
+
+        let error = builder
+            .prepare("http-no-import", &component, PluginConfig::default())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AdmissionError::HttpEgressUnavailable { ref plugin } if plugin == "http-no-import"
+        ));
+    }
+
+    #[test]
+    fn empty_http_egress_origin_set_is_rejected_at_grant_time() {
+        assert!(matches!(
+            validate_http_egress_grant(
+                "empty-http",
+                &["wasi:http/client@0.3.0".to_owned()],
+                Some(&[]),
+            ),
+            Err(AdmissionError::EmptyHttpEgressOrigins { ref plugin })
+                if plugin == "empty-http"
+        ));
     }
 
     fn with_section(mut component: Vec<u8>, name: &str, data: &[u8]) -> Vec<u8> {
