@@ -4,8 +4,7 @@
 mod common;
 
 use lockgate::{
-    Acceptance, CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation,
-    RuntimeLimits, Value,
+    CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
 
@@ -57,10 +56,11 @@ async fn minimal_embedder_calls_a_greeter() {
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )

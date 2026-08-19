@@ -1,6 +1,6 @@
 use lockgate::{
-    Acceptance, AdmissionError, HostConstructionError, HostCtx, HostImportPolicyError,
-    InvocationCtx, PluginConfig, RuntimeLimits, Scope, ScopeRepr,
+    AdmissionError, HostConstructionError, HostCtx, HostImportPolicyError, InvocationCtx,
+    PluginConfig, RuntimeLimits, Scope, ScopeRepr,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata};
@@ -274,10 +274,11 @@ async fn admit(builder: &mut lockgate::HostBuilder<CallData>, bytes: &[u8]) {
         .prepare(PLUGIN_ID, bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             startup_context(),
         )

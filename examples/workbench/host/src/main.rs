@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use lockgate::{Acceptance, HostBuilder, InvocationCtx, PluginConfig, RoleError, RuntimeLimits};
+use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RoleError, RuntimeLimits};
 
 const TIDY_ID: &str = "tidy";
 const COUNTER_ID: &str = "counter";
@@ -49,10 +49,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let counter = builder
         .prepare(COUNTER_ID, &counter_bytes, PluginConfig::default())
         .await?;
+    let tidy_acceptance = tidy.accept_all();
+    let counter_acceptance = counter.accept_all();
     builder
         .admit(
             tidy,
-            Acceptance::all_declared(),
+            tidy_acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )
@@ -60,7 +62,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     builder
         .admit(
             counter,
-            Acceptance::all_declared(),
+            counter_acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )

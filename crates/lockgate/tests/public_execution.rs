@@ -1,8 +1,8 @@
 mod common;
 
 use lockgate::{
-    Acceptance, CallError, Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, Role,
-    RoleInvocation, RuntimeLimits, Value,
+    CallError, Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, Role, RoleInvocation,
+    RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
@@ -85,10 +85,11 @@ async fn admit(builder: &mut HostBuilder<()>, id: &str, component: &[u8]) -> Plu
         .prepare(id, &bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )

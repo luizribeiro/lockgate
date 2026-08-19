@@ -7,8 +7,7 @@ use std::sync::{
 use std::time::Duration;
 
 use lockgate::{
-    Acceptance, BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RoleError,
-    RuntimeLimits,
+    BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RoleError, RuntimeLimits,
 };
 use tokio::sync::Barrier;
 
@@ -130,10 +129,11 @@ async fn host() -> (
         )
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::new(
                 CallData {
@@ -230,10 +230,11 @@ async fn smoke_imports_observe_startup_data() {
         .prepare("smoke-caller", &component, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::new(
                 CallData {
@@ -338,10 +339,11 @@ async fn generated_role_fails_at_the_cast_when_not_exported() {
         .prepare("greeter", &common::PUBLIC_FIXTURE, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             context("startup"),
         )
@@ -373,10 +375,11 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
         .prepare("greeter", &common::PUBLIC_FIXTURE, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = skipped.accept_all();
     builder
         .admit(
             skipped,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             context("startup"),
         )
@@ -390,10 +393,11 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
         )
         .await
         .unwrap();
+    let acceptance = implementing.accept_all();
     let implementing = builder
         .admit(
             implementing,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             context("startup"),
         )
@@ -424,10 +428,11 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         )
         .await
         .unwrap();
+    let acceptance = first.accept_all();
     let first = builder
         .admit(
             first,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             context("startup"),
         )
@@ -441,10 +446,11 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         .prepare("other-caller", &second_bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = second.accept_all();
     let second = builder
         .admit(
             second,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             context("startup"),
         )

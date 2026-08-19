@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use lockgate::{Acceptance, HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
+use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "configuration";
 const DEFAULT_PLUGIN_PATH: &str =
@@ -45,10 +45,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
             },
         )
         .await?;
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )

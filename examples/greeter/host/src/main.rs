@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use lockgate::{Acceptance, HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
+use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "greeter";
 const DEFAULT_PLUGIN_PATH: &str =
@@ -37,10 +37,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await?;
     // admit records consent, applies limits, and proves the component can start.
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )

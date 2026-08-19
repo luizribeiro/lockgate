@@ -1003,6 +1003,7 @@ dependencies = [
  "lockgate-policy",
  "lockgate-schema",
  "serde_json",
+ "sha2",
  "tokio",
  "wasmparser 0.254.0",
  "wasmtime",

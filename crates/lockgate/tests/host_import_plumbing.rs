@@ -7,8 +7,8 @@ use std::sync::{
 
 use lockgate::__private::{StoreCtx, wasmtime};
 use lockgate::{
-    Acceptance, CallError, HostBuilder, HostImports, InvocationCtx, PluginConfig, Role,
-    RoleInvocation, RuntimeLimits, Value,
+    CallError, HostBuilder, HostImports, InvocationCtx, PluginConfig, Role, RoleInvocation,
+    RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
 
@@ -138,10 +138,11 @@ async fn handwritten_imports_receive_data_and_clone_per_call() {
         .prepare("manual-import", &component(), PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::new(11, budget()),
         )

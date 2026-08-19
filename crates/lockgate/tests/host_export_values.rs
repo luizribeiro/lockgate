@@ -2,7 +2,7 @@ mod common;
 
 use std::collections::HashMap;
 
-use lockgate::{Acceptance, HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
+use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
 
 lockgate::host_bindings!({
     path: "tests/data/host_export_values",
@@ -24,10 +24,11 @@ async fn host() -> (lockgate::Host<()>, lockgate::PluginHandle) {
         )
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(common::INVOCATION_FUEL),
         )

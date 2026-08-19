@@ -1,0 +1,5 @@
+error[E0599]: no method named `insert_flag` found for mutable reference `&mut EffectiveGrants` in the current scope
+ --> tests/ui/effective_grants/effective_grants_mutation.rs:4:12
+  |
+4 |     grants.insert_flag("sessions.send");
+  |            ^^^^^^^^^^^ method not found in `&mut EffectiveGrants`

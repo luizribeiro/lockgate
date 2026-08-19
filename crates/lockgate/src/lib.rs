@@ -28,8 +28,8 @@ pub use lockgate_policy::{
     check_scope_laws,
 };
 pub use policy::{
-    CapabilityRegistrationError, HostImportPolicyError, InvalidScopeValue, JsonValueKind,
-    NeedValueKind, ScopeReference, ScopeResolutionError,
+    CapabilityRegistrationError, EffectiveGrants, HostImportPolicyError, InvalidScopeValue,
+    JsonValueKind, NeedValueKind, ScopeReference, ScopeResolutionError,
 };
 
 /// Generates typed application bindings for a WIT world.

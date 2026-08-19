@@ -1,0 +1,5 @@
+error[E0599]: no associated function or constant named `all_declared` found for struct `Acceptance` in the current scope
+ --> tests/ui/effective_grants/acceptance_unbound.rs:4:25
+  |
+4 |     let _ = Acceptance::all_declared();
+  |                         ^^^^^^^^^^^^ associated function or constant not found in `Acceptance`

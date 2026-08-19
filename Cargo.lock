@@ -1030,6 +1030,7 @@ dependencies = [
  "lockgate-policy",
  "lockgate-schema",
  "serde_json",
+ "sha2",
  "tokio",
  "trybuild",
  "wasm-encoder 0.254.0",

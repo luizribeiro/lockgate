@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use lockgate::{
-    Acceptance, CallError, DetachError, DetachedJobFailure, Host, HostBuilder, HostCtx,
-    InvocationCtx, PluginConfig, PluginHandle, Role, RoleInvocation, RuntimeLimits, Value,
+    CallError, DetachError, DetachedJobFailure, Host, HostBuilder, HostCtx, InvocationCtx,
+    PluginConfig, PluginHandle, Role, RoleInvocation, RuntimeLimits, Value,
 };
 use tokio::sync::Semaphore;
 
@@ -230,10 +230,11 @@ async fn host(
         )
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits {
                 max_detached_jobs: 1,
                 ..RuntimeLimits::default()

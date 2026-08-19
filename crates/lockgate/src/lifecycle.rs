@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use lockgate_schema::{AtomKey, GrantSet, NeedsManifest, PluginMetadata};
+use lockgate_schema::{AtomKey, NeedsManifest, PluginMetadata};
 
 use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
@@ -20,8 +20,9 @@ use crate::inspection::{
 };
 use crate::jobs::{DetachedJobContext, DetachedJobFailure, JobTracker};
 use crate::policy::{
-    CapabilityRegistrationError, CapabilityRegistry, HostImportPolicyError,
-    HostImportPolicyMetadata, ResolvedNeeds, ScopeResolutionError, resolve_needs,
+    CapabilityRegistrationError, CapabilityRegistry, EffectiveGrants, HostImportPolicyError,
+    HostImportPolicyMetadata, PreparedNeedsDigest, ResolvedNeeds, ScopeResolutionError,
+    resolve_needs,
 };
 use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
@@ -94,45 +95,45 @@ impl From<RuntimeLimits> for ExecLimits {
     }
 }
 
-/// The application consent accepted for a prepared plugin.
+/// Acceptance of every concrete atom in one prepared plugin request.
+///
+/// Acceptances can only be produced by [`Prepared::accept_all`]. They retain
+/// the plugin identity and exact prepared-needs digest that admission checks.
 #[derive(Clone, Debug)]
-pub struct Acceptance(AcceptanceKind);
-
-#[derive(Clone, Debug)]
-enum AcceptanceKind {
-    AllDeclared,
-    Accepted(GrantSet),
-}
-
-impl Acceptance {
-    /// Accepts every atom declared by the prepared plugin.
-    pub fn all_declared() -> Self {
-        Self(AcceptanceKind::AllDeclared)
-    }
-
-    /// Uses grants selected by an application consent flow.
-    pub fn accepted(grants: GrantSet) -> Self {
-        Self(AcceptanceKind::Accepted(grants))
-    }
+pub struct Acceptance {
+    plugin_id: String,
+    digest: PreparedNeedsDigest,
 }
 
 fn validate_acceptance(
-    needs: &NeedsManifest,
+    plugin_id: &str,
+    digest: PreparedNeedsDigest,
     acceptance: &Acceptance,
 ) -> Result<(), AdmissionError> {
-    // Intentionally a no-op: declared atoms are registration-checked before
-    // this point, and accepted-but-never-declared grants remain inert by design.
-    // FIXME(grant-system): the grant-algebra join computes effective = declared
-    // ∩ accepted ∩ limits, parses accepted values through registered scope
-    // types, and changes this return type to the effective-grants value.
-    let _ = needs;
-    match &acceptance.0 {
-        AcceptanceKind::AllDeclared => {}
-        AcceptanceKind::Accepted(grants) => {
-            let _ = grants;
-        }
+    if acceptance.plugin_id != plugin_id {
+        return Err(AdmissionError::AcceptancePluginMismatch {
+            prepared: plugin_id.to_owned(),
+            acceptance: acceptance.plugin_id.clone(),
+        });
+    }
+    if acceptance.digest != digest {
+        return Err(AdmissionError::AcceptanceDigestMismatch {
+            plugin: plugin_id.to_owned(),
+            prepared: digest.to_string(),
+            acceptance: acceptance.digest.to_string(),
+        });
     }
     Ok(())
+}
+
+fn bind_effective_grants(
+    plugin_id: &str,
+    digest: PreparedNeedsDigest,
+    resolved: ResolvedNeeds,
+    acceptance: &Acceptance,
+) -> Result<EffectiveGrants, AdmissionError> {
+    validate_acceptance(plugin_id, digest, acceptance)?;
+    Ok(EffectiveGrants::from_resolved(resolved))
 }
 
 /// Symbolic root names and their host paths for later scope resolution.
@@ -202,6 +203,7 @@ pub struct PluginHandle {
     host: HostId,
     index: usize,
     metadata: PluginMetadata,
+    effective_grants: EffectiveGrants,
 }
 
 impl PluginHandle {
@@ -213,6 +215,14 @@ impl PluginHandle {
     /// Returns the plugin's validated display metadata.
     pub fn metadata(&self) -> &PluginMetadata {
         &self.metadata
+    }
+
+    #[allow(
+        dead_code,
+        reason = "guard expansion consumes this immutable query surface in the next policy chunk"
+    )]
+    pub(crate) fn effective_grants(&self) -> &EffectiveGrants {
+        &self.effective_grants
     }
 }
 
@@ -325,11 +335,13 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(AdmissionError::from_settings_validation)?;
         let resolved = resolve_needs(&needs, settings.value(), &config.roots, &self.registry)
             .map_err(AdmissionError::ScopeResolution)?;
+        let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
         artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             inspection,
             resolved,
+            prepared_digest,
             artifact: Box::new(artifact),
         })
     }
@@ -399,8 +411,7 @@ impl<S: CallContext> HostBuilder<S> {
         Ok(wired)
     }
 
-    /// Rejects unregistered declared needs before consulting acceptance, then
-    /// smoke-instantiates the prepared plugin.
+    /// Verifies prepared acceptance and smoke-instantiates the plugin.
     /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
     /// `startup_ctx`'s fuel, so an application-chosen startup budget may reject
     /// a constructor that steady-state calls would instantiate under the full
@@ -414,26 +425,16 @@ impl<S: CallContext> HostBuilder<S> {
     ) -> Result<PluginHandle, AdmissionError> {
         let Prepared {
             inspection,
-            resolved: _,
+            resolved,
+            prepared_digest,
             artifact,
         } = prepared;
-        if let Some(entry) = inspection
-            .needs()
-            .required()
-            .iter()
-            .chain(inspection.needs().optional())
-            .find(|entry| {
-                !self
-                    .registry
-                    .contains(entry.atom().capability(), entry.atom().operation())
-            })
-        {
-            return Err(AdmissionError::UnregisteredCapability {
-                atom: entry.atom().clone(),
-            });
-        }
-
-        validate_acceptance(inspection.needs(), &acceptance)?;
+        let effective_grants = bind_effective_grants(
+            inspection.metadata().id(),
+            prepared_digest,
+            resolved,
+            &acceptance,
+        )?;
 
         let mut artifact = artifact
             .downcast::<LoadedComponent<S>>()
@@ -442,6 +443,7 @@ impl<S: CallContext> HostBuilder<S> {
             host: self.id,
             index: self.admitted.len(),
             metadata: inspection.metadata().clone(),
+            effective_grants,
         };
         artifact.set_plugin(
             handle.clone(),
@@ -551,11 +553,8 @@ impl<S: CallContext> Host<S> {
 /// A validated, compiled, and prelinked plugin artifact.
 pub struct Prepared {
     inspection: Inspection,
-    #[allow(
-        dead_code,
-        reason = "retained for immutable effective grants in the next policy lifecycle step"
-    )]
     resolved: ResolvedNeeds,
+    prepared_digest: PreparedNeedsDigest,
     artifact: Box<dyn Any + Send>,
 }
 
@@ -572,6 +571,14 @@ impl Prepared {
     /// Returns the declarations produced by pure inspection of this artifact.
     pub fn inspection(&self) -> &Inspection {
         &self.inspection
+    }
+
+    /// Accepts every required and optional atom in this resolved request.
+    pub fn accept_all(&self) -> Acceptance {
+        Acceptance {
+            plugin_id: self.inspection.metadata().id().to_owned(),
+            digest: self.prepared_digest,
+        }
     }
 }
 
@@ -648,9 +655,6 @@ pub enum AdmissionError {
     Preflight {
         message: String,
     },
-    UnregisteredCapability {
-        atom: AtomKey,
-    },
     UnregisteredGuardPermission {
         atom: AtomKey,
         interface: String,
@@ -689,6 +693,15 @@ pub enum AdmissionError {
         message: String,
     },
     ScopeResolution(ScopeResolutionError),
+    AcceptancePluginMismatch {
+        prepared: String,
+        acceptance: String,
+    },
+    AcceptanceDigestMismatch {
+        plugin: String,
+        prepared: String,
+        acceptance: String,
+    },
 }
 
 impl AdmissionError {
@@ -791,10 +804,6 @@ impl fmt::Display for AdmissionError {
             Self::Preflight { message } => {
                 write!(formatter, "component linker preflight failed: {message}")
             }
-            Self::UnregisteredCapability { atom } => write!(
-                formatter,
-                "plugin declares capability `{atom}` that the application never registered"
-            ),
             Self::UnregisteredGuardPermission {
                 atom,
                 interface,
@@ -858,6 +867,21 @@ impl fmt::Display for AdmissionError {
                 )
             }
             Self::ScopeResolution(error) => error.fmt(formatter),
+            Self::AcceptancePluginMismatch {
+                prepared,
+                acceptance,
+            } => write!(
+                formatter,
+                "prepared plugin `{prepared}` cannot use an acceptance bound to plugin `{acceptance}`"
+            ),
+            Self::AcceptanceDigestMismatch {
+                plugin,
+                prepared,
+                acceptance,
+            } => write!(
+                formatter,
+                "prepared plugin `{plugin}` has needs digest `{prepared}`, but the acceptance is bound to needs digest `{acceptance}`; accept this prepared request again"
+            ),
         }
     }
 }
@@ -870,5 +894,211 @@ impl Error for AdmissionError {
             Self::ScopeResolution(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod grant_tests {
+    use std::str::FromStr;
+
+    use lockgate_policy::{Scope, ScopeError, ScopeRepr};
+    use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
+    use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+    use wasm_encoder::{ComponentSection, CustomSection};
+    use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
+    use wit_parser::{ManglingAndAbi, Resolve};
+
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum SessionScope {
+        All,
+        Current,
+    }
+
+    impl FromStr for SessionScope {
+        type Err = ScopeError;
+
+        fn from_str(value: &str) -> Result<Self, Self::Err> {
+            match value {
+                "all" | "everything" => Ok(Self::All),
+                "current" => Ok(Self::Current),
+                _ => Err(ScopeError::unknown(value)),
+            }
+        }
+    }
+
+    impl ScopeRepr for SessionScope {
+        fn canonical(&self) -> String {
+            match self {
+                Self::All => "all",
+                Self::Current => "current",
+            }
+            .to_owned()
+        }
+    }
+
+    impl Scope for SessionScope {}
+
+    #[lockgate_policy::capability("sessions")]
+    mod permissions {
+        use super::SessionScope;
+        use lockgate_policy::{Permission, ScopedPermission};
+
+        pub const READ: ScopedPermission<SessionScope> = ScopedPermission::new("read");
+        pub const SEND: Permission = Permission::new("send");
+    }
+
+    fn atom(value: &str) -> AtomKey {
+        value.parse().unwrap()
+    }
+
+    fn component() -> Vec<u8> {
+        let mut resolve = Resolve::new();
+        let package = resolve
+            .push_str(
+                "fixture.wit",
+                "package test:effective-grants; world fixture {}",
+            )
+            .unwrap();
+        let world = resolve.select_world(&[package], None).unwrap();
+        let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+        embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+        ComponentEncoder::default()
+            .module(&module)
+            .unwrap()
+            .encode()
+            .unwrap()
+    }
+
+    #[test]
+    fn pure_declared_needs_resolve_accept_and_freeze_for_queries() {
+        let metadata = PluginMetadata::new("pure-grants", "Pure grants", "1.0").unwrap();
+        let needs = NeedsManifest::new(
+            vec![
+                NeedEntry::scoped(
+                    atom("sessions.read"),
+                    vec![
+                        ScopeRef::literal("everything").unwrap(),
+                        ScopeRef::literal("all").unwrap(),
+                    ],
+                )
+                .unwrap(),
+            ],
+            vec![NeedEntry::flag(atom("sessions.send"))],
+        )
+        .unwrap();
+        let needs_digest = lockgate_schema::NeedsDigest::compute(&needs).unwrap();
+        let mut registry = CapabilityRegistry::default();
+        registry.register::<permissions::Contract>().unwrap();
+        let resolved = resolve_needs(
+            &needs,
+            &serde_json::json!({}),
+            &SymbolicRoots::default(),
+            &registry,
+        )
+        .unwrap();
+        let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
+        let prepared = Prepared {
+            inspection: Inspection::new(metadata, needs, needs_digest, Vec::new()),
+            resolved,
+            prepared_digest,
+            artifact: Box::new(()),
+        };
+        let acceptance = prepared.accept_all();
+        let Prepared {
+            inspection,
+            resolved,
+            prepared_digest,
+            ..
+        } = prepared;
+
+        let grants = bind_effective_grants(
+            inspection.metadata().id(),
+            prepared_digest,
+            resolved,
+            &acceptance,
+        )
+        .unwrap();
+
+        assert!(grants.has_unscoped(&atom("sessions.send")));
+        assert!(!grants.has_unscoped(&atom("sessions.missing")));
+        assert_eq!(
+            grants.scoped_values(&atom("sessions.read")),
+            Some(["all".to_owned()].as_slice())
+        );
+    }
+
+    fn with_section(mut component: Vec<u8>, name: &str, data: &[u8]) -> Vec<u8> {
+        CustomSection {
+            name: name.into(),
+            data: data.into(),
+        }
+        .append_to_component(&mut component);
+        component
+    }
+
+    #[tokio::test]
+    async fn admitted_handle_carries_canonical_immutable_effective_grants() {
+        let metadata = PluginMetadata::new("grant-query", "Grant query", "1.0").unwrap();
+        let needs = NeedsManifest::new(
+            vec![
+                NeedEntry::scoped(
+                    atom("sessions.read"),
+                    vec![
+                        ScopeRef::literal("everything").unwrap(),
+                        ScopeRef::literal("all").unwrap(),
+                    ],
+                )
+                .unwrap(),
+            ],
+            vec![NeedEntry::flag(atom("sessions.send"))],
+        )
+        .unwrap();
+        let component = with_section(
+            with_section(
+                component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
+            ),
+            PLUGIN_NEEDS_SECTION,
+            &needs.to_section_bytes().unwrap(),
+        );
+        let mut builder = HostBuilder::new(())
+            .unwrap()
+            .register::<permissions::Contract>()
+            .unwrap();
+        let prepared = builder
+            .prepare("grant-query", &component, PluginConfig::default())
+            .await
+            .unwrap();
+        let acceptance = prepared.accept_all();
+
+        let handle = builder
+            .admit(
+                prepared,
+                acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(1_000_000),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            handle
+                .effective_grants()
+                .has_unscoped(&atom("sessions.send"))
+        );
+        assert!(
+            !handle
+                .effective_grants()
+                .has_unscoped(&atom("sessions.missing"))
+        );
+        assert_eq!(
+            handle
+                .effective_grants()
+                .scoped_values(&atom("sessions.read")),
+            Some(["all".to_owned()].as_slice())
+        );
     }
 }

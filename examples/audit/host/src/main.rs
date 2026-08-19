@@ -2,9 +2,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use lockgate::{
-    Acceptance, BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RuntimeLimits,
-};
+use lockgate::{BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "audit";
 const DEFAULT_PLUGIN_PATH: &str =
@@ -67,10 +65,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await?;
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             call("startup", 1_000_000),
         )

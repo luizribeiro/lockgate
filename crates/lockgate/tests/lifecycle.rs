@@ -1,11 +1,11 @@
 mod common;
 
 use lockgate::{
-    Acceptance, AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet,
-    PluginConfig, Role, RoleError, RoleInvocation, RuntimeLimits, inspect,
+    AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet, PluginConfig,
+    Role, RoleError, RoleInvocation, RuntimeLimits, inspect,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{AtomKey, GrantSet, NeedEntry, NeedsDigest, NeedsManifest, PluginMetadata};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, PluginMetadata};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -255,17 +255,18 @@ fn runtime_inputs_are_bounded_and_explicit() {
 }
 
 #[tokio::test]
-async fn empty_needs_accept_both_consent_paths_and_ignore_stale_grants() {
+async fn empty_needs_accept_all_round_trips() {
     let bytes = well_formed_fixture();
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let handle = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )
@@ -273,23 +274,6 @@ async fn empty_needs_accept_both_consent_paths_and_ignore_stale_grants() {
         .unwrap();
     assert_eq!(handle.id(), PLUGIN_ID);
     assert_eq!(handle.metadata(), &metadata());
-
-    let mut stale = GrantSet::new();
-    stale.insert_flag("obsolete.feature".parse().unwrap());
-    let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
-        .await
-        .unwrap();
-    let handle = builder
-        .admit(
-            prepared,
-            Acceptance::accepted(stale),
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
-        )
-        .await
-        .unwrap();
-    assert_eq!(handle.id(), PLUGIN_ID);
 }
 
 #[tokio::test]
@@ -300,10 +284,11 @@ async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let admitted = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )
@@ -325,10 +310,11 @@ async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let handle = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )
@@ -384,11 +370,12 @@ async fn smoke_instantiation_budget_exhaustion_is_typed() {
         instantiation_fuel: 0,
         ..RuntimeLimits::default()
     };
+    let acceptance = prepared.accept_all();
 
     let error = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             limits,
             InvocationCtx::bounded(1_000_000),
         )
@@ -410,11 +397,12 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
         max_memory_bytes: 0,
         ..RuntimeLimits::default()
     };
+    let acceptance = prepared.accept_all();
 
     let error = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             limits,
             InvocationCtx::bounded(1_000_000),
         )
@@ -436,11 +424,12 @@ async fn smoke_instantiation_observes_ready_validated_settings() {
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
 
     builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )

@@ -1,8 +1,7 @@
 mod common;
 
 use lockgate::{
-    Acceptance, CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation,
-    RuntimeLimits, Value,
+    CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
 
@@ -87,10 +86,11 @@ async fn guest_observes_exactly_the_validated_settings_json() {
         )
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )
@@ -116,10 +116,11 @@ async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
         )
         .await
         .unwrap();
+    let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
             prepared,
-            Acceptance::all_declared(),
+            acceptance,
             RuntimeLimits::default(),
             InvocationCtx::bounded(1_000_000),
         )
