@@ -14,6 +14,7 @@ members = [
     "resource-guarded-guest",
     "renamed-facade",
     "renamed-host-facade",
+    "session-context-guest",
     "scope-reexport",
     "typed-settings-guest",
 ]

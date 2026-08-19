@@ -1,0 +1,19 @@
+package test:session-context@1.0.0;
+
+interface sessions {
+  enum session-error {
+    gone,
+    denied,
+  }
+
+  read: func() -> result<string, session-error>;
+}
+
+interface guest {
+  read: func() -> string;
+}
+
+world fixture {
+  import sessions;
+  export guest;
+}

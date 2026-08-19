@@ -67,6 +67,12 @@ pub(crate) static RESOURCE_GUARDED_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(||
         "lockgate_resource_guarded_fixture.wasm",
     )
 });
+pub(crate) static SESSION_CONTEXT_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    build_fixture(
+        "session-context-guest",
+        "lockgate_session_context_fixture.wasm",
+    )
+});
 pub(crate) static HOST_EXPORT_VALUES_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
     build_fixture(
         "host-export-values-guest",

@@ -1169,6 +1169,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-session-context-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin",
+]
+
+[[package]]
 name = "lockgate-typed-settings-fixture"
 version = "0.1.0"
 dependencies = [
