@@ -177,6 +177,24 @@ fn generated_host_import_construction_rejects_an_unguarded_impl() {
     assert!(error.to_string().contains("#[lockgate::guarded]"));
 }
 
+#[test]
+fn application_host_import_cannot_collide_with_the_reserved_framework_namespace() {
+    let error = match lockgate::HostBuilder::new(reserved_namespace::Imports) {
+        Ok(_) => panic!("reserved application host interface was accepted"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        HostConstructionError::HostImports(
+            HostImportPolicyError::ReservedFrameworkInterface { interface }
+        ) if interface.name() == "lockgate:config/settings" && interface.version().is_none()
+    ));
+    let message = error.to_string();
+    assert!(message.contains("lockgate:config/settings"));
+    assert!(message.contains("reserved `lockgate:` framework namespace"));
+    assert!(message.contains("dedicated linker rules"));
+}
+
 #[tokio::test]
 async fn preparation_rejects_an_unregistered_guard_permission() {
     let mut builder = lockgate::HostBuilder::new(Imports).unwrap();
@@ -402,6 +420,30 @@ mod unguarded {
 
         async fn protocol_version(&mut self, _cx: HostCtx<'_, Data>) -> String {
             "1".to_owned()
+        }
+    }
+}
+
+mod reserved_namespace {
+    use lockgate::HostCtx;
+
+    #[derive(Clone)]
+    pub struct Imports;
+
+    lockgate::host_bindings!({
+        path: "tests/data/reserved_host_import",
+        world: "fixture",
+        imports: Imports,
+        data: (),
+    });
+
+    #[lockgate::guarded]
+    impl settings::Host for Imports {
+        #[lockgate::no_capability_required(
+            reason = "reserved namespace collision regression fixture"
+        )]
+        async fn get_json(&mut self, _cx: HostCtx<'_, ()>) -> String {
+            "{}".to_owned()
         }
     }
 }

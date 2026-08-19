@@ -1,0 +1,9 @@
+package lockgate:config;
+
+interface settings {
+  get-json: func() -> string;
+}
+
+world fixture {
+  import settings;
+}

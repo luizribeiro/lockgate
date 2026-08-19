@@ -237,6 +237,9 @@ impl PolicyMethod {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HostImportPolicyError {
+    ReservedFrameworkInterface {
+        interface: InterfaceIdentity,
+    },
     MissingGuardedImplementation {
         interface: InterfaceIdentity,
     },
@@ -262,6 +265,11 @@ pub enum HostImportPolicyError {
 impl fmt::Display for HostImportPolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ReservedFrameworkInterface { interface } => write!(
+                formatter,
+                "application host interface `{}` collides with the reserved `lockgate:` framework namespace; framework imports use dedicated linker rules and must not be declared through `host_bindings!`",
+                DisplayInterface(*interface),
+            ),
             Self::MissingGuardedImplementation { interface } => write!(
                 formatter,
                 "host import interface `{}` has no policy classifications; annotate its generated `Host` implementation with `#[lockgate::guarded]`",
@@ -370,6 +378,9 @@ pub fn validate_interface_policy(
     expected_methods: &[MethodIdentity],
     policy_methods: &[PolicyMethod],
 ) -> Result<ValidatedInterfacePolicy, HostImportPolicyError> {
+    if interface.name().starts_with("lockgate:") {
+        return Err(HostImportPolicyError::ReservedFrameworkInterface { interface });
+    }
     if policy_methods.is_empty() {
         return Err(HostImportPolicyError::MissingGuardedImplementation { interface });
     }
