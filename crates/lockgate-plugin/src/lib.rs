@@ -340,11 +340,14 @@ impl<'de> serde::Deserialize<'de> for NoSettings {
 /// from semantic-versioning guarantees. It must never be used directly.
 #[doc(hidden)]
 pub mod __private {
-    use super::{Needs, Plugin, SettingsPolicy};
+    use super::{Need, Needs, Plugin, ScopeRef, SettingsPolicy};
     use alloc::string::String;
-    use lockgate_policy::__private::needs_format;
+    use lockgate_policy::__private::{
+        need_capability, need_permission, need_scopes, needs_format, needs_optional,
+        needs_required, scope_ref_wire_byte, scope_ref_wire_len,
+    };
 
-    const NEEDS_BYTES: &[u8] = br#"{"format":1,"optional":{},"reasons":{},"required":{}}"#;
+    const MAX_SECTION_PAYLOAD_BYTES: usize = 1024 * 1024;
 
     #[derive(Clone, Copy)]
     pub struct Manifest {
@@ -400,7 +403,15 @@ pub mod __private {
 
     pub const fn needs_len(needs: &Needs) -> usize {
         validate_needs(needs);
-        NEEDS_BYTES.len()
+        let len = b"{\"format\":1,\"optional\":".len()
+            + need_map_len(needs_optional(needs))
+            + b",\"reasons\":{},\"required\":".len()
+            + need_map_len(needs_required(needs))
+            + 1;
+        if len > MAX_SECTION_PAYLOAD_BYTES {
+            panic!("Lockgate needs section exceeds 1 MiB");
+        }
+        len
     }
 
     pub const fn needs_bytes<const N: usize>(needs: &Needs) -> [u8; N] {
@@ -408,10 +419,14 @@ pub mod __private {
             panic!("Lockgate needs serializer length mismatch");
         }
         let mut output = [0; N];
-        let mut index = 0;
-        while index < N {
-            output[index] = NEEDS_BYTES[index];
-            index += 1;
+        let mut cursor = 0;
+        cursor = write_bytes(&mut output, cursor, b"{\"format\":1,\"optional\":");
+        cursor = write_need_map(&mut output, cursor, needs_optional(needs));
+        cursor = write_bytes(&mut output, cursor, b",\"reasons\":{},\"required\":");
+        cursor = write_need_map(&mut output, cursor, needs_required(needs));
+        cursor = write_byte(&mut output, cursor, b'}');
+        if cursor != N {
+            panic!("Lockgate needs serializer fill mismatch");
         }
         output
     }
@@ -471,6 +486,148 @@ pub mod __private {
         }
     }
 
+    const fn need_map_len(entries: &[Need]) -> usize {
+        let mut len = 2;
+        let mut previous = None;
+        let mut written = 0;
+        while let Some(index) = next_entry(entries, previous) {
+            if written != 0 {
+                len += 1;
+            }
+            len += 3 + atom_escaped_len(&entries[index]) + need_value_len(&entries[index]);
+            written += 1;
+            previous = Some(index);
+        }
+        len
+    }
+
+    const fn need_value_len(need: &Need) -> usize {
+        match need_scopes(need) {
+            None => 4,
+            Some(scopes) => scoped_value_len(scopes),
+        }
+    }
+
+    const fn scoped_value_len(scopes: &[ScopeRef]) -> usize {
+        let mut len = 2;
+        let mut previous = None;
+        let mut written = 0;
+        while let Some(index) = next_scope(scopes, previous) {
+            if written != 0 {
+                len += 1;
+            }
+            len += 2 + scope_escaped_len(&scopes[index]);
+            written += 1;
+            previous = Some(index);
+        }
+        len
+    }
+
+    const fn atom_escaped_len(need: &Need) -> usize {
+        escaped_len(need_capability(need)) + 1 + escaped_len(need_permission(need))
+    }
+
+    const fn scope_escaped_len(scope: &ScopeRef) -> usize {
+        let mut len = 0;
+        let mut index = 0;
+        while index < scope_ref_wire_len(scope) {
+            len += escaped_byte_len(scope_ref_wire_byte(scope, index));
+            index += 1;
+        }
+        len
+    }
+
+    macro_rules! define_wire_order {
+        (
+            next = $next:ident,
+            compare = $compare:ident,
+            item = $item:ty,
+            wire_len = $wire_len:ident,
+            wire_byte = $wire_byte:ident
+        ) => {
+            const fn $next(entries: &[$item], previous: Option<usize>) -> Option<usize> {
+                let mut candidate = None;
+                let mut index = 0;
+                while index < entries.len() {
+                    let after_previous = match previous {
+                        Some(previous) => $compare(&entries[index], &entries[previous]) > 0,
+                        None => true,
+                    };
+                    if after_previous {
+                        let before_candidate = match candidate {
+                            Some(candidate) => $compare(&entries[index], &entries[candidate]) < 0,
+                            None => true,
+                        };
+                        if before_candidate {
+                            candidate = Some(index);
+                        }
+                    }
+                    index += 1;
+                }
+                candidate
+            }
+
+            const fn $compare(left: &$item, right: &$item) -> i8 {
+                let left_len = $wire_len(left);
+                let right_len = $wire_len(right);
+                let common = if left_len < right_len {
+                    left_len
+                } else {
+                    right_len
+                };
+                let mut index = 0;
+                while index < common {
+                    let left_byte = $wire_byte(left, index);
+                    let right_byte = $wire_byte(right, index);
+                    if left_byte < right_byte {
+                        return -1;
+                    }
+                    if left_byte > right_byte {
+                        return 1;
+                    }
+                    index += 1;
+                }
+                if left_len < right_len {
+                    -1
+                } else if left_len > right_len {
+                    1
+                } else {
+                    0
+                }
+            }
+        };
+    }
+
+    define_wire_order!(
+        next = next_entry,
+        compare = compare_atom,
+        item = Need,
+        wire_len = atom_wire_len,
+        wire_byte = atom_wire_byte
+    );
+    define_wire_order!(
+        next = next_scope,
+        compare = compare_scope,
+        item = ScopeRef,
+        wire_len = scope_ref_wire_len,
+        wire_byte = scope_ref_wire_byte
+    );
+
+    const fn atom_wire_len(need: &Need) -> usize {
+        need_capability(need).len() + 1 + need_permission(need).len()
+    }
+
+    const fn atom_wire_byte(need: &Need, index: usize) -> u8 {
+        let capability = need_capability(need);
+        if index < capability.len() {
+            capability.as_bytes()[index]
+        } else if index == capability.len() {
+            b'.'
+        } else {
+            need_permission(need).as_bytes()[index - capability.len() - 1]
+        }
+    }
+
     const fn optional_field_len(name: &str, value: Option<&str>) -> usize {
         match value {
             Some(value) => 6 + name.len() + escaped_len(value),
@@ -483,14 +640,89 @@ pub mod __private {
         let mut len = 0;
         let mut index = 0;
         while index < bytes.len() {
-            len += match bytes[index] {
-                b'\"' | b'\\' | 0x08 | b'\t' | b'\n' | 0x0c | b'\r' => 2,
-                0x00..=0x1f => 6,
-                _ => 1,
-            };
+            len += escaped_byte_len(bytes[index]);
             index += 1;
         }
         len
+    }
+
+    const fn escaped_byte_len(byte: u8) -> usize {
+        match byte {
+            b'\"' | b'\\' | 0x08 | b'\t' | b'\n' | 0x0c | b'\r' => 2,
+            0x00..=0x1f => 6,
+            _ => 1,
+        }
+    }
+
+    const fn write_need_map<const N: usize>(
+        output: &mut [u8; N],
+        mut cursor: usize,
+        entries: &[Need],
+    ) -> usize {
+        cursor = write_byte(output, cursor, b'{');
+        let mut previous = None;
+        let mut written = 0;
+        while let Some(index) = next_entry(entries, previous) {
+            if written != 0 {
+                cursor = write_byte(output, cursor, b',');
+            }
+            cursor = write_byte(output, cursor, b'\"');
+            cursor = write_atom_escaped(output, cursor, &entries[index]);
+            cursor = write_bytes(output, cursor, b"\":");
+            cursor = write_need_value(output, cursor, &entries[index]);
+            written += 1;
+            previous = Some(index);
+        }
+        write_byte(output, cursor, b'}')
+    }
+
+    const fn write_atom_escaped<const N: usize>(
+        output: &mut [u8; N],
+        mut cursor: usize,
+        need: &Need,
+    ) -> usize {
+        cursor = write_escaped(output, cursor, need_capability(need));
+        cursor = write_byte(output, cursor, b'.');
+        write_escaped(output, cursor, need_permission(need))
+    }
+
+    const fn write_need_value<const N: usize>(
+        output: &mut [u8; N],
+        mut cursor: usize,
+        need: &Need,
+    ) -> usize {
+        match need_scopes(need) {
+            None => write_bytes(output, cursor, b"true"),
+            Some(scopes) => {
+                cursor = write_byte(output, cursor, b'[');
+                let mut previous = None;
+                let mut written = 0;
+                while let Some(index) = next_scope(scopes, previous) {
+                    if written != 0 {
+                        cursor = write_byte(output, cursor, b',');
+                    }
+                    cursor = write_byte(output, cursor, b'\"');
+                    cursor = write_scope_escaped(output, cursor, &scopes[index]);
+                    cursor = write_byte(output, cursor, b'\"');
+                    written += 1;
+                    previous = Some(index);
+                }
+                write_byte(output, cursor, b']')
+            }
+        }
+    }
+
+    const fn write_scope_escaped<const N: usize>(
+        output: &mut [u8; N],
+        mut cursor: usize,
+        scope: &ScopeRef,
+    ) -> usize {
+        let mut index = 0;
+        while index < scope_ref_wire_len(scope) {
+            cursor = write_escaped_byte(output, cursor, scope_ref_wire_byte(scope, index));
+            index += 1;
+        }
+        cursor
     }
 
     const fn write_optional_field<const N: usize>(
@@ -517,23 +749,31 @@ pub mod __private {
         let bytes = value.as_bytes();
         let mut index = 0;
         while index < bytes.len() {
-            let byte = bytes[index];
-            match byte {
-                b'\"' => cursor = write_bytes(output, cursor, b"\\\""),
-                b'\\' => cursor = write_bytes(output, cursor, b"\\\\"),
-                0x08 => cursor = write_bytes(output, cursor, b"\\b"),
-                b'\t' => cursor = write_bytes(output, cursor, b"\\t"),
-                b'\n' => cursor = write_bytes(output, cursor, b"\\n"),
-                0x0c => cursor = write_bytes(output, cursor, b"\\f"),
-                b'\r' => cursor = write_bytes(output, cursor, b"\\r"),
-                0x00..=0x1f => {
-                    cursor = write_bytes(output, cursor, b"\\u00");
-                    cursor = write_byte(output, cursor, hex(byte >> 4));
-                    cursor = write_byte(output, cursor, hex(byte & 0x0f));
-                }
-                _ => cursor = write_byte(output, cursor, byte),
-            }
+            cursor = write_escaped_byte(output, cursor, bytes[index]);
             index += 1;
+        }
+        cursor
+    }
+
+    const fn write_escaped_byte<const N: usize>(
+        output: &mut [u8; N],
+        mut cursor: usize,
+        byte: u8,
+    ) -> usize {
+        match byte {
+            b'\"' => cursor = write_bytes(output, cursor, b"\\\""),
+            b'\\' => cursor = write_bytes(output, cursor, b"\\\\"),
+            0x08 => cursor = write_bytes(output, cursor, b"\\b"),
+            b'\t' => cursor = write_bytes(output, cursor, b"\\t"),
+            b'\n' => cursor = write_bytes(output, cursor, b"\\n"),
+            0x0c => cursor = write_bytes(output, cursor, b"\\f"),
+            b'\r' => cursor = write_bytes(output, cursor, b"\\r"),
+            0x00..=0x1f => {
+                cursor = write_bytes(output, cursor, b"\\u00");
+                cursor = write_byte(output, cursor, hex(byte >> 4));
+                cursor = write_byte(output, cursor, hex(byte & 0x0f));
+            }
+            _ => cursor = write_byte(output, cursor, byte),
         }
         cursor
     }

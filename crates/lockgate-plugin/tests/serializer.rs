@@ -32,3 +32,11 @@ fn const_serializer_matches_host_wire_encoding() {
         NeedsManifest::empty().to_section_bytes().unwrap()
     );
 }
+
+#[test]
+fn nothing_preserves_the_previous_hardcoded_manifest_bytes() {
+    assert_eq!(
+        NEEDS.as_slice(),
+        br#"{"format":1,"optional":{},"reasons":{},"required":{}}"#
+    );
+}
