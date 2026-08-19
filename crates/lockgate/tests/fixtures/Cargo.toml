@@ -9,6 +9,7 @@ members = [
     "host-bindings-guest",
     "host-export-values",
     "host-export-values-guest",
+    "guarded-bindings-guest",
     "public-guest",
     "renamed-facade",
     "renamed-host-facade",

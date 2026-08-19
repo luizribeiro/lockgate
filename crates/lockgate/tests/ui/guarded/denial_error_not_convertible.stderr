@@ -1,0 +1,23 @@
+error[E0277]: `?` couldn't convert the error to `NoDenialError`
+  --> tests/ui/guarded/denial_error_not_convertible.rs:10:20
+   |
+10 | #[lockgate::guarded]
+   | -------------------^
+   | |                  |
+   | |                  the trait `From<lockgate::PermissionDenied>` is not implemented for `NoDenialError`
+   | this has type `Result<_, Infallible>`
+   |
+note: `NoDenialError` needs to implement `From<lockgate::PermissionDenied>`
+  --> tests/ui/guarded/support.rs
+   |
+   | pub struct NoDenialError;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+help: the trait `From<lockgate::PermissionDenied>` is not implemented for `NoDenialError`
+      but trait `From<Infallible>` is implemented for it
+  --> tests/ui/guarded/support.rs
+   |
+   | impl From<Infallible> for NoDenialError {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `Infallible`, found `lockgate::PermissionDenied`
+   = note: this error originates in the attribute macro `lockgate::guarded` (in Nightly builds, run with -Z macro-backtrace for more info)

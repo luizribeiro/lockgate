@@ -75,7 +75,14 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
         .map_err(|error| syn::Error::new(input.world.span(), format!("{error:#}")))?;
     validate_guest_world(&resolve, plugin_world, input.world.span())?;
     let plugin_world_name = resolve.worlds[plugin_world].name.clone();
-    let plugin_package_name = resolve.packages[plugin_package].name.to_string();
+    let plugin_package = &resolve.packages[plugin_package].name;
+    let mut plugin_world_reference = format!(
+        "{}:{}/{}",
+        plugin_package.namespace, plugin_package.name, plugin_world_name
+    );
+    if let Some(version) = &plugin_package.version {
+        plugin_world_reference.push_str(&format!("@{version}"));
+    }
 
     resolve
         .push_group(
@@ -84,7 +91,7 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
         )
         .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
     let wrapper = format!(
-        "package lockgate:generated;\nworld plugin {{\n  include {plugin_package_name}/{plugin_world_name};\n  import lockgate:config/settings;\n  export lockgate:config/schema;\n}}"
+        "package lockgate:generated;\nworld plugin {{\n  include {plugin_world_reference};\n  import lockgate:config/settings;\n  export lockgate:config/schema;\n}}"
     );
     let wrapper_package = resolve
         .push_group(

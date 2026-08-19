@@ -4,7 +4,41 @@ error[E0308]: mismatched types
  8 | #[lockgate::guarded]
    | -------------------- arguments to this function are incorrect
  9 | impl vm::Host for Imports {
-10 |     #[lockgate::requires(permission = permissions::LIST, target = target.id)]
+10 |     #[lockgate::requires(permission = permissions::LIST, target = target)]
+   |                                       ^^^^^^^^^^^^^^^^^ expected `ScopedPermission<TargetScope>`, found `Permission`
+   |
+   = note: expected struct `ScopedPermission<TargetScope>`
+              found struct `Permission`
+note: function defined here
+  --> src/policy/resources.rs
+   |
+   | pub async fn resolve_scoped_resource<'a, S, A, R>(
+   |              ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/guarded/target_on_unscoped.rs:10:39
+   |
+ 8 | #[lockgate::guarded]
+   | -------------------- arguments to this method are incorrect
+ 9 | impl vm::Host for Imports {
+10 |     #[lockgate::requires(permission = permissions::LIST, target = target)]
+   |                                       ^^^^^^^^^^^^^^^^^ expected `ScopedPermission<TargetScope>`, found `Permission`
+   |
+   = note: expected struct `ScopedPermission<TargetScope>`
+              found struct `Permission`
+note: method defined here
+  --> src/lib.rs
+   |
+   |     pub fn require_scoped<T, R>(
+   |            ^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/guarded/target_on_unscoped.rs:10:39
+   |
+ 8 | #[lockgate::guarded]
+   | -------------------- arguments to this function are incorrect
+ 9 | impl vm::Host for Imports {
+10 |     #[lockgate::requires(permission = permissions::LIST, target = target)]
    |                                       ^^^^^^^^^^^^^^^^^ expected `ScopedPermission<_>`, found `Permission`
    |
    = note: expected struct `ScopedPermission<_>`

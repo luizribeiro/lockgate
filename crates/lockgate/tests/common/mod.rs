@@ -55,6 +55,12 @@ pub(crate) static PUBLIC_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("public-guest", "lockgate_public_fixture.wasm"));
 pub(crate) static HOST_BINDINGS_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("host-bindings-guest", "lockgate_host_bindings_fixture.wasm"));
+pub(crate) static GUARDED_BINDINGS_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    build_fixture(
+        "guarded-bindings-guest",
+        "lockgate_guarded_bindings_fixture.wasm",
+    )
+});
 pub(crate) static HOST_EXPORT_VALUES_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
     build_fixture(
         "host-export-values-guest",
@@ -104,8 +110,16 @@ pub(crate) fn constant_schema_component(schema: &str) -> Vec<u8> {
 }
 
 pub(crate) fn sectioned_fixture(bytes: &[u8], metadata: &PluginMetadata) -> Vec<u8> {
+    policy_fixture(bytes, metadata, &NeedsManifest::empty())
+}
+
+pub(crate) fn policy_fixture(
+    bytes: &[u8],
+    metadata: &PluginMetadata,
+    needs: &NeedsManifest,
+) -> Vec<u8> {
     let metadata_bytes = metadata.to_section_bytes().unwrap();
-    let needs_bytes = NeedsManifest::empty().to_section_bytes().unwrap();
+    let needs_bytes = needs.to_section_bytes().unwrap();
 
     // The public guest now self-embeds its identity. Keep pre-facade callers
     // byte-for-byte unchanged by accepting a match or replacing both sections.

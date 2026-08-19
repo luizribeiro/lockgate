@@ -1,9 +1,16 @@
+extern crate alloc;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
 use lockgate::{
     AdmissionError, HostConstructionError, HostCtx, HostImportPolicyError, InvocationCtx,
-    PluginConfig, RuntimeLimits, Scope, ScopeRepr,
+    PermissionDenied, PluginConfig, PluginSubject, ResolveScopedResource, RuntimeLimits,
+    ScopedResource,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -11,78 +18,245 @@ mod common;
 
 const PLUGIN_ID: &str = "guarded-wiring";
 
-#[derive(Clone, PartialEq, Eq, ScopeRepr)]
-enum VmScope {
-    #[scope(rename = "all")]
-    All,
+mod vm_contract {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../lockgate-policy/tests/fixtures/vm_contract.rs"
+    ));
 }
 
-impl Scope for VmScope {}
+use vm_contract::permissions::vm::{self as permissions, InstanceScope, PoolScope};
 
-#[lockgate::capability("vm")]
-mod permissions {
-    use super::VmScope;
-    use lockgate::{Permission, ScopedPermission};
+#[lockgate::capability("admin")]
+mod admin_permissions {
+    use lockgate::Permission;
 
-    pub const CREATE: ScopedPermission<VmScope> = ScopedPermission::new("create");
-    pub const EXEC: ScopedPermission<VmScope> = ScopedPermission::new("exec");
-    pub const LIST_POOLS: Permission = Permission::new("list-pools");
     pub const RESTART: Permission = Permission::new("restart");
     pub const STATUS: Permission = Permission::new("status");
 }
 
-#[derive(Clone)]
-struct Session {
-    owner: String,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MockVm {
+    pool: String,
+    created_by: Option<String>,
+}
+
+impl ScopedResource<InstanceScope> for MockVm {
+    fn scopes_for(&self, subject: &PluginSubject<'_>) -> Vec<InstanceScope> {
+        let mut scopes = vec![InstanceScope::Pool(self.pool.clone())];
+        if self.created_by.as_deref() == Some(subject.plugin_id()) {
+            scopes.push(InstanceScope::CreatedByCaller);
+        }
+        scopes
+    }
 }
 
 #[derive(Clone)]
-struct CallData {
-    vm: String,
-    session: Session,
+struct MockPool(String);
+
+impl ScopedResource<PoolScope> for MockPool {
+    fn scopes_for(&self, _subject: &PluginSubject<'_>) -> Vec<PoolScope> {
+        vec![PoolScope::Named(self.0.clone())]
+    }
+}
+
+#[derive(Debug)]
+struct ResolveError;
+
+#[derive(Default)]
+struct BodyCalls {
+    create: AtomicUsize,
+    exec: AtomicUsize,
+    destroy: AtomicUsize,
+    list_pools: AtomicUsize,
+    protocol_version: AtomicUsize,
+}
+
+struct VmState {
+    pools: BTreeSet<String>,
+    vms: Mutex<BTreeMap<String, MockVm>>,
+    next_vm: AtomicUsize,
+    pool_resolutions: AtomicUsize,
+    vm_resolutions: AtomicUsize,
+    body_calls: BodyCalls,
 }
 
 #[derive(Clone)]
-struct Imports;
+struct Imports {
+    state: Arc<VmState>,
+}
+
+impl Default for Imports {
+    fn default() -> Self {
+        let vms = [
+            (
+                "gpu-a",
+                MockVm {
+                    pool: "gpu".to_owned(),
+                    created_by: Some("plugin-a".to_owned()),
+                },
+            ),
+            (
+                "gpu-b",
+                MockVm {
+                    pool: "gpu".to_owned(),
+                    created_by: Some("plugin-b".to_owned()),
+                },
+            ),
+            (
+                "cpu-b",
+                MockVm {
+                    pool: "cpu".to_owned(),
+                    created_by: Some("plugin-b".to_owned()),
+                },
+            ),
+        ]
+        .into_iter()
+        .map(|(id, vm)| (id.to_owned(), vm))
+        .collect();
+        Self {
+            state: Arc::new(VmState {
+                pools: ["cpu".to_owned(), "gpu".to_owned()].into_iter().collect(),
+                vms: Mutex::new(vms),
+                next_vm: AtomicUsize::new(1),
+                pool_resolutions: AtomicUsize::new(0),
+                vm_resolutions: AtomicUsize::new(0),
+                body_calls: BodyCalls::default(),
+            }),
+        }
+    }
+}
+
+impl ResolveScopedResource<PoolScope, String> for Imports {
+    type Resource = MockPool;
+    type Error = ResolveError;
+
+    async fn resolve_scoped_resource<'a>(
+        &'a self,
+        _subject: &'a PluginSubject<'_>,
+        pool: &'a String,
+    ) -> Result<Self::Resource, Self::Error> {
+        self.state.pool_resolutions.fetch_add(1, Ordering::SeqCst);
+        self.state
+            .pools
+            .contains(pool)
+            .then(|| MockPool(pool.clone()))
+            .ok_or(ResolveError)
+    }
+}
+
+impl ResolveScopedResource<InstanceScope, String> for Imports {
+    type Resource = MockVm;
+    type Error = ResolveError;
+
+    async fn resolve_scoped_resource<'a>(
+        &'a self,
+        _subject: &'a PluginSubject<'_>,
+        vm: &'a String,
+    ) -> Result<Self::Resource, Self::Error> {
+        self.state.vm_resolutions.fetch_add(1, Ordering::SeqCst);
+        self.state
+            .vms
+            .lock()
+            .unwrap()
+            .get(vm)
+            .cloned()
+            .ok_or(ResolveError)
+    }
+}
 
 lockgate::host_bindings!({
     path: "tests/data/guarded_bindings",
     world: "fixture",
     imports: Imports,
-    data: CallData,
+    data: (),
 });
+
+use guest::HostExt;
+
+impl From<ResolveError> for vm::VmError {
+    fn from(_: ResolveError) -> Self {
+        Self::NotFound
+    }
+}
+
+impl From<PermissionDenied> for vm::VmError {
+    fn from(_: PermissionDenied) -> Self {
+        Self::Denied
+    }
+}
+
+impl From<PermissionDenied> for admin::AdminError {
+    fn from(_: PermissionDenied) -> Self {
+        Self::Denied
+    }
+}
 
 #[lockgate::guarded]
 impl vm::Host for Imports {
     #[lockgate::requires(permission = permissions::CREATE, target = pool)]
-    async fn create(&mut self, _cx: HostCtx<'_, CallData>, pool: String) -> String {
-        pool
+    async fn create(&mut self, cx: HostCtx<'_, ()>, pool: String) -> Result<String, vm::VmError> {
+        self.state.body_calls.create.fetch_add(1, Ordering::SeqCst);
+        let sequence = self.state.next_vm.fetch_add(1, Ordering::SeqCst);
+        let id = format!("{pool}-{sequence}");
+        self.state.vms.lock().unwrap().insert(
+            id.clone(),
+            MockVm {
+                pool,
+                created_by: Some(cx.subject().plugin_id().to_owned()),
+            },
+        );
+        Ok(id)
     }
 
-    #[lockgate::requires(permission = permissions::EXEC, target = cx.data().session.owner)]
-    async fn exec(&mut self, cx: HostCtx<'_, CallData>, vm: String, command: String) -> String {
-        let _ = (&cx.data().vm, &cx.data().session.owner);
-        format!("{vm}:{command}")
+    #[lockgate::requires(permission = permissions::EXEC, target = vm)]
+    async fn exec(
+        &mut self,
+        _cx: HostCtx<'_, ()>,
+        vm: String,
+        command: String,
+    ) -> Result<String, vm::VmError> {
+        self.state.body_calls.exec.fetch_add(1, Ordering::SeqCst);
+        Ok(format!("{vm}:{command}"))
+    }
+
+    #[lockgate::requires(permission = permissions::DESTROY, target = vm)]
+    async fn destroy(&mut self, _cx: HostCtx<'_, ()>, vm: String) -> Result<(), vm::VmError> {
+        self.state.body_calls.destroy.fetch_add(1, Ordering::SeqCst);
+        self.state.vms.lock().unwrap().remove(&vm);
+        Ok(())
     }
 
     #[lockgate::requires(permission = permissions::LIST_POOLS)]
-    async fn list_pools(&mut self, _cx: HostCtx<'_, CallData>) -> Vec<String> {
-        Vec::new()
+    async fn list_pools(&mut self, _cx: HostCtx<'_, ()>) -> Result<Vec<String>, vm::VmError> {
+        self.state
+            .body_calls
+            .list_pools
+            .fetch_add(1, Ordering::SeqCst);
+        Ok(self.state.pools.iter().cloned().collect())
     }
 
     #[lockgate::no_capability_required(reason = "returns only a static protocol version")]
-    async fn protocol_version(&mut self, _cx: HostCtx<'_, CallData>) -> String {
+    async fn protocol_version(&mut self, _cx: HostCtx<'_, ()>) -> String {
+        self.state
+            .body_calls
+            .protocol_version
+            .fetch_add(1, Ordering::SeqCst);
         "1".to_owned()
     }
 }
 
 #[lockgate::guarded]
 impl admin::Host for Imports {
-    #[lockgate::requires(permission = permissions::RESTART)]
-    async fn restart(&mut self, _cx: HostCtx<'_, CallData>) {}
+    #[lockgate::requires(permission = admin_permissions::RESTART)]
+    async fn restart(&mut self, _cx: HostCtx<'_, ()>) -> Result<(), admin::AdminError> {
+        Ok(())
+    }
 
-    #[lockgate::requires(permission = permissions::STATUS)]
-    async fn status(&mut self, _cx: HostCtx<'_, CallData>) {}
+    #[lockgate::requires(permission = admin_permissions::STATUS)]
+    async fn status(&mut self, _cx: HostCtx<'_, ()>) -> Result<(), admin::AdminError> {
+        Ok(())
+    }
 }
 
 #[test]
@@ -92,14 +266,15 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
     assert_eq!(interface.version(), Some("1.2.3"));
 
     let methods = <Imports as vm::Host>::__LOCKGATE_POLICY_METHODS;
-    assert_eq!(methods.len(), 4);
+    assert_eq!(methods.len(), 5);
     for method in methods {
         assert_eq!(method.interface(), interface);
     }
     assert_eq!(methods[0].method().wit_name(), "create");
     assert_eq!(methods[1].method().wit_name(), "exec");
-    assert_eq!(methods[2].method().wit_name(), "list-pools");
-    assert_eq!(methods[3].method().wit_name(), "protocol-version");
+    assert_eq!(methods[2].method().wit_name(), "destroy");
+    assert_eq!(methods[3].method().wit_name(), "list-pools");
+    assert_eq!(methods[4].method().wit_name(), "protocol-version");
 
     let create = methods[0].classification();
     let permission = create.permission().unwrap();
@@ -115,9 +290,17 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
         (permission.capability(), permission.permission()),
         ("vm", "exec")
     );
-    assert_eq!(exec.target(), Some("cx.data().session.owner"));
+    assert_eq!(exec.target(), Some("vm"));
 
-    let list = methods[2].classification();
+    let destroy = methods[2].classification();
+    let permission = destroy.permission().unwrap();
+    assert_eq!(
+        (permission.capability(), permission.permission()),
+        ("vm", "destroy")
+    );
+    assert_eq!(destroy.target(), Some("vm"));
+
+    let list = methods[3].classification();
     let permission = list.permission().unwrap();
     assert_eq!(
         (permission.capability(), permission.permission()),
@@ -126,7 +309,7 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
     assert_eq!(list.target(), None);
 
     assert_eq!(
-        methods[3].classification().reason(),
+        methods[4].classification().reason(),
         Some("returns only a static protocol version")
     );
 
@@ -137,10 +320,17 @@ fn guarded_impl_fills_complete_typed_method_metadata() {
             .iter()
             .map(|method| {
                 let permission = method.classification().permission().unwrap();
-                (method.method().wit_name(), permission.permission())
+                (
+                    method.method().wit_name(),
+                    permission.capability(),
+                    permission.permission(),
+                )
             })
             .collect::<Vec<_>>(),
-        [("restart", "restart"), ("status", "status")]
+        [
+            ("restart", "admin", "restart"),
+            ("status", "admin", "status")
+        ]
     );
 }
 
@@ -197,7 +387,7 @@ fn application_host_import_cannot_collide_with_the_reserved_framework_namespace(
 
 #[tokio::test]
 async fn preparation_rejects_an_unregistered_guard_permission() {
-    let mut builder = lockgate::HostBuilder::new(Imports).unwrap();
+    let mut builder = lockgate::HostBuilder::new(Imports::default()).unwrap();
     let error = builder
         .prepare("unused", b"not inspected", PluginConfig::default())
         .await
@@ -208,13 +398,15 @@ async fn preparation_rejects_an_unregistered_guard_permission() {
             ref atom,
             ref interface,
             method: "restart",
-        } if atom.to_string() == "vm.restart" && interface == "test:guarded/admin@1.2.3"
+        } if atom.to_string() == "admin.restart" && interface == "test:guarded/admin@1.2.3"
     ));
     assert!(error.to_string().contains("test:guarded/admin@1.2.3"));
 
-    let mut registered = lockgate::HostBuilder::new(Imports)
+    let mut registered = lockgate::HostBuilder::new(Imports::default())
         .unwrap()
         .register::<permissions::Contract>()
+        .unwrap()
+        .register::<admin_permissions::Contract>()
         .unwrap();
     let error = registered
         .prepare("unused", b"not inspected", PluginConfig::default())
@@ -250,26 +442,20 @@ fn fixture(wit: &str, needs: &NeedsManifest) -> Vec<u8> {
     )
 }
 
-fn host_builder() -> lockgate::HostBuilder<CallData> {
-    lockgate::HostBuilder::new(Imports)
+fn host_builder() -> lockgate::HostBuilder<()> {
+    lockgate::HostBuilder::new(Imports::default())
         .unwrap()
         .register::<permissions::Contract>()
         .unwrap()
+        .register::<admin_permissions::Contract>()
+        .unwrap()
 }
 
-fn startup_context() -> InvocationCtx<CallData> {
-    InvocationCtx::new(
-        CallData {
-            vm: "startup-vm".to_owned(),
-            session: Session {
-                owner: "startup-owner".to_owned(),
-            },
-        },
-        lockgate::BudgetClass::Bounded { fuel: 1_000_000 },
-    )
+fn startup_context() -> InvocationCtx<()> {
+    InvocationCtx::bounded(1_000_000)
 }
 
-async fn admit(builder: &mut lockgate::HostBuilder<CallData>, bytes: &[u8]) {
+async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
     let prepared = builder
         .prepare(PLUGIN_ID, bytes, PluginConfig::default())
         .await
@@ -286,8 +472,8 @@ async fn admit(builder: &mut lockgate::HostBuilder<CallData>, bytes: &[u8]) {
         .unwrap();
 }
 
-const ADMIN_IMPORT: &str = "package test:guarded@1.2.3; interface admin { restart: func(); status: func(); } world fixture { import admin; }";
-const MIXED_IMPORT: &str = "package test:guarded@1.2.3; interface vm { create: func(pool: string) -> string; exec: func(vm: string, command: string) -> string; list-pools: func() -> list<string>; protocol-version: func() -> string; } world fixture { import vm; }";
+const ADMIN_IMPORT: &str = "package test:guarded@1.2.3; interface admin { enum admin-error { denied } restart: func() -> result<_, admin-error>; status: func() -> result<_, admin-error>; } world fixture { import admin; }";
+const MIXED_IMPORT: &str = "package test:guarded@1.2.3; interface vm { enum vm-error { not-found, denied } create: func(pool: string) -> result<string, vm-error>; exec: func(vm: string, command: string) -> result<string, vm-error>; destroy: func(vm: string) -> result<_, vm-error>; list-pools: func() -> result<list<string>, vm-error>; protocol-version: func() -> string; } world fixture { import vm; }";
 const BASELINE_IMPORT: &str = "package lockgate:config; interface settings { enum get-error { not-ready } get-json: func() -> result<string, get-error>; } world fixture { import settings; }";
 const NO_IMPORTS: &str = "package test:no-imports; world fixture {}";
 
@@ -307,18 +493,18 @@ async fn all_guarded_import_without_a_mapped_need_is_a_manifest_mismatch() {
             ref permissions,
         } if interface == "test:guarded/admin@1.2.3"
             && permissions.iter().map(ToString::to_string).collect::<Vec<_>>()
-                == ["vm.restart", "vm.status"]
+                == ["admin.restart", "admin.status"]
     ));
     let message = error.to_string();
     assert!(message.contains("test:guarded/admin@1.2.3"));
-    assert!(message.contains("vm.restart"));
-    assert!(message.contains("vm.status"));
+    assert!(message.contains("admin.restart"));
+    assert!(message.contains("admin.status"));
     assert!(message.contains("required or optional need"));
 }
 
 #[tokio::test]
 async fn either_required_or_optional_mapped_need_wires_an_all_guarded_import() {
-    let atom: AtomKey = "vm.restart".parse().unwrap();
+    let atom: AtomKey = "admin.restart".parse().unwrap();
     for needs in [
         NeedsManifest::new(vec![NeedEntry::flag(atom.clone())], vec![]).unwrap(),
         NeedsManifest::new(vec![], vec![NeedEntry::flag(atom.clone())]).unwrap(),
@@ -342,10 +528,166 @@ async fn framework_settings_import_stays_on_its_dedicated_linker_path() {
 
 #[tokio::test]
 async fn declared_need_without_a_matching_import_still_admits() {
-    let atom: AtomKey = "vm.restart".parse().unwrap();
+    let atom: AtomKey = "admin.restart".parse().unwrap();
     let needs = NeedsManifest::new(vec![NeedEntry::flag(atom)], vec![]).unwrap();
     let bytes = fixture(NO_IMPORTS, &needs);
     admit(&mut host_builder(), &bytes).await;
+}
+
+fn runtime_fixture(plugin_id: &str, needs: &NeedsManifest) -> Vec<u8> {
+    let metadata = PluginMetadata::new(plugin_id, "Guard enforcement fixture", "1.0").unwrap();
+    common::policy_fixture(&common::GUARDED_BINDINGS_FIXTURE, &metadata, needs)
+}
+
+fn scoped_need(atom: &str, scope: &str) -> NeedEntry {
+    NeedEntry::scoped(
+        atom.parse().unwrap(),
+        vec![ScopeRef::literal(scope).unwrap()],
+    )
+    .unwrap()
+}
+
+async fn runtime_host(
+    imports: Imports,
+    plugin_id: &str,
+    needs: &NeedsManifest,
+) -> (lockgate::Host<()>, lockgate::PluginHandle) {
+    let mut builder = lockgate::HostBuilder::new(imports)
+        .unwrap()
+        .register::<permissions::Contract>()
+        .unwrap()
+        .register::<admin_permissions::Contract>()
+        .unwrap();
+    let bytes = runtime_fixture(plugin_id, needs);
+    let prepared = builder
+        .prepare(plugin_id, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let acceptance = prepared.accept_all();
+    let plugin = builder
+        .admit(
+            prepared,
+            acceptance,
+            RuntimeLimits::default(),
+            startup_context(),
+        )
+        .await
+        .unwrap();
+    (builder.finish(), plugin)
+}
+
+fn call() -> InvocationCtx<()> {
+    InvocationCtx::bounded(25_000_000)
+}
+
+#[tokio::test]
+async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
+    let imports = Imports::default();
+    let needs = NeedsManifest::new(
+        vec![
+            scoped_need("vm.create", "gpu"),
+            scoped_need("vm.exec", "pool:gpu"),
+        ],
+        vec![],
+    )
+    .unwrap();
+    let (host, plugin) = runtime_host(imports.clone(), "pool-plugin", &needs).await;
+    let guest = host.guest(&plugin).unwrap();
+
+    let vm = guest.create(call(), "gpu").await.unwrap();
+    assert_eq!(vm, "ok:gpu-1");
+    assert_eq!(imports.state.pool_resolutions.load(Ordering::SeqCst), 1);
+    assert_eq!(imports.state.body_calls.create.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        guest.exec(call(), "gpu-1", "nvidia-smi").await.unwrap(),
+        "ok:gpu-1:nvidia-smi"
+    );
+    assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 1);
+    assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
+
+    assert_eq!(guest.create(call(), "cpu").await.unwrap(), "denied");
+    assert_eq!(guest.create(call(), "missing").await.unwrap(), "not-found");
+    assert_eq!(imports.state.pool_resolutions.load(Ordering::SeqCst), 3);
+    assert_eq!(imports.state.body_calls.create.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        guest.exec(call(), "cpu-b", "hostname").await.unwrap(),
+        "denied"
+    );
+    assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 2);
+    assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn created_by_caller_guards_cover_only_the_callers_own_vms() {
+    let imports = Imports::default();
+    let needs = NeedsManifest::new(
+        vec![
+            scoped_need("vm.exec", "created-by-caller"),
+            scoped_need("vm.destroy", "created-by-caller"),
+        ],
+        vec![],
+    )
+    .unwrap();
+    let (host, plugin) = runtime_host(imports.clone(), "plugin-a", &needs).await;
+    let guest = host.guest(&plugin).unwrap();
+
+    assert_eq!(
+        guest.exec(call(), "gpu-a", "uptime").await.unwrap(),
+        "ok:gpu-a:uptime"
+    );
+    assert_eq!(
+        guest.exec(call(), "gpu-b", "uptime").await.unwrap(),
+        "denied"
+    );
+    assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
+
+    assert_eq!(guest.destroy(call(), "gpu-a").await.unwrap(), "ok");
+    assert_eq!(guest.destroy(call(), "gpu-b").await.unwrap(), "denied");
+    assert_eq!(imports.state.body_calls.destroy.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
+    let denied_imports = Imports::default();
+    let (host, plugin) =
+        runtime_host(denied_imports.clone(), "no-grants", &NeedsManifest::empty()).await;
+    let guest = host.guest(&plugin).unwrap();
+    assert_eq!(guest.list_pools(call()).await.unwrap(), "denied");
+    assert_eq!(
+        denied_imports
+            .state
+            .body_calls
+            .list_pools
+            .load(Ordering::SeqCst),
+        0
+    );
+    assert_eq!(guest.protocol_version(call()).await.unwrap(), "1");
+    assert_eq!(
+        denied_imports
+            .state
+            .body_calls
+            .protocol_version
+            .load(Ordering::SeqCst),
+        1
+    );
+
+    let allowed_imports = Imports::default();
+    let needs = NeedsManifest::new(
+        vec![NeedEntry::flag("vm.list-pools".parse().unwrap())],
+        vec![],
+    )
+    .unwrap();
+    let (host, plugin) = runtime_host(allowed_imports.clone(), "list-plugin", &needs).await;
+    let guest = host.guest(&plugin).unwrap();
+    assert_eq!(guest.list_pools(call()).await.unwrap(), "cpu,gpu");
+    assert_eq!(
+        allowed_imports
+            .state
+            .body_calls
+            .list_pools
+            .load(Ordering::SeqCst),
+        1
+    );
 }
 
 mod mismatched_slot {
@@ -372,16 +714,33 @@ mod mismatched_slot {
                 "construction validation fixture",
             )];
 
-        async fn create(&mut self, _cx: HostCtx<'_, Data>, pool: String) -> String {
-            pool
+        async fn create(
+            &mut self,
+            _cx: HostCtx<'_, Data>,
+            pool: String,
+        ) -> Result<String, vm::VmError> {
+            Ok(pool)
         }
 
-        async fn exec(&mut self, _cx: HostCtx<'_, Data>, vm: String, command: String) -> String {
-            format!("{vm}:{command}")
+        async fn exec(
+            &mut self,
+            _cx: HostCtx<'_, Data>,
+            vm: String,
+            command: String,
+        ) -> Result<String, vm::VmError> {
+            Ok(format!("{vm}:{command}"))
         }
 
-        async fn list_pools(&mut self, _cx: HostCtx<'_, Data>) -> Vec<String> {
-            Vec::new()
+        async fn destroy(
+            &mut self,
+            _cx: HostCtx<'_, Data>,
+            _vm: String,
+        ) -> Result<(), vm::VmError> {
+            Ok(())
+        }
+
+        async fn list_pools(&mut self, _cx: HostCtx<'_, Data>) -> Result<Vec<String>, vm::VmError> {
+            Ok(Vec::new())
         }
 
         async fn protocol_version(&mut self, _cx: HostCtx<'_, Data>) -> String {
@@ -407,16 +766,33 @@ mod unguarded {
     });
 
     impl vm::Host for Imports {
-        async fn create(&mut self, _cx: HostCtx<'_, Data>, pool: String) -> String {
-            pool
+        async fn create(
+            &mut self,
+            _cx: HostCtx<'_, Data>,
+            pool: String,
+        ) -> Result<String, vm::VmError> {
+            Ok(pool)
         }
 
-        async fn exec(&mut self, _cx: HostCtx<'_, Data>, vm: String, command: String) -> String {
-            format!("{vm}:{command}")
+        async fn exec(
+            &mut self,
+            _cx: HostCtx<'_, Data>,
+            vm: String,
+            command: String,
+        ) -> Result<String, vm::VmError> {
+            Ok(format!("{vm}:{command}"))
         }
 
-        async fn list_pools(&mut self, _cx: HostCtx<'_, Data>) -> Vec<String> {
-            Vec::new()
+        async fn destroy(
+            &mut self,
+            _cx: HostCtx<'_, Data>,
+            _vm: String,
+        ) -> Result<(), vm::VmError> {
+            Ok(())
+        }
+
+        async fn list_pools(&mut self, _cx: HostCtx<'_, Data>) -> Result<Vec<String>, vm::VmError> {
+            Ok(Vec::new())
         }
 
         async fn protocol_version(&mut self, _cx: HostCtx<'_, Data>) -> String {

@@ -1,0 +1,41 @@
+error[E0277]: the trait bound `WrongResource: ScopedResource<TargetScope>` is not satisfied
+  --> tests/ui/guarded/wrong_scoped_resource.rs:27:21
+   |
+27 |     type Resource = WrongResource;
+   |                     ^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `ScopedResource<TargetScope>` is not implemented for `WrongResource`
+      but trait `ScopedResource<OtherScope>` is implemented for it
+  --> tests/ui/guarded/wrong_scoped_resource.rs:20:1
+   |
+20 | impl ScopedResource<OtherScope> for WrongResource {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `OtherScope`, found `TargetScope`
+note: required by a bound in `lockgate::ResolveScopedResource::Resource`
+  --> src/policy/resources.rs
+   |
+   |     type Resource: ScopedResource<S> + Send;
+   |                    ^^^^^^^^^^^^^^^^^ required by this bound in `ResolveScopedResource::Resource`
+
+error[E0277]: the trait bound `WrongResource: ScopedResource<TargetScope>` is not satisfied
+  --> tests/ui/guarded/wrong_scoped_resource.rs:39:1
+   |
+39 | #[lockgate::guarded]
+   | ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `ScopedResource<TargetScope>` is not implemented for `WrongResource`
+      but trait `ScopedResource<OtherScope>` is implemented for it
+  --> tests/ui/guarded/wrong_scoped_resource.rs:20:1
+   |
+20 | impl ScopedResource<OtherScope> for WrongResource {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `OtherScope`, found `TargetScope`
+note: required by a bound in `HostCtx::<'a, S>::require_scoped`
+  --> src/lib.rs
+   |
+   |     pub fn require_scoped<T, R>(
+   |            -------------- required by a bound in this associated function
+...
+   |         R: ScopedResource<T> + ?Sized,
+   |            ^^^^^^^^^^^^^^^^^ required by this bound in `HostCtx::<'a, S>::require_scoped`
+   = note: this error originates in the attribute macro `lockgate::guarded` (in Nightly builds, run with -Z macro-backtrace for more info)

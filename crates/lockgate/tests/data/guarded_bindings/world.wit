@@ -1,22 +1,46 @@
 package test:guarded@1.2.3;
 
 interface vm {
-  create: func(pool: string) -> string;
-  exec: func(vm: string, command: string) -> string;
-  list-pools: func() -> list<string>;
+  enum vm-error {
+    not-found,
+    denied,
+  }
+
+  create: func(pool: string) -> result<string, vm-error>;
+  exec: func(vm: string, command: string) -> result<string, vm-error>;
+  destroy: func(vm: string) -> result<_, vm-error>;
+  list-pools: func() -> result<list<string>, vm-error>;
   protocol-version: func() -> string;
 }
 
 interface admin {
-  restart: func();
-  status: func();
+  enum admin-error {
+    denied,
+  }
+
+  restart: func() -> result<_, admin-error>;
+  status: func() -> result<_, admin-error>;
+}
+
+interface guest {
+  create: func(pool: string) -> string;
+  exec: func(vm: string, command: string) -> string;
+  destroy: func(vm: string) -> string;
+  list-pools: func() -> string;
+  protocol-version: func() -> string;
 }
 
 world fixture {
   import vm;
   import admin;
+  export guest;
 }
 
 world vm-only {
   import vm;
+}
+
+world vm-runtime {
+  import vm;
+  export guest;
 }

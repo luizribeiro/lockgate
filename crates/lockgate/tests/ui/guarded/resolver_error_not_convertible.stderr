@@ -1,0 +1,24 @@
+error[E0277]: `?` couldn't convert the error to `support::Error`
+  --> tests/ui/guarded/resolver_error_not_convertible.rs:23:20
+   |
+23 | #[lockgate::guarded]
+   | -------------------^
+   | |                  |
+   | |                  the trait `From<ResolverFailure>` is not implemented for `support::Error`
+   | this can't be annotated with `?` because it has type `Result<_, ResolverFailure>`
+   |
+note: `support::Error` needs to implement `From<ResolverFailure>`
+  --> tests/ui/guarded/support.rs
+   |
+   | pub struct Error;
+   | ^^^^^^^^^^^^^^^^
+   = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+help: `support::Error` implements trait `From<T>`
+  --> tests/ui/guarded/support.rs
+   |
+   | impl From<Infallible> for Error {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `From<Infallible>`
+...
+   | impl From<PermissionDenied> for Error {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `From<lockgate::PermissionDenied>`
+   = note: this error originates in the attribute macro `lockgate::guarded` (in Nightly builds, run with -Z macro-backtrace for more info)

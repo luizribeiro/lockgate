@@ -1049,6 +1049,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-guarded-bindings-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin",
+]
+
+[[package]]
 name = "lockgate-host-bindings-fixture"
 version = "0.1.0"
 dependencies = [

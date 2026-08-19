@@ -194,7 +194,7 @@ pub mod __private {
     pub use crate::policy::{
         HostImportPolicyError, HostImportPolicyMetadata, InterfaceIdentity, MethodClassification,
         MethodIdentity, PolicyMethod, PolicyPermission, ValidatedInterfacePolicy,
-        validate_interface_policy,
+        resolve_scoped_resource, validate_interface_policy,
     };
     pub use lockgate_policy;
     pub use wasmtime;

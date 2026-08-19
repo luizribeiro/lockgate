@@ -4,7 +4,21 @@ impl vm::Host for Imports {
         cx: lockgate::HostCtx<'_, Data>,
         request: Request,
     ) -> Result<(), Error> {
-        self.execute(cx, request).await
+        let __lockgate_subject = cx.subject();
+        let __lockgate_target = &(request.id);
+        let __lockgate_resource = ::lockgate::__private::resolve_scoped_resource(
+                &*self,
+                &__lockgate_subject,
+                __lockgate_target,
+                permissions::EXEC,
+            )
+            .await?;
+        cx.require_scoped(permissions::EXEC, &__lockgate_resource)?;
+        { self.execute(cx, request).await }
+    }
+    async fn list(&mut self, cx: lockgate::HostCtx<'_, Data>) -> Result<(), Error> {
+        cx.require(permissions::LIST)?;
+        { self.list(cx).await }
     }
     async fn version(&mut self, _cx: lockgate::HostCtx<'_, Data>) -> String {
         "1".to_owned()
@@ -15,6 +29,11 @@ impl vm::Host for Imports {
             vm::__LockgateBinding::__LOCKGATE_METHOD_EXEC,
             permissions::EXEC,
             ::core::stringify!(request.id),
+        ),
+        ::lockgate::__private::PolicyMethod::__requires_unscoped(
+            vm::__LockgateBinding::INTERFACE,
+            vm::__LockgateBinding::__LOCKGATE_METHOD_LIST,
+            permissions::LIST,
         ),
         ::lockgate::__private::PolicyMethod::__no_capability_required(
             vm::__LockgateBinding::INTERFACE,

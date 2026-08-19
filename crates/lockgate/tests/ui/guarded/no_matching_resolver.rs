@@ -3,14 +3,15 @@
 mod support;
 
 use lockgate::HostCtx;
-use support::{Data, Imports, Target, vm};
+use support::{Data, Imports, Target, permissions, vm};
 
 #[lockgate::guarded]
 impl vm::Host for Imports {
+    #[lockgate::requires(permission = permissions::EXEC, target = target.id)]
     async fn action(
         &mut self,
         _cx: HostCtx<'_, Data>,
-        _target: Target,
+        target: Target,
     ) -> Result<(), support::Error> {
         Ok(())
     }

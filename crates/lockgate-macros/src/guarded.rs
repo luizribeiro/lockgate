@@ -41,35 +41,73 @@ pub(super) fn expand(
         };
         let classification = take_classification(&mut method.attrs, &method.sig.ident)?;
         let method_identity = super::method_identity_const_name(&method.sig.ident);
-        let entry = match classification {
+        let (entry, guard) = match classification {
             Classification::Requires { permission, target } => match target {
                 Some(target) => {
                     validate_target(&target, &method.sig.inputs)?;
-                    quote! {
-                        #lockgate::__private::PolicyMethod::__requires_scoped(
-                            #binding::INTERFACE,
-                            #binding::#method_identity,
-                            #permission,
-                            ::core::stringify!(#target),
-                        )
-                    }
+                    let context = context_parameter(&method.sig.inputs, &method.sig.ident)?;
+                    let identifiers = GuardIdentifiers::new(&method.sig.inputs);
+                    let subject = &identifiers.subject;
+                    let target_binding = &identifiers.target;
+                    let resource = &identifiers.resource;
+                    (
+                        quote! {
+                            #lockgate::__private::PolicyMethod::__requires_scoped(
+                                #binding::INTERFACE,
+                                #binding::#method_identity,
+                                #permission,
+                                ::core::stringify!(#target),
+                            )
+                        },
+                        Some(quote! {
+                            let #subject = #context.subject();
+                            let #target_binding = &(#target);
+                            let #resource =
+                                #lockgate::__private::resolve_scoped_resource(
+                                    &*self,
+                                    &#subject,
+                                    #target_binding,
+                                    #permission,
+                                )
+                                .await?;
+                            #context.require_scoped(#permission, &#resource)?;
+                        }),
+                    )
                 }
-                None => quote! {
-                    #lockgate::__private::PolicyMethod::__requires_unscoped(
+                None => {
+                    let context = context_parameter(&method.sig.inputs, &method.sig.ident)?;
+                    (
+                        quote! {
+                            #lockgate::__private::PolicyMethod::__requires_unscoped(
+                                #binding::INTERFACE,
+                                #binding::#method_identity,
+                                #permission,
+                            )
+                        },
+                        Some(quote! {
+                            #context.require(#permission)?;
+                        }),
+                    )
+                }
+            },
+            Classification::NoCapabilityRequired { reason } => (
+                quote! {
+                    #lockgate::__private::PolicyMethod::__no_capability_required(
                         #binding::INTERFACE,
                         #binding::#method_identity,
-                        #permission,
+                        #reason,
                     )
                 },
-            },
-            Classification::NoCapabilityRequired { reason } => quote! {
-                #lockgate::__private::PolicyMethod::__no_capability_required(
-                    #binding::INTERFACE,
-                    #binding::#method_identity,
-                    #reason,
-                )
-            },
+                None,
+            ),
         };
+        if let Some(guard) = guard {
+            let body = &method.block;
+            method.block = syn::parse2(quote!({
+                #guard
+                #body
+            }))?;
+        }
         policy_methods.push(entry);
     }
 
@@ -79,6 +117,79 @@ pub(super) fn expand(
         ];
     });
     Ok(quote!(#implementation))
+}
+
+struct GuardIdentifiers {
+    subject: Ident,
+    target: Ident,
+    resource: Ident,
+}
+
+impl GuardIdentifiers {
+    fn new(inputs: &Punctuated<FnArg, Token![,]>) -> Self {
+        let mut bindings = PatternBindings::default();
+        for input in inputs {
+            if let FnArg::Typed(input) = input {
+                bindings.visit_pat(&input.pat);
+            }
+        }
+        let subject = fresh_identifier("__lockgate_subject", &mut bindings.names);
+        let target = fresh_identifier("__lockgate_target", &mut bindings.names);
+        let resource = fresh_identifier("__lockgate_resource", &mut bindings.names);
+        Self {
+            subject,
+            target,
+            resource,
+        }
+    }
+}
+
+fn fresh_identifier(base: &str, bindings: &mut BTreeSet<String>) -> Ident {
+    let mut suffix = 0;
+    loop {
+        let candidate = if suffix == 0 {
+            base.to_owned()
+        } else {
+            format!("{base}_{suffix}")
+        };
+        if bindings.insert(candidate.clone()) {
+            return Ident::new(&candidate, Span::mixed_site());
+        }
+        suffix += 1;
+    }
+}
+
+fn context_parameter(inputs: &Punctuated<FnArg, Token![,]>, method: &Ident) -> syn::Result<Ident> {
+    let mut context = None;
+    for input in inputs {
+        let FnArg::Typed(input) = input else {
+            continue;
+        };
+        if !is_host_context(&input.ty) {
+            continue;
+        }
+        let Pat::Ident(pattern) = input.pat.as_ref() else {
+            return Err(syn::Error::new_spanned(
+                &input.pat,
+                format!(
+                    "host method `{method}` must bind its `HostCtx` parameter to one identifier"
+                ),
+            ));
+        };
+        if context.is_some() {
+            return Err(syn::Error::new_spanned(
+                &input.ty,
+                format!("host method `{method}` has more than one `HostCtx` parameter"),
+            ));
+        }
+        context = Some(pattern.ident.clone());
+    }
+    context.ok_or_else(|| {
+        syn::Error::new_spanned(
+            method,
+            format!("host method `{method}` must have a generated `HostCtx` parameter"),
+        )
+    })
 }
 
 enum Classification {
@@ -427,6 +538,11 @@ mod tests {
                     request: Request,
                 ) -> Result<(), Error> {
                     self.execute(cx, request).await
+                }
+
+                #[lockgate::requires(permission = permissions::LIST)]
+                async fn list(&mut self, cx: lockgate::HostCtx<'_, Data>) -> Result<(), Error> {
+                    self.list(cx).await
                 }
 
                 #[lockgate::no_capability_required(reason = "static protocol version")]

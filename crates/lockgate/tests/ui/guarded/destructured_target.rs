@@ -8,7 +8,13 @@ use support::{Data, Imports, Target, permissions, vm};
 #[lockgate::guarded]
 impl vm::Host for Imports {
     #[lockgate::requires(permission = permissions::EXEC, target = id)]
-    async fn action(&mut self, _cx: HostCtx<'_, Data>, Target { id }: Target) {}
+    async fn action(
+        &mut self,
+        _cx: HostCtx<'_, Data>,
+        Target { id }: Target,
+    ) -> Result<(), support::Error> {
+        Ok(())
+    }
 }
 
 fn main() {}

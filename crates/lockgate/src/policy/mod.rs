@@ -20,5 +20,7 @@ pub use resolution::{
     InvalidScopeValue, JsonValueKind, NeedValueKind, ScopeReference, ScopeResolutionError,
 };
 pub(crate) use resolution::{ResolvedNeeds, resolve_needs};
+#[doc(hidden)]
+pub use resources::resolve_scoped_resource;
 pub(crate) use resources::scoped_access_allowed;
 pub use resources::{PermissionDenied, PluginSubject, ResolveScopedResource, ScopedResource};

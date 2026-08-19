@@ -132,6 +132,23 @@ where
     ) -> impl Future<Output = Result<Self::Resource, Self::Error>> + Send + 'a;
 }
 
+/// Calls an application resolver with the scope type selected by a permission.
+#[doc(hidden)]
+pub async fn resolve_scoped_resource<'a, S, A, R>(
+    resolver: &'a R,
+    subject: &'a PluginSubject<'_>,
+    argument: &'a A,
+    _permission: ScopedPermission<S>,
+) -> Result<R::Resource, R::Error>
+where
+    S: Scope,
+    <S as FromStr>::Err: Into<ScopeError>,
+    A: ?Sized + Sync,
+    R: ResolveScopedResource<S, A> + ?Sized,
+{
+    resolver.resolve_scoped_resource(subject, argument).await
+}
+
 /// Applies the single scoped-authorization relation to concrete memberships.
 ///
 /// Access is allowed exactly when some effective grant contains some resource
