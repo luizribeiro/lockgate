@@ -1,0 +1,5 @@
+error: cannot construct `Prepared` with struct literal syntax due to private fields
+ --> tests/ui/effective_grants/prepared_construction.rs:4:13
+  |
+4 |     let _ = Prepared {};
+  |             ^^^^^^^^
