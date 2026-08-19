@@ -91,7 +91,7 @@ impl Error for CapabilityRegistrationError {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct CapabilityRegistry {
     capabilities: BTreeMap<&'static str, BTreeMap<&'static str, ErasedPermission>>,
 }

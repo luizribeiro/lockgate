@@ -29,10 +29,6 @@ impl fmt::Debug for PluginSubject<'_> {
 }
 
 impl<'a> PluginSubject<'a> {
-    #[allow(
-        dead_code,
-        reason = "guard expansion constructs subjects from invocation plugin handles in the next policy chunk"
-    )]
     pub(crate) const fn new(plugin: &'a PluginHandle) -> Self {
         Self { plugin }
     }
@@ -42,6 +38,49 @@ impl<'a> PluginSubject<'a> {
         self.plugin.id()
     }
 }
+
+/// A host import was denied because its required permission was not granted.
+///
+/// Guarded host methods receive this error through [`crate::HostCtx::require`]
+/// or [`crate::HostCtx::require_scoped`]. Their ordinary error type must
+/// implement `From<PermissionDenied>` so generated enforcement can return the
+/// denial through the WIT method's normal `Result` channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PermissionDenied {
+    capability: &'static str,
+    permission: &'static str,
+}
+
+impl PermissionDenied {
+    pub(crate) const fn new(capability: &'static str, permission: &'static str) -> Self {
+        Self {
+            capability,
+            permission,
+        }
+    }
+
+    /// Returns the stable capability ID of the denied permission.
+    pub const fn capability(&self) -> &'static str {
+        self.capability
+    }
+
+    /// Returns the stable permission ID within the capability.
+    pub const fn permission(&self) -> &'static str {
+        self.permission
+    }
+}
+
+impl fmt::Display for PermissionDenied {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "permission `{}.{}` is not granted for this host call",
+            self.capability, self.permission
+        )
+    }
+}
+
+impl std::error::Error for PermissionDenied {}
 
 /// Classifies an application-owned resource into scope membership witnesses.
 ///
@@ -101,10 +140,6 @@ where
 /// implementation receives the containment call. Missing grants, malformed
 /// invariant data, a mismatched registered scope type, and empty memberships
 /// all fail closed.
-#[allow(
-    dead_code,
-    reason = "guard expansion consumes this scoped decision in the next policy chunk"
-)]
 pub(crate) fn scoped_access_allowed<S>(
     registry: &CapabilityRegistry,
     grants: &EffectiveGrants,

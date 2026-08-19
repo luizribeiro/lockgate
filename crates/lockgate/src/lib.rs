@@ -34,8 +34,8 @@ pub use lockgate_policy::{
 };
 pub use policy::{
     CapabilityRegistrationError, EffectiveGrants, HostImportPolicyError, InvalidScopeValue,
-    JsonValueKind, NeedValueKind, PluginSubject, ResolveScopedResource, ScopeReference,
-    ScopeResolutionError, ScopedResource,
+    JsonValueKind, NeedValueKind, PermissionDenied, PluginSubject, ResolveScopedResource,
+    ScopeReference, ScopeResolutionError, ScopedResource,
 };
 
 /// Generates typed application bindings for a WIT world.
@@ -130,6 +130,48 @@ impl<'a, S> HostCtx<'a, S> {
         self.plugin
     }
 
+    /// Returns the stable policy subject for the plugin making this host call.
+    pub fn subject(&self) -> PluginSubject<'_> {
+        PluginSubject::new(self.plugin)
+    }
+
+    /// Requires one unscoped permission for this host call.
+    pub fn require(&self, permission: Permission) -> Result<(), PermissionDenied> {
+        let (capability, operation) = lockgate_policy::__private::permission_ids(permission);
+        let atom = lockgate_schema::AtomKey::new(capability, operation)
+            .expect("typed permissions always contain a valid wire atom");
+        if self.plugin.effective_grants().has_unscoped(&atom) {
+            Ok(())
+        } else {
+            Err(PermissionDenied::new(capability, operation))
+        }
+    }
+
+    /// Requires one scoped permission to cover a resolved resource.
+    pub fn require_scoped<T, R>(
+        &self,
+        permission: ScopedPermission<T>,
+        resource: &R,
+    ) -> Result<(), PermissionDenied>
+    where
+        T: Scope,
+        <T as core::str::FromStr>::Err: Into<ScopeError>,
+        R: ScopedResource<T> + ?Sized,
+    {
+        let (capability, operation) = lockgate_policy::__private::scoped_permission_ids(permission);
+        let memberships = resource.scopes_for(&self.subject());
+        if policy::scoped_access_allowed(
+            self.plugin.capability_registry(),
+            self.plugin.effective_grants(),
+            permission,
+            &memberships,
+        ) {
+            Ok(())
+        } else {
+            Err(PermissionDenied::new(capability, operation))
+        }
+    }
+
     /// Detaches a host-owned future so it may outlive this invocation.
     ///
     /// Detached jobs have no Lockgate wall-clock deadline: the host capability
@@ -160,11 +202,93 @@ pub mod __private {
 
 #[cfg(test)]
 mod tests {
-    use super::{exec::ExecEngine, jobs};
+    use std::sync::Arc;
+
+    use lockgate_policy::ScopeRepr;
+    use lockgate_schema::{AtomKey, GrantSet};
+
+    use super::{
+        HostCtx, PluginHandle, ScopedResource,
+        exec::ExecEngine,
+        jobs,
+        policy::{CapabilityRegistry, EffectiveGrants, ResolvedNeeds},
+    };
+
+    mod vm_contract {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../lockgate-policy/tests/fixtures/vm_contract.rs"
+        ));
+    }
+
+    use vm_contract::permissions::vm::{self, InstanceScope};
+
+    struct Vm {
+        pool: &'static str,
+    }
+
+    impl ScopedResource<InstanceScope> for Vm {
+        fn scopes_for(&self, _subject: &super::PluginSubject<'_>) -> Vec<InstanceScope> {
+            vec![InstanceScope::Pool(self.pool.to_owned())]
+        }
+    }
+
+    fn grants(unscoped: bool, scopes: &[InstanceScope]) -> EffectiveGrants {
+        let mut required = GrantSet::new();
+        if unscoped {
+            required.insert_flag(AtomKey::new("vm", "list-pools").unwrap());
+        }
+        if !scopes.is_empty() {
+            required
+                .insert_scopes(
+                    AtomKey::new("vm", "exec").unwrap(),
+                    scopes.iter().map(ScopeRepr::canonical),
+                )
+                .unwrap();
+        }
+        EffectiveGrants::from_resolved(ResolvedNeeds {
+            required,
+            optional: GrantSet::new(),
+        })
+    }
+
+    fn context(grants: EffectiveGrants) -> (PluginHandle, jobs::DetachedJobContext) {
+        let mut registry = CapabilityRegistry::default();
+        registry.register::<vm::Contract>().unwrap();
+        let plugin = PluginHandle::for_policy_test_with_registry("plugin-a", grants, registry);
+        let tracker = jobs::JobTracker::new().unwrap();
+        let jobs = jobs::DetachedJobContext::new(Arc::clone(&tracker), "plugin-a".to_owned(), 1);
+        (plugin, jobs)
+    }
 
     #[test]
     fn creates_engine_with_pinned_configuration() {
         ExecEngine::new().expect("the pinned Wasmtime configuration should be valid");
+    }
+
+    #[test]
+    fn host_context_enforces_unscoped_and_scoped_effective_grants() {
+        let (plugin, jobs) = context(grants(true, &[InstanceScope::Pool("gpu".to_owned())]));
+        let cx = HostCtx::new(&(), &plugin, jobs);
+
+        assert_eq!(cx.subject().plugin_id(), "plugin-a");
+        assert_eq!(cx.require(vm::LIST_POOLS), Ok(()));
+        assert_eq!(cx.require_scoped(vm::EXEC, &Vm { pool: "gpu" }), Ok(()));
+        let denial = cx
+            .require_scoped(vm::EXEC, &Vm { pool: "cpu" })
+            .unwrap_err();
+        assert_eq!((denial.capability(), denial.permission()), ("vm", "exec"));
+        assert_eq!(
+            denial.to_string(),
+            "permission `vm.exec` is not granted for this host call"
+        );
+
+        let (plugin, jobs) = context(grants(false, &[]));
+        let cx = HostCtx::new(&(), &plugin, jobs);
+        assert_eq!(
+            cx.require(vm::LIST_POOLS).unwrap_err().permission(),
+            "list-pools"
+        );
     }
 
     #[tokio::test]

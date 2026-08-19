@@ -198,13 +198,37 @@ struct AdmittedPlugin<S: 'static> {
 }
 
 /// Identity and display metadata for an admitted plugin.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct PluginHandle {
     host: HostId,
     index: usize,
     metadata: PluginMetadata,
     effective_grants: EffectiveGrants,
+    registry: std::sync::Arc<CapabilityRegistry>,
 }
+
+impl fmt::Debug for PluginHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PluginHandle")
+            .field("host", &self.host)
+            .field("index", &self.index)
+            .field("metadata", &self.metadata)
+            .field("effective_grants", &self.effective_grants)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for PluginHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.host == other.host
+            && self.index == other.index
+            && self.metadata == other.metadata
+            && self.effective_grants == other.effective_grants
+    }
+}
+
+impl Eq for PluginHandle {}
 
 impl PluginHandle {
     /// Returns the stable plugin identifier.
@@ -225,13 +249,31 @@ impl PluginHandle {
         &self.effective_grants
     }
 
+    pub(crate) fn capability_registry(&self) -> &CapabilityRegistry {
+        &self.registry
+    }
+
     #[cfg(test)]
     pub(crate) fn for_policy_test(plugin_id: &str, effective_grants: EffectiveGrants) -> Self {
+        Self::for_policy_test_with_registry(
+            plugin_id,
+            effective_grants,
+            CapabilityRegistry::default(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_policy_test_with_registry(
+        plugin_id: &str,
+        effective_grants: EffectiveGrants,
+        registry: CapabilityRegistry,
+    ) -> Self {
         Self {
             host: HostId(0),
             index: 0,
             metadata: PluginMetadata::new(plugin_id, "Policy test plugin", "1.0").unwrap(),
             effective_grants,
+            registry: std::sync::Arc::new(registry),
         }
     }
 }
@@ -461,6 +503,7 @@ impl<S: CallContext> HostBuilder<S> {
             index: self.admitted.len(),
             metadata: inspection.metadata().clone(),
             effective_grants,
+            registry: std::sync::Arc::new(self.registry.clone()),
         };
         artifact.set_plugin(
             handle.clone(),
@@ -965,6 +1008,14 @@ mod grant_tests {
 
     impl Scope for SessionScope {}
 
+    struct Session;
+
+    impl crate::ScopedResource<SessionScope> for Session {
+        fn scopes_for(&self, _subject: &crate::PluginSubject<'_>) -> Vec<SessionScope> {
+            vec![SessionScope::All]
+        }
+    }
+
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum ConflictingSessionScope {
         Other,
@@ -1218,5 +1269,14 @@ mod grant_tests {
             crate::PluginSubject::new(&handle).plugin_id(),
             "grant-query"
         );
+
+        let jobs = DetachedJobContext::new(
+            std::sync::Arc::clone(&builder.jobs),
+            handle.id().to_owned(),
+            1,
+        );
+        let cx = crate::HostCtx::new(&(), &handle, jobs);
+        assert_eq!(cx.require(permissions::SEND), Ok(()));
+        assert_eq!(cx.require_scoped(permissions::READ, &Session), Ok(()));
     }
 }
