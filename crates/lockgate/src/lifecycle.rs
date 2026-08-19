@@ -1341,6 +1341,65 @@ mod grant_tests {
     }
 
     #[tokio::test]
+    async fn failed_admission_does_not_reserve_the_instance_id() {
+        let metadata = PluginMetadata::new("retry-code", "Retry code", "1.0").unwrap();
+        let needs = NeedsManifest::empty();
+        let bytes = with_section(
+            with_section(
+                component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
+            ),
+            PLUGIN_NEEDS_SECTION,
+            &needs.to_section_bytes().unwrap(),
+        );
+        let mut builder = HostBuilder::new(()).unwrap();
+        let rejected = builder
+            .prepare("retry", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        let other = builder
+            .prepare("other", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        let mismatched_acceptance = other.accept_all();
+
+        let error = builder
+            .admit(
+                rejected,
+                mismatched_acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(1_000_000),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AdmissionError::AcceptancePluginMismatch {
+                ref prepared,
+                ref acceptance,
+            } if prepared == "retry" && acceptance == "other"
+        ));
+
+        let retry = builder
+            .prepare("retry", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        let acceptance = retry.accept_all();
+        let handle = builder
+            .admit(
+                retry,
+                acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(1_000_000),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(handle.id(), "retry");
+    }
+
+    #[tokio::test]
     async fn http_egress_grant_requires_the_wasi_http_client_import() {
         let metadata = PluginMetadata::new("http-no-import", "HTTP no import", "1.0").unwrap();
         let needs = NeedsManifest::new(
