@@ -3,7 +3,7 @@
 use std::{any::Any, future::Future, str::FromStr, sync::Arc};
 
 use ::http::{Request, Response, Uri};
-use lockgate_policy::{HttpOrigin, http};
+use lockgate_policy::{HttpOrigin, net};
 use wasmtime_wasi_http::{
     Error as WasiHttpError, RequestOptions, WasiBody, WasiHttpHooks, default_hooks,
 };
@@ -29,7 +29,7 @@ impl HttpHooks {
         self.plugin
             .as_deref()
             .and_then(|plugin| plugin.downcast_ref::<PluginHandle>())
-            .is_some_and(|plugin| plugin.__scoped_access_allowed(http::EGRESS, &[origin]))
+            .is_some_and(|plugin| plugin.__scoped_access_allowed(net::EGRESS, &[origin]))
     }
 }
 

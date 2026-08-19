@@ -36,7 +36,7 @@ pub use lifecycle::{
 };
 pub use lockgate_policy::{
     CapabilityContract, HttpOrigin, Permission, Scope, ScopeError, ScopeRepr, ScopedPermission,
-    capability, check_scope_laws, http,
+    capability, check_scope_laws, net,
 };
 pub use policy::{
     CapabilityRegistrationError, ConsentManifest, ConsentRecord, ConsentRequired, DriftChange,

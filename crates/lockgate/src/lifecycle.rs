@@ -318,7 +318,7 @@ impl<S: CallContext> HostBuilder<S> {
             .map_err(HostConstructionError::Engine)?;
         let mut registry = CapabilityRegistry::default();
         registry
-            .register::<lockgate_policy::http::Contract>()
+            .register::<lockgate_policy::net::Contract>()
             .expect("Lockgate's built-in HTTP capability must be valid");
         Ok(Self {
             id: HostId::next(),
@@ -576,7 +576,7 @@ impl<S: CallContext> HostBuilder<S> {
 
 fn http_egress_origin_count(needs: &NeedsManifest) -> Option<usize> {
     let (capability, permission) =
-        lockgate_policy::__private::scoped_permission_ids(lockgate_policy::http::EGRESS);
+        lockgate_policy::__private::scoped_permission_ids(lockgate_policy::net::EGRESS);
     let atom = AtomKey::new(capability, permission)
         .expect("typed permissions always contain a valid wire atom");
     needs
