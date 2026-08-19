@@ -1,16 +1,20 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
+use serde::{Deserialize, Serialize};
+
 use crate::AtomKey;
 
 /// A concrete accepted value for one capability atom.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum GrantValue {
     Flag,
     Scopes(Vec<String>),
 }
 
 /// Concrete grants accepted by an application consent flow.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct GrantSet(BTreeMap<AtomKey, GrantValue>);
 
 impl GrantSet {
@@ -131,6 +135,30 @@ mod tests {
         assert_eq!(
             grants.0.get(&atom),
             Some(&GrantValue::Scopes(vec!["workspace".to_string()]))
+        );
+    }
+
+    #[test]
+    fn grant_sets_round_trip_through_serde() {
+        let mut grants = GrantSet::new();
+        grants.insert_flag("notify.send".parse().unwrap());
+        grants
+            .insert_scopes(
+                "fs.read".parse().unwrap(),
+                ["workspace".to_owned(), "data".to_owned()],
+            )
+            .unwrap();
+
+        let encoded = serde_json::to_value(&grants).unwrap();
+        let decoded: GrantSet = serde_json::from_value(encoded.clone()).unwrap();
+
+        assert_eq!(decoded, grants);
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "fs.read": ["data", "workspace"],
+                "notify.send": null,
+            })
         );
     }
 }

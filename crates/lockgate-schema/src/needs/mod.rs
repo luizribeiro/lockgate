@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, error::Error, fmt, iter, str::FromStr};
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
 mod digest;
 mod entry;
 mod manifest;
@@ -102,6 +104,25 @@ impl FromStr for AtomKey {
 impl fmt::Display for AtomKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}.{}", self.capability, self.operation)
+    }
+}
+
+impl Serialize for AtomKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for AtomKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(de::Error::custom)
     }
 }
 
