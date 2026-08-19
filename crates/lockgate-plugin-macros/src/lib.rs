@@ -349,6 +349,7 @@ pub fn export(input: TokenStream) -> TokenStream {
             }
         }
 
+        #[cfg(target_arch = "wasm32")]
         __lockgate_wit_export!(#plugin);
 
         const __LOCKGATE_SETTINGS_POLICY_CHECK: () =
@@ -366,15 +367,19 @@ pub fn export(input: TokenStream) -> TokenStream {
                 needs: <#plugin as #facade::Plugin>::NEEDS,
             };
 
+        #[cfg(target_arch = "wasm32")]
         const __LOCKGATE_PLUGIN_METADATA_LEN: usize =
             #facade::__private::metadata_len(&__LOCKGATE_PLUGIN_MANIFEST);
+        #[cfg(target_arch = "wasm32")]
         #[used]
         #[unsafe(link_section = #metadata_section)]
         static __LOCKGATE_PLUGIN_METADATA: [u8; __LOCKGATE_PLUGIN_METADATA_LEN] =
             #facade::__private::metadata_bytes(&__LOCKGATE_PLUGIN_MANIFEST);
 
+        #[cfg(target_arch = "wasm32")]
         const __LOCKGATE_PLUGIN_NEEDS_LEN: usize =
             #facade::__private::needs_len(&__LOCKGATE_PLUGIN_MANIFEST.needs);
+        #[cfg(target_arch = "wasm32")]
         #[used]
         #[unsafe(link_section = #needs_section)]
         static __LOCKGATE_PLUGIN_NEEDS: [u8; __LOCKGATE_PLUGIN_NEEDS_LEN] =
