@@ -3,8 +3,8 @@ mod common;
 use common::exec::ExecEngine;
 use common::{INVOCATION_FUEL, LIMITS, TestState};
 use lockgate::{
-    CallError, Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, Role, RoleInvocation,
-    RuntimeLimits, Value,
+    AdmissionError, CallError, Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, Role,
+    RoleInvocation, RuntimeLimits, Value,
 };
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
 use std::future::Future;
@@ -210,6 +210,53 @@ fn optional_unset_env_read_grant_is_absent() {
 
         assert!(guest.variable_absent(OPTIONAL_NAME).await.unwrap());
         assert_eq!(guest.environment_count().await.unwrap(), 0);
+    });
+}
+
+#[test]
+fn required_unset_env_read_grant_fails_admission() {
+    const TEST_NAME: &str = "required_unset_env_read_grant_fails_admission";
+    const REQUIRED_NAME: &str = "LOCKGATE_TEST_REQUIRED_UNSET_1BF58709";
+
+    if !enter_controlled_environment(TEST_NAME, &[(REQUIRED_NAME, None)]) {
+        return;
+    }
+
+    run_async(async {
+        let metadata =
+            PluginMetadata::new(ENV_PLUGIN_ID, "WASI environment fixture", "1.0").unwrap();
+        let needs = env_manifest(&[REQUIRED_NAME], false);
+        let component = common::policy_fixture(&common::WASI_FIXTURE, &metadata, &needs);
+        let mut builder = HostBuilder::new(()).unwrap();
+        let prepared = builder
+            .prepare(ENV_PLUGIN_ID, &component, PluginConfig::default())
+            .await
+            .unwrap();
+        let acceptance = prepared.accept_all();
+
+        let error = builder
+            .admit(
+                prepared,
+                acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(INVOCATION_FUEL),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AdmissionError::RequiredEnvironmentVariableUnset {
+                ref instance_id,
+                ref variable,
+            } if instance_id == ENV_PLUGIN_ID && variable == REQUIRED_NAME
+        ));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "plugin instance `{ENV_PLUGIN_ID}` requires host environment variable `{REQUIRED_NAME}`, but it is unset"
+            )
+        );
     });
 }
 

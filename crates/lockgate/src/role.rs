@@ -108,6 +108,9 @@ impl CallError {
 
     fn from_exec(error: ExecError, fuel: u64) -> Self {
         match error {
+            ExecError::Environment(error) => Self::Instantiate {
+                message: error.to_string(),
+            },
             ExecError::Instantiate(error) => Self::Instantiate {
                 message: error.to_string(),
             },

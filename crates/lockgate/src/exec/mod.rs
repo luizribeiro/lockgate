@@ -26,7 +26,7 @@ use lockgate::__private::ResourceStore;
 mod errors;
 pub(crate) mod wasi_http;
 
-pub(crate) use errors::{ExecError, LoadError};
+pub(crate) use errors::{EnvironmentError, ExecError, LoadError};
 use errors::{MemoryLimitExceeded, map_call_error, map_dispatch_error, map_instantiate_error};
 #[allow(
     unused_imports,
@@ -140,23 +140,46 @@ pub(crate) struct LoadedComponent<S: 'static> {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EnvironmentGrants {
+    instance_id: String,
     required: Vec<String>,
     optional: Vec<String>,
 }
 
 impl EnvironmentGrants {
-    pub(crate) fn new(required: Vec<String>, optional: Vec<String>) -> Self {
-        Self { required, optional }
+    pub(crate) fn new(instance_id: String, required: Vec<String>, optional: Vec<String>) -> Self {
+        Self {
+            instance_id,
+            required,
+            optional,
+        }
     }
 
-    fn wasi_context(&self) -> WasiCtx {
+    fn wasi_context(&self) -> Result<WasiCtx, EnvironmentError> {
         let mut wasi = WasiCtxBuilder::new();
-        for name in self.required.iter().chain(&self.optional) {
+        for name in &self.required {
+            let value = match std::env::var(name) {
+                Ok(value) => value,
+                Err(std::env::VarError::NotPresent) => {
+                    return Err(EnvironmentError::RequiredUnset {
+                        instance_id: self.instance_id.clone(),
+                        variable: name.clone(),
+                    });
+                }
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(EnvironmentError::RequiredNotUnicode {
+                        instance_id: self.instance_id.clone(),
+                        variable: name.clone(),
+                    });
+                }
+            };
+            wasi.env(name, value);
+        }
+        for name in &self.optional {
             if let Ok(value) = std::env::var(name) {
                 wasi.env(name, value);
             }
         }
-        wasi.build()
+        Ok(wasi.build())
     }
 }
 
@@ -207,7 +230,9 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         limits: ExecLimits,
         invocation_fuel: u64,
     ) -> Result<Vec<Val>, ExecError> {
-        let mut store = self.configured_store(data, limits.max_memory_bytes);
+        let mut store = self
+            .configured_store(data, limits.max_memory_bytes)
+            .map_err(ExecError::Environment)?;
         store
             .set_fuel(limits.instantiation_fuel)
             .map_err(map_instantiate_error)?;
@@ -254,15 +279,21 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         limits: ExecLimits,
         startup_fuel: u64,
     ) -> Result<(), ExecError> {
-        let store = self.configured_store(data, limits.max_memory_bytes);
+        let store = self
+            .configured_store(data, limits.max_memory_bytes)
+            .map_err(ExecError::Environment)?;
         // Admission charges constructor work to the app-chosen startup budget;
         // `HostBuilder::admit` documents the deliberate steady-state asymmetry.
         self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel))
             .await
     }
 
-    fn configured_store(&self, data: S, max_memory_bytes: usize) -> Store<StoreCtx<S>> {
-        let wasi = self.environment.wasi_context();
+    fn configured_store(
+        &self,
+        data: S,
+        max_memory_bytes: usize,
+    ) -> Result<Store<StoreCtx<S>>, EnvironmentError> {
+        let wasi = self.environment.wasi_context()?;
         let mut store = Store::new(
             self.instance_pre.engine(),
             StoreCtx::new(
@@ -277,7 +308,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         );
         store.limiter(|ctx| &mut ctx.limiter);
         store.set_epoch_deadline(u64::MAX);
-        store
+        Ok(store)
     }
 
     async fn smoke_store(&self, mut store: Store<StoreCtx<S>>, fuel: u64) -> Result<(), ExecError> {
@@ -297,7 +328,9 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         startup_fuel: u64,
         dropped: Arc<AtomicBool>,
     ) -> Result<(), ExecError> {
-        let mut store = self.configured_store(data, limits.max_memory_bytes);
+        let mut store = self
+            .configured_store(data, limits.max_memory_bytes)
+            .map_err(ExecError::Environment)?;
         store.data_mut().observe_drop(dropped);
         self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel))
             .await

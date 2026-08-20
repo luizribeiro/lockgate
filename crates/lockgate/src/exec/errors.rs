@@ -5,6 +5,41 @@ use anyhow::Error as AnyError;
 use wasmtime::{Error as WasmtimeError, Trap};
 
 #[derive(Debug)]
+pub(crate) enum EnvironmentError {
+    RequiredUnset {
+        instance_id: String,
+        variable: String,
+    },
+    RequiredNotUnicode {
+        instance_id: String,
+        variable: String,
+    },
+}
+
+impl fmt::Display for EnvironmentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RequiredUnset {
+                instance_id,
+                variable,
+            } => write!(
+                formatter,
+                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but it is unset"
+            ),
+            Self::RequiredNotUnicode {
+                instance_id,
+                variable,
+            } => write!(
+                formatter,
+                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but its value is not valid Unicode"
+            ),
+        }
+    }
+}
+
+impl Error for EnvironmentError {}
+
+#[derive(Debug)]
 pub(crate) enum LoadError {
     Compile(AnyError),
     Link(AnyError),
@@ -33,6 +68,7 @@ impl Error for LoadError {}
 
 #[derive(Debug)]
 pub(crate) enum ExecError {
+    Environment(EnvironmentError),
     Instantiate(AnyError),
     Trap(TrapDetail),
     OutOfBudget,
@@ -43,6 +79,7 @@ pub(crate) enum ExecError {
 impl fmt::Display for ExecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Environment(error) => error.fmt(f),
             Self::Instantiate(error) => write!(f, "component instantiation failed: {error}"),
             Self::Trap(detail) => write!(f, "component trapped: {detail}"),
             Self::OutOfBudget => f.write_str("component exhausted its invocation fuel"),

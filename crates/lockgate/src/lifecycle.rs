@@ -15,8 +15,8 @@ use sha2::{Digest, Sha256};
 use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
 use crate::exec::{
-    EnvironmentGrants, ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError,
-    LoadedComponent, TypedImports,
+    EnvironmentError, EnvironmentGrants, ExecEngine, ExecError, ExecLimits, ImportsFactory,
+    LoadError, LoadedComponent, TypedImports,
 };
 use crate::inspection::{
     InspectError, Inspection, decode_imported_interfaces, decode_metadata, decode_needs,
@@ -537,7 +537,7 @@ impl<S: CallContext> HostBuilder<S> {
         {
             return Err(AdmissionError::DuplicateInstanceId { instance_id });
         }
-        let environment = environment_grants(&resolved);
+        let environment = environment_grants(&instance_id, &resolved);
         let effective_grants =
             bind_effective_grants(&instance_id, prepared_digest, resolved, &acceptance)?;
 
@@ -591,12 +591,13 @@ impl<S: CallContext> HostBuilder<S> {
     }
 }
 
-fn environment_grants(resolved: &ResolvedNeeds) -> EnvironmentGrants {
+fn environment_grants(instance_id: &str, resolved: &ResolvedNeeds) -> EnvironmentGrants {
     let (capability, permission) =
         lockgate_policy::__private::scoped_permission_ids(lockgate_policy::env::READ);
     let atom = AtomKey::new(capability, permission)
         .expect("typed permissions always contain a valid wire atom");
     EnvironmentGrants::new(
+        instance_id.to_owned(),
         scoped_grant_values(&resolved.required, &atom),
         scoped_grant_values(&resolved.optional, &atom),
     )
@@ -839,6 +840,14 @@ pub enum AdmissionError {
     EmptyHttpEgressOrigins {
         plugin: String,
     },
+    RequiredEnvironmentVariableUnset {
+        instance_id: String,
+        variable: String,
+    },
+    RequiredEnvironmentVariableNotUnicode {
+        instance_id: String,
+        variable: String,
+    },
     SmokeOutOfBudget,
     SmokeFailure {
         message: String,
@@ -923,6 +932,20 @@ impl AdmissionError {
 
     fn from_smoke(error: ExecError) -> Self {
         match error {
+            ExecError::Environment(EnvironmentError::RequiredUnset {
+                instance_id,
+                variable,
+            }) => Self::RequiredEnvironmentVariableUnset {
+                instance_id,
+                variable,
+            },
+            ExecError::Environment(EnvironmentError::RequiredNotUnicode {
+                instance_id,
+                variable,
+            }) => Self::RequiredEnvironmentVariableNotUnicode {
+                instance_id,
+                variable,
+            },
             ExecError::OutOfBudget => Self::SmokeOutOfBudget,
             error => Self::SmokeFailure {
                 message: error.to_string(),
@@ -1005,6 +1028,20 @@ impl fmt::Display for AdmissionError {
             Self::EmptyHttpEgressOrigins { plugin } => write!(
                 formatter,
                 "plugin `{plugin}` cannot hold an HTTP egress grant with no origins"
+            ),
+            Self::RequiredEnvironmentVariableUnset {
+                instance_id,
+                variable,
+            } => write!(
+                formatter,
+                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but it is unset"
+            ),
+            Self::RequiredEnvironmentVariableNotUnicode {
+                instance_id,
+                variable,
+            } => write!(
+                formatter,
+                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but its value is not valid Unicode"
             ),
             Self::SmokeOutOfBudget => formatter
                 .write_str("plugin exhausted its startup budget during smoke instantiation"),
