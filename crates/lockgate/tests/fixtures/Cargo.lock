@@ -1470,6 +1470,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-with-reuse-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin",
+]
+
+[[package]]
 name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"

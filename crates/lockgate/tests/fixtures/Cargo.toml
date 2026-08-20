@@ -23,6 +23,7 @@ members = [
     "scope-reexport",
     "typed-settings-guest",
     "wasi-guest",
+    "with-reuse-guest",
 ]
 
 [workspace.dependencies]
