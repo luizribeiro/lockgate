@@ -29,6 +29,7 @@ struct GenerateInput {
     source: GenerateSource,
     world: LitStr,
     facade: Option<Path>,
+    with: Vec<(LitStr, Path)>,
 }
 
 enum GenerateSource {
@@ -44,6 +45,7 @@ impl Parse for GenerateInput {
         let mut inline = None;
         let mut world = None;
         let mut facade = None;
+        let mut with = None;
         while !content.is_empty() {
             let field: Ident = content.parse()?;
             content.parse::<Token![:]>()?;
@@ -69,6 +71,12 @@ impl Parse for GenerateInput {
                 "facade" => {
                     let value = content.parse::<Path>()?;
                     if facade.replace(value).is_some() {
+                        return Err(syn::Error::new(field.span(), "duplicate generate! field"));
+                    }
+                }
+                "with" => {
+                    let value = parse_with(&content)?;
+                    if with.replace(value).is_some() {
                         return Err(syn::Error::new(field.span(), "duplicate generate! field"));
                     }
                 }
@@ -99,8 +107,26 @@ impl Parse for GenerateInput {
             source,
             world: world.ok_or_else(|| input.error("generate! requires `world`"))?,
             facade,
+            with: with.unwrap_or_default(),
         })
     }
+}
+
+fn parse_with(input: ParseStream<'_>) -> syn::Result<Vec<(LitStr, Path)>> {
+    let content;
+    braced!(content in input);
+    let mut mappings = Vec::new();
+    while !content.is_empty() {
+        let interface = content.parse::<LitStr>()?;
+        content.parse::<Token![:]>()?;
+        let path = content.parse::<Path>()?;
+        mappings.push((interface, path));
+        if content.is_empty() {
+            break;
+        }
+        content.parse::<Token![,]>()?;
+    }
+    Ok(mappings)
 }
 
 fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
@@ -577,6 +603,66 @@ mod macro_input_tests {
 
         assert!(facade.leading_colon.is_some());
         assert_eq!(facade.segments.last().unwrap().ident, "sage_plugin");
+    }
+
+    #[test]
+    fn generate_accepts_with_mappings_and_a_trailing_comma() {
+        let input = syn::parse_str::<GenerateInput>(
+            r#"{
+                inline: "package test:inline; world plugin {}",
+                world: "plugin",
+                with: {
+                    "sage:agent/types@0.2.0": ::sage_plugin::types,
+                    "some:pkg/iface": ::other::module,
+                },
+            }"#,
+        )
+        .expect("with mappings should parse");
+
+        assert_eq!(input.with.len(), 2);
+        assert_eq!(input.with[0].0.value(), "sage:agent/types@0.2.0");
+        assert!(input.with[0].1.leading_colon.is_some());
+        assert_eq!(input.with[0].1.segments.last().unwrap().ident, "types");
+        assert_eq!(input.with[1].0.value(), "some:pkg/iface");
+        assert_eq!(input.with[1].1.segments.last().unwrap().ident, "module");
+    }
+
+    #[test]
+    fn generate_accepts_an_empty_with_map() {
+        let input = syn::parse_str::<GenerateInput>(
+            r#"{
+                path: "wit",
+                world: "plugin",
+                with: {},
+            }"#,
+        )
+        .expect("an empty with map should parse");
+
+        assert!(input.with.is_empty());
+    }
+
+    #[test]
+    fn generate_keeps_with_empty_when_omitted() {
+        let input = syn::parse_str::<GenerateInput>(r#"{ path: "wit", world: "plugin" }"#)
+            .expect("with should remain optional");
+
+        assert!(input.with.is_empty());
+    }
+
+    #[test]
+    fn rejects_duplicate_with_fields() {
+        let error = syn::parse_str::<GenerateInput>(
+            r#"{
+                path: "wit",
+                world: "plugin",
+                with: {},
+                with: { "some:pkg/iface": ::other::module },
+            }"#,
+        )
+        .err()
+        .expect("duplicate with fields should fail");
+
+        assert_eq!(error.to_string(), "duplicate generate! field");
     }
 
     #[test]
