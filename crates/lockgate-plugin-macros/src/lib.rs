@@ -26,8 +26,13 @@ pub fn generate(input: TokenStream) -> TokenStream {
 }
 
 struct GenerateInput {
-    path: LitStr,
+    source: GenerateSource,
     world: LitStr,
+}
+
+enum GenerateSource {
+    Path(LitStr),
+    Inline(LitStr),
 }
 
 impl Parse for GenerateInput {
@@ -35,6 +40,7 @@ impl Parse for GenerateInput {
         let content;
         braced!(content in input);
         let mut path = None;
+        let mut inline = None;
         let mut world = None;
         while !content.is_empty() {
             let field: Ident = content.parse()?;
@@ -42,8 +48,9 @@ impl Parse for GenerateInput {
             let value: LitStr = content.parse()?;
             match field.to_string().as_str() {
                 "path" if path.is_none() => path = Some(value),
+                "inline" if inline.is_none() => inline = Some(value),
                 "world" if world.is_none() => world = Some(value),
-                "path" | "world" => {
+                "path" | "inline" | "world" => {
                     return Err(syn::Error::new(field.span(), "duplicate generate! field"));
                 }
                 _ => return Err(syn::Error::new(field.span(), "unknown generate! field")),
@@ -53,23 +60,47 @@ impl Parse for GenerateInput {
             }
             content.parse::<Token![,]>()?;
         }
+        let source = match (path, inline) {
+            (Some(path), None) => GenerateSource::Path(path),
+            (None, Some(inline)) => GenerateSource::Inline(inline),
+            (Some(_), Some(inline)) => {
+                return Err(syn::Error::new(
+                    inline.span(),
+                    "generate! requires exactly one of `path` or `inline`",
+                ));
+            }
+            (None, None) => {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "generate! requires exactly one of `path` or `inline`",
+                ));
+            }
+        };
         Ok(Self {
-            path: path.ok_or_else(|| input.error("generate! requires `path`"))?,
+            source,
             world: world.ok_or_else(|| input.error("generate! requires `world`"))?,
         })
     }
 }
 
 fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
+    let path = match &input.source {
+        GenerateSource::Path(path) => path,
+        GenerateSource::Inline(source) => {
+            return Err(syn::Error::new(
+                source.span(),
+                "generate! inline sources are not yet supported",
+            ));
+        }
+    };
     let manifest_dir = PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR")
-            .map_err(|error| syn::Error::new(input.path.span(), error))?,
+        std::env::var("CARGO_MANIFEST_DIR").map_err(|error| syn::Error::new(path.span(), error))?,
     );
-    let source_path = manifest_dir.join(input.path.value());
+    let source_path = manifest_dir.join(path.value());
     let mut resolve = Resolve::default();
     let (plugin_package, sources) = resolve
         .push_path(&source_path)
-        .map_err(|error| syn::Error::new(input.path.span(), format!("{error:#}")))?;
+        .map_err(|error| syn::Error::new(path.span(), format!("{error:#}")))?;
     let plugin_world = resolve
         .select_world(&[plugin_package], Some(&input.world.value()))
         .map_err(|error| syn::Error::new(input.world.span(), format!("{error:#}")))?;
@@ -440,5 +471,62 @@ fn resolve_metadata_source(
             #facade::MetadataSource::Explicit(value) => #present,
             #facade::MetadataSource::Absent => #absent,
         }
+    }
+}
+
+#[cfg(test)]
+mod generate_input_tests {
+    use super::{GenerateInput, GenerateSource};
+
+    #[test]
+    fn accepts_a_path_source() {
+        let input = syn::parse_str::<GenerateInput>(r#"{ path: "wit", world: "plugin" }"#)
+            .expect("path source should parse");
+
+        assert!(matches!(
+            input.source,
+            GenerateSource::Path(path) if path.value() == "wit"
+        ));
+        assert_eq!(input.world.value(), "plugin");
+    }
+
+    #[test]
+    fn accepts_an_inline_source() {
+        let input = syn::parse_str::<GenerateInput>(
+            r#"{ inline: "package test:inline; world plugin {}", world: "plugin" }"#,
+        )
+        .expect("inline source should parse");
+
+        assert!(matches!(
+            input.source,
+            GenerateSource::Inline(source) if source.value().starts_with("package test:inline")
+        ));
+        assert_eq!(input.world.value(), "plugin");
+    }
+
+    #[test]
+    fn rejects_path_and_inline_together() {
+        let error = syn::parse_str::<GenerateInput>(
+            r#"{ path: "wit", inline: "package test:inline;", world: "plugin" }"#,
+        )
+        .err()
+        .expect("path and inline should conflict");
+
+        assert_eq!(
+            error.to_string(),
+            "generate! requires exactly one of `path` or `inline`"
+        );
+    }
+
+    #[test]
+    fn rejects_a_missing_source() {
+        let error = syn::parse_str::<GenerateInput>(r#"{ world: "plugin" }"#)
+            .err()
+            .expect("a source should be required");
+
+        assert_eq!(
+            error.to_string(),
+            "generate! requires exactly one of `path` or `inline`"
+        );
     }
 }
