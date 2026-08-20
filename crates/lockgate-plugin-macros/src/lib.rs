@@ -7,7 +7,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use std::path::PathBuf;
 use syn::parse::{Parse, ParseStream};
-use syn::{Ident, LitStr, Token, braced, parse_macro_input};
+use syn::{Ident, LitStr, Path, Token, braced, parse_macro_input};
 use wit_bindgen_core::wit_parser::{
     Handle, InterfaceId, Resolve, Type, TypeDefKind, TypeId, UnresolvedPackageGroup, WorldId,
     WorldItem, WorldKey,
@@ -28,6 +28,7 @@ pub fn generate(input: TokenStream) -> TokenStream {
 struct GenerateInput {
     source: GenerateSource,
     world: LitStr,
+    facade: Option<Path>,
 }
 
 enum GenerateSource {
@@ -42,16 +43,34 @@ impl Parse for GenerateInput {
         let mut path = None;
         let mut inline = None;
         let mut world = None;
+        let mut facade = None;
         while !content.is_empty() {
             let field: Ident = content.parse()?;
             content.parse::<Token![:]>()?;
-            let value: LitStr = content.parse()?;
             match field.to_string().as_str() {
-                "path" if path.is_none() => path = Some(value),
-                "inline" if inline.is_none() => inline = Some(value),
-                "world" if world.is_none() => world = Some(value),
-                "path" | "inline" | "world" => {
-                    return Err(syn::Error::new(field.span(), "duplicate generate! field"));
+                "path" => {
+                    let value = content.parse::<LitStr>()?;
+                    if path.replace(value).is_some() {
+                        return Err(syn::Error::new(field.span(), "duplicate generate! field"));
+                    }
+                }
+                "inline" => {
+                    let value = content.parse::<LitStr>()?;
+                    if inline.replace(value).is_some() {
+                        return Err(syn::Error::new(field.span(), "duplicate generate! field"));
+                    }
+                }
+                "world" => {
+                    let value = content.parse::<LitStr>()?;
+                    if world.replace(value).is_some() {
+                        return Err(syn::Error::new(field.span(), "duplicate generate! field"));
+                    }
+                }
+                "facade" => {
+                    let value = content.parse::<Path>()?;
+                    if facade.replace(value).is_some() {
+                        return Err(syn::Error::new(field.span(), "duplicate generate! field"));
+                    }
                 }
                 _ => return Err(syn::Error::new(field.span(), "unknown generate! field")),
             }
@@ -79,6 +98,7 @@ impl Parse for GenerateInput {
         Ok(Self {
             source,
             world: world.ok_or_else(|| input.error("generate! requires `world`"))?,
+            facade,
         })
     }
 }
@@ -141,14 +161,10 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
         .select_world(&[wrapper_package], Some("plugin"))
         .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
 
-    let facade_name = match crate_name("lockgate-plugin") {
-        Ok(FoundCrate::Itself) => "lockgate_plugin".to_string(),
-        Ok(FoundCrate::Name(name)) => name,
-        Err(error) => return Err(syn::Error::new(Span::call_site(), error.to_string())),
-    };
+    let facade = resolve_facade(input.facade.as_ref(), Span::call_site())?;
     let options = Opts {
         export_macro_name: Some("__lockgate_wit_export".into()),
-        runtime_path: Some(format!("::{facade_name}::__wit_bindgen::rt")),
+        runtime_path: Some(quote!(#facade::__wit_bindgen::rt).to_string()),
         generate_all: true,
         ..Opts::default()
     };
@@ -173,7 +189,6 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
             ));
         }
     }
-    let facade = format_ident!("{facade_name}");
     output.extend(quote! {
         #[doc(hidden)]
         #[unsafe(no_mangle)]
@@ -187,6 +202,20 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
         }
     });
     Ok(output)
+}
+
+fn resolve_facade(override_path: Option<&Path>, error_span: Span) -> syn::Result<TokenStream2> {
+    if let Some(path) = override_path {
+        return Ok(quote!(#path));
+    }
+    match crate_name("lockgate-plugin") {
+        Ok(FoundCrate::Itself) => Ok(quote!(::lockgate_plugin)),
+        Ok(FoundCrate::Name(name)) => {
+            let name = format_ident!("{name}");
+            Ok(quote!(::#name))
+        }
+        Err(error) => Err(syn::Error::new(error_span, error.to_string())),
+    }
 }
 
 fn validate_guest_world(resolve: &Resolve, world: WorldId, span: Span) -> syn::Result<()> {
@@ -347,19 +376,13 @@ fn world_key_name(resolve: &Resolve, key: &WorldKey) -> String {
 
 #[proc_macro]
 pub fn export(input: TokenStream) -> TokenStream {
-    let plugin = parse_macro_input!(input as Ident);
+    let ExportInput { plugin, facade } = parse_macro_input!(input as ExportInput);
     let metadata_section = PLUGIN_METADATA_SECTION;
     let needs_section = PLUGIN_NEEDS_SECTION;
-    let facade = match crate_name("lockgate-plugin") {
-        Ok(FoundCrate::Itself) => quote!(::lockgate_plugin),
-        Ok(FoundCrate::Name(name)) => {
-            let name = format_ident!("{name}");
-            quote!(::#name)
-        }
+    let facade = match resolve_facade(facade.as_ref(), plugin.span()) {
+        Ok(facade) => facade,
         Err(error) => {
-            return syn::Error::new(plugin.span(), error.to_string())
-                .into_compile_error()
-                .into();
+            return error.into_compile_error().into();
         }
     };
     let name = resolve_metadata_source(&facade, &plugin, "display_name", "CARGO_PKG_NAME", true);
@@ -426,6 +449,33 @@ pub fn export(input: TokenStream) -> TokenStream {
     .into()
 }
 
+struct ExportInput {
+    plugin: Ident,
+    facade: Option<Path>,
+}
+
+impl Parse for ExportInput {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let plugin = input.parse()?;
+        let mut facade = None;
+        while !input.is_empty() {
+            input.parse::<Token![;]>()?;
+            let field = input.parse::<Ident>()?;
+            input.parse::<Token![=]>()?;
+            match field.to_string().as_str() {
+                "facade" => {
+                    let value = input.parse::<Path>()?;
+                    if facade.replace(value).is_some() {
+                        return Err(syn::Error::new(field.span(), "duplicate export! option"));
+                    }
+                }
+                _ => return Err(syn::Error::new(field.span(), "unknown export! option")),
+            }
+        }
+        Ok(Self { plugin, facade })
+    }
+}
+
 fn resolve_metadata_source(
     facade: &TokenStream2,
     plugin: &Ident,
@@ -484,8 +534,8 @@ fn resolve_metadata_source(
 }
 
 #[cfg(test)]
-mod generate_input_tests {
-    use super::{GenerateInput, GenerateSource};
+mod macro_input_tests {
+    use super::{ExportInput, GenerateInput, GenerateSource};
 
     #[test]
     fn accepts_a_path_source() {
@@ -511,6 +561,41 @@ mod generate_input_tests {
             GenerateSource::Inline(source) if source.value().starts_with("package test:inline")
         ));
         assert_eq!(input.world.value(), "plugin");
+    }
+
+    #[test]
+    fn generate_accepts_an_explicit_facade_path() {
+        let input = syn::parse_str::<GenerateInput>(
+            r#"{
+                inline: "package test:inline; world plugin {}",
+                world: "plugin",
+                facade: ::sage_plugin,
+            }"#,
+        )
+        .expect("facade override should parse");
+        let facade = input.facade.expect("facade override should be retained");
+
+        assert!(facade.leading_colon.is_some());
+        assert_eq!(facade.segments.last().unwrap().ident, "sage_plugin");
+    }
+
+    #[test]
+    fn export_accepts_an_explicit_facade_path() {
+        let input = syn::parse_str::<ExportInput>("Fixture; facade = ::sage_plugin")
+            .expect("facade override should parse");
+        let facade = input.facade.expect("facade override should be retained");
+
+        assert_eq!(input.plugin, "Fixture");
+        assert!(facade.leading_colon.is_some());
+        assert_eq!(facade.segments.last().unwrap().ident, "sage_plugin");
+    }
+
+    #[test]
+    fn export_keeps_facade_auto_detection_as_the_default() {
+        let input = syn::parse_str::<ExportInput>("Fixture").expect("plugin should parse");
+
+        assert_eq!(input.plugin, "Fixture");
+        assert!(input.facade.is_none());
     }
 
     #[test]

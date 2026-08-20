@@ -118,12 +118,20 @@ mod runtime {
 
 /// Generates guest bindings for one WIT world and automatically adds the
 /// framework-owned `lockgate:config` settings import and schema export.
+///
+/// SDKs that re-export this facade can pass `facade: ::sdk_crate` so generated
+/// code resolves the facade through that re-export. Without `facade`, the macro
+/// continues to locate the consuming crate's direct `lockgate-plugin`
+/// dependency automatically.
 pub use lockgate_plugin_macros::generate;
 
 /// Exports a generated guest implementation and embeds its plugin manifests.
 /// Call `export!` exactly once per plugin. A second invocation in the same
 /// module deliberately fails at compile time with duplicate-definition errors
 /// for the generated statics: one plugin has one manifest.
+/// SDKs that re-export this facade can use
+/// `export!(PluginType; facade = ::sdk_crate)` to resolve generated facade paths
+/// through the SDK instead of a direct `lockgate-plugin` dependency.
 ///
 /// The plugin identity is a required trait item, so omitting it is diagnosed
 /// by Rust as a missing trait item:
