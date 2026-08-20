@@ -13,7 +13,7 @@ use crate::{Acceptance, Prepared};
 pub struct ConsentManifest {
     pub instance_id: String,
     pub plugin_label: String,
-    pub fingerprint: PreparedNeedsDigest,
+    pub request_digest: PreparedNeedsDigest,
     pub grants: Vec<GrantReview>,
 }
 
@@ -31,7 +31,8 @@ pub struct GrantReview {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsentRecord {
     pub instance_id: String,
-    pub fingerprint: PreparedNeedsDigest,
+    #[serde(alias = "fingerprint")]
+    pub request_digest: PreparedNeedsDigest,
     pub grants: Vec<GrantReview>,
     pub approved_at: String,
 }
@@ -73,7 +74,7 @@ impl Prepared {
         ConsentManifest {
             instance_id: self.instance_id.clone(),
             plugin_label: self.inspection.metadata().name().to_owned(),
-            fingerprint: self.prepared_digest,
+            request_digest: self.prepared_digest,
             grants: grant_reviews(&self.resolved, self.inspection.needs()),
         }
     }
@@ -83,7 +84,7 @@ impl Prepared {
         let manifest = self.review();
         ConsentRecord {
             instance_id: manifest.instance_id,
-            fingerprint: manifest.fingerprint,
+            request_digest: manifest.request_digest,
             grants: manifest.grants,
             approved_at,
         }
@@ -103,7 +104,7 @@ impl Prepared {
                 manifest: self.review(),
             });
         };
-        if prior.fingerprint == self.prepared_digest {
+        if prior.request_digest == self.prepared_digest {
             return Ok(self.accept_all());
         }
 

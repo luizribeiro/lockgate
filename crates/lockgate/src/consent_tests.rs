@@ -145,7 +145,7 @@ async fn review_projects_resolved_grants_and_author_reasons() {
 
     assert_eq!(review.instance_id, INSTANCE_ID);
     assert_eq!(review.plugin_label, "Session helper");
-    assert_eq!(review.fingerprint, prepared.review().fingerprint);
+    assert_eq!(review.request_digest, prepared.review().request_digest);
     assert_eq!(review.grants.len(), 2);
     assert_eq!(review.grants[0].capability, "notify");
     assert_eq!(review.grants[0].permission, "send");
@@ -190,10 +190,37 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
     let decoded: ConsentRecord = serde_json::from_slice(&encoded).unwrap();
 
     assert_eq!(record.instance_id, review.instance_id);
-    assert_eq!(record.fingerprint, review.fingerprint);
+    assert_eq!(record.request_digest, review.request_digest);
     assert_eq!(record.grants, review.grants);
     assert_eq!(decoded, record);
     assert_eq!(decoded.approved_at, "2026-08-19T14:30:00Z");
+
+    let encoded: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(encoded["request_digest"], record.request_digest.to_string());
+    assert!(encoded.get("fingerprint").is_none());
+}
+
+#[tokio::test]
+async fn approval_record_accepts_the_legacy_fingerprint_key() {
+    let needs =
+        NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap();
+    let mut builder = builder();
+    let prepared = builder
+        .prepare(INSTANCE_ID, &fixture(&needs), PluginConfig::default())
+        .await
+        .unwrap();
+    let record = prepared.approve("2026-08-19T14:30:00Z".to_owned());
+    let legacy_json = serde_json::json!({
+        "instance_id": record.instance_id,
+        "fingerprint": record.request_digest.to_string(),
+        "grants": record.grants,
+        "approved_at": record.approved_at,
+    });
+
+    let decoded: ConsentRecord = serde_json::from_value(legacy_json).unwrap();
+
+    assert_eq!(decoded, record);
+    assert_eq!(decoded.request_digest, record.request_digest);
 }
 
 #[tokio::test]
@@ -318,7 +345,7 @@ async fn capability_scope_and_requirement_expansions_refuse_acceptance() {
 }
 
 #[tokio::test]
-async fn config_widening_changes_the_fingerprint_and_refuses_acceptance() {
+async fn config_widening_changes_the_request_digest_and_refuses_acceptance() {
     let needs = NeedsManifest::new(
         vec![
             NeedEntry::scoped(
@@ -346,7 +373,7 @@ async fn config_widening_changes_the_fingerprint_and_refuses_acceptance() {
         .await
         .unwrap();
 
-    assert_ne!(record.fingerprint, current.review().fingerprint);
+    assert_ne!(record.request_digest, current.review().request_digest);
     let required = current.accept_reviewed(Some(&record)).unwrap_err();
     let ConsentRequired::Drift { drift, .. } = required else {
         panic!("config widening must be reported as drift")
