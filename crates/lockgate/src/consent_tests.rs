@@ -1,6 +1,9 @@
 use std::str::FromStr;
 
-use lockgate_policy::{Scope, ScopeError, ScopeRepr};
+use lockgate_policy::{
+    Need as AuthorNeed, Needs as AuthorNeeds, Scope, ScopeError, ScopeRef as AuthorScopeRef,
+    ScopeRepr, env,
+};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
 
@@ -12,6 +15,10 @@ use crate::{
 };
 
 const INSTANCE_ID: &str = "sessions-prod";
+const ENV_READ_NEEDS: AuthorNeeds = AuthorNeeds::required(&[env::READ.need(&[
+    AuthorScopeRef::literal("HOME"),
+    AuthorScopeRef::setting("/scope"),
+])]);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SessionScope {
@@ -107,6 +114,53 @@ fn fixture(needs: &NeedsManifest) -> Vec<u8> {
         PLUGIN_NEEDS_SECTION,
         &needs.to_section_bytes().unwrap(),
     )
+}
+
+fn env_read_manifest() -> NeedsManifest {
+    use lockgate_policy::__private::{
+        need_capability, need_permission, need_scopes, needs_required, scope_ref_wire_byte,
+        scope_ref_wire_len,
+    };
+
+    let [need]: &[AuthorNeed] = needs_required(&ENV_READ_NEEDS) else {
+        panic!("environment fixture must declare exactly one need")
+    };
+    let scopes = need_scopes(need)
+        .unwrap()
+        .iter()
+        .map(|reference| {
+            let bytes = (0..scope_ref_wire_len(reference))
+                .map(|index| scope_ref_wire_byte(reference, index))
+                .collect::<Vec<_>>();
+            ScopeRef::from_wire(&String::from_utf8(bytes).unwrap()).unwrap()
+        })
+        .collect();
+    let atom = AtomKey::new(need_capability(need), need_permission(need)).unwrap();
+    NeedsManifest::new(vec![NeedEntry::scoped(atom, scopes).unwrap()], Vec::new()).unwrap()
+}
+
+#[tokio::test]
+async fn built_in_env_needs_resolve_names_and_bind_the_request_digest() {
+    let needs = env_read_manifest();
+    let bytes = fixture(&needs);
+    let mut builder = HostBuilder::new(()).unwrap();
+    let first = builder
+        .prepare(INSTANCE_ID, &bytes, config("LOCKGATE_TOKEN"))
+        .await
+        .unwrap();
+    let second = builder
+        .prepare(INSTANCE_ID, &bytes, config("SERVICE_TOKEN"))
+        .await
+        .unwrap();
+
+    let first_review = first.review();
+    let second_review = second.review();
+    assert_eq!(first_review.grants.len(), 1);
+    assert_eq!(first_review.grants[0].capability, "env");
+    assert_eq!(first_review.grants[0].permission, "read");
+    assert_eq!(first_review.grants[0].scopes, ["HOME", "LOCKGATE_TOKEN"]);
+    assert_eq!(second_review.grants[0].scopes, ["HOME", "SERVICE_TOKEN"]);
+    assert_ne!(first_review.request_digest, second_review.request_digest);
 }
 
 #[tokio::test]

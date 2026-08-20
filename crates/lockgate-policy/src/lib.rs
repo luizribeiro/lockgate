@@ -6,12 +6,14 @@ extern crate alloc;
 
 mod atom;
 mod capability;
+mod env_var_name;
 mod http_origin;
 mod need;
 mod permission;
 mod scope;
 
 pub use capability::CapabilityContract;
+pub use env_var_name::EnvVarName;
 pub use http_origin::HttpOrigin;
 pub use need::{Need, Needs, ScopeRef};
 pub use permission::{Permission, ScopedPermission};
@@ -22,6 +24,15 @@ pub use scope::{
 
 /// Derives [`ScopeRepr`] and exhaustive-domain evidence for a closed enum.
 pub use lockgate_macros::{ScopeRepr, capability};
+
+/// Built-in environment variable authority.
+#[capability("env")]
+pub mod env {
+    use crate::{EnvVarName, ScopedPermission};
+
+    /// Read the granted named environment variables.
+    pub const READ: ScopedPermission<EnvVarName> = ScopedPermission::new("read");
+}
 
 /// Built-in outbound HTTP authority.
 #[capability("net")]

@@ -326,6 +326,9 @@ impl<S: CallContext> HostBuilder<S> {
         registry
             .register::<lockgate_policy::net::Contract>()
             .expect("Lockgate's built-in HTTP capability must be valid");
+        registry
+            .register::<lockgate_policy::env::Contract>()
+            .expect("Lockgate's built-in environment capability must be valid");
         Ok(Self {
             id: HostId::next(),
             engine,
