@@ -101,3 +101,46 @@ async fn guest_http_client_reaches_only_its_granted_origin() {
     assert!(error.contains("HTTP request failed"), "{error}");
     assert_no_connection(blocked);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn base_url_setting_resolves_to_its_origin() {
+    let (allowed_origin, server) = serve_once();
+    let base_url = format!("{allowed_origin}/v1");
+    let mut builder = HostBuilder::new(()).unwrap();
+    let prepared = builder
+        .prepare(
+            "http-client",
+            &common::HTTP_CLIENT_FIXTURE,
+            PluginConfig {
+                settings: Some(serde_json::json!({ "origin": base_url })),
+                ..PluginConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+    let acceptance = prepared.accept_all();
+    let plugin = builder
+        .admit(
+            prepared,
+            acceptance,
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(common::INVOCATION_FUEL),
+        )
+        .await
+        .unwrap();
+    let host = builder.finish();
+    let guest = host.guest(&plugin).unwrap();
+
+    let allowed_url = format!("{allowed_origin}/client");
+    let response = guest
+        .get(
+            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            &allowed_url,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status, 201);
+    assert_eq!(response.body, RESPONSE_BODY);
+    server.join().unwrap();
+}

@@ -9,9 +9,9 @@ use crate::{Scope, ScopeError, ScopeRepr};
 
 /// One exact HTTP origin authorized for outbound requests.
 ///
-/// Origins contain only an HTTP(S) scheme, host, and resolved port. Host
-/// matching is case-insensitive; paths, queries, fragments, userinfo, and
-/// wildcard hosts are not part of this scope vocabulary.
+/// An origin is the authority of an HTTP(S) URL, so a base URL such as
+/// `https://api.example.com/v1` resolves to `https://api.example.com:443`.
+/// Host matching is case-insensitive; userinfo and wildcard hosts are rejected.
 #[derive(Clone, PartialEq, Eq)]
 pub struct HttpOrigin {
     scheme: &'static str,
@@ -38,12 +38,7 @@ impl FromStr for HttpOrigin {
             "https" => "https",
             _ => return Err(ScopeError::unknown(value)),
         };
-        if !url.username().is_empty()
-            || url.password().is_some()
-            || url.path() != "/"
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
+        if !url.username().is_empty() || url.password().is_some() {
             return Err(ScopeError::unknown(value));
         }
         let host = url
@@ -99,13 +94,26 @@ mod tests {
         assert!(origin.contains(&HttpOrigin::from_str("https://example.com:443").unwrap()));
         assert!(!origin.contains(&HttpOrigin::from_str("https://example.com:444").unwrap()));
 
+        for base_url in [
+            "https://example.com/path",
+            "https://example.com?query",
+            "https://example.com#fragment",
+        ] {
+            assert_eq!(
+                HttpOrigin::from_str(base_url).unwrap().canonical(),
+                "https://example.com:443"
+            );
+        }
+
+        assert_eq!(
+            HttpOrigin::from_str("https://api.example.com/v1").unwrap(),
+            HttpOrigin::from_str("https://api.example.com/openai/v1").unwrap()
+        );
+
         for invalid in [
             "ftp://example.com",
             "https://user@example.com",
             "https://user:pass@example.com",
-            "https://example.com/path",
-            "https://example.com?query",
-            "https://example.com#fragment",
         ] {
             assert!(HttpOrigin::from_str(invalid).is_err(), "accepted {invalid}");
         }
