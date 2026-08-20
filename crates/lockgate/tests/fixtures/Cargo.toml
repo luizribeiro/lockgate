@@ -11,6 +11,7 @@ members = [
     "host-export-values",
     "host-export-values-guest",
     "guarded-bindings-guest",
+    "inline-composed-guest",
     "public-guest",
     "resource-guarded-guest",
     "renamed-facade",

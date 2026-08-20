@@ -1304,6 +1304,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-inline-composed-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin",
+]
+
+[[package]]
 name = "lockgate-macros"
 version = "0.1.0"
 dependencies = [

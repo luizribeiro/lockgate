@@ -63,6 +63,12 @@ pub(crate) static GUARDED_BINDINGS_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(||
         "lockgate_guarded_bindings_fixture.wasm",
     )
 });
+pub(crate) static INLINE_COMPOSED_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    build_fixture(
+        "inline-composed-guest",
+        "lockgate_inline_composed_fixture.wasm",
+    )
+});
 pub(crate) static RESOURCE_GUARDED_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
     build_fixture(
         "resource-guarded-guest",
