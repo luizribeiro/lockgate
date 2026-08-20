@@ -88,15 +88,18 @@ impl WasiClient<'_, ()> {
 }
 
 fn env_manifest(names: &[&str], optional: bool) -> NeedsManifest {
-    let atom: AtomKey = "env.read".parse().unwrap();
-    let entry = NeedEntry::scoped(
-        atom,
+    env_reference_manifest(
         names
             .iter()
             .map(|name| ScopeRefEntry::literal(*name).unwrap())
             .collect(),
+        optional,
     )
-    .unwrap();
+}
+
+fn env_reference_manifest(references: Vec<ScopeRefEntry>, optional: bool) -> NeedsManifest {
+    let atom: AtomKey = "env.read".parse().unwrap();
+    let entry = NeedEntry::scoped(atom, references).unwrap();
     let (required, optional) = if optional {
         (Vec::new(), vec![entry])
     } else {
@@ -209,6 +212,27 @@ fn optional_unset_env_read_grant_is_absent() {
         let guest = host.client::<WasiRole>(&plugin).unwrap();
 
         assert!(guest.variable_absent(OPTIONAL_NAME).await.unwrap());
+        assert_eq!(guest.environment_count().await.unwrap(), 0);
+    });
+}
+
+#[test]
+fn optional_env_read_setting_may_be_absent() {
+    const TEST_NAME: &str = "optional_env_read_setting_may_be_absent";
+    const HOST_NAME: &str = "LOCKGATE_TEST_UNREFERENCED_5E4B631A";
+    const HOST_VALUE: &str = "host-value-862e7bf4";
+
+    if !enter_controlled_environment(TEST_NAME, &[(HOST_NAME, Some(HOST_VALUE))]) {
+        return;
+    }
+
+    run_async(async {
+        let needs =
+            env_reference_manifest(vec![ScopeRefEntry::setting("/api-key-env").unwrap()], true);
+        let (host, plugin) = admitted_wasi(&needs).await;
+        let guest = host.client::<WasiRole>(&plugin).unwrap();
+
+        assert!(guest.variable_absent(HOST_NAME).await.unwrap());
         assert_eq!(guest.environment_count().await.unwrap(), 0);
     });
 }

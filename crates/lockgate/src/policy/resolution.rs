@@ -22,9 +22,9 @@ pub(crate) fn resolve_needs(
     registry: &CapabilityRegistry,
 ) -> Result<ResolvedNeeds, ScopeResolutionError> {
     let mut resolved = ResolvedNeeds::default();
-    for (entries, grants) in [
-        (manifest.required(), &mut resolved.required),
-        (manifest.optional(), &mut resolved.optional),
+    for (entries, grants, optional) in [
+        (manifest.required(), &mut resolved.required, false),
+        (manifest.optional(), &mut resolved.optional, true),
     ] {
         for entry in entries {
             let atom = entry.atom();
@@ -39,12 +39,17 @@ pub(crate) fn resolve_needs(
                     let scopes = references
                         .iter()
                         .map(|reference| {
-                            resolve_scope(atom, reference, settings, roots, permission)
+                            resolve_scope(atom, reference, settings, roots, permission, optional)
                         })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    grants
-                        .insert_scopes(atom.clone(), scopes)
-                        .expect("validated scoped needs contain at least one reference");
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    if !scopes.is_empty() {
+                        grants
+                            .insert_scopes(atom.clone(), scopes)
+                            .expect("resolved scoped needs contain at least one scope");
+                    }
                 }
                 (NeedKind::Flag, true) => {
                     return Err(ScopeResolutionError::OperationKindMismatch {
@@ -72,9 +77,14 @@ fn resolve_scope(
     settings: &Value,
     roots: &SymbolicRoots,
     permission: lockgate_policy::__private::ErasedPermission,
-) -> Result<String, ScopeResolutionError> {
+    optional: bool,
+) -> Result<Option<String>, ScopeResolutionError> {
     let diagnostic = ScopeReference::from(reference);
-    let concrete = resolve_reference(atom, reference, settings, roots)?;
+    let concrete = match resolve_reference(atom, reference, settings, roots) {
+        Ok(concrete) => concrete,
+        Err(ScopeResolutionError::MissingSetting { .. }) if optional => return Ok(None),
+        Err(error) => return Err(error),
+    };
     let parsed = permission
         .parse_scope(&concrete)
         .expect("a scoped permission must retain its parse hook")
@@ -89,10 +99,12 @@ fn resolve_scope(
                 source,
             }))
         })?;
-    Ok(permission
-        .canonicalize_scope(&parsed)
-        .expect("a scoped permission must retain its canonicalization hook")
-        .expect("a descriptor must canonicalize values from its own parse hook"))
+    Ok(Some(
+        permission
+            .canonicalize_scope(&parsed)
+            .expect("a scoped permission must retain its canonicalization hook")
+            .expect("a descriptor must canonicalize values from its own parse hook"),
+    ))
 }
 
 fn resolve_reference(
@@ -429,6 +441,86 @@ mod tests {
             resolved.optional.get(&atom("sessions.send")),
             Some(&GrantValue::Flag)
         );
+    }
+
+    #[test]
+    fn optional_need_with_only_an_absent_setting_is_omitted() {
+        let needs = manifest(
+            vec![],
+            vec![scoped(vec![ScopeRefEntry::setting("/scope").unwrap()])],
+        );
+
+        let resolved =
+            resolve_needs(&needs, &json!({}), &SymbolicRoots::default(), &registry()).unwrap();
+
+        assert_eq!(resolved.optional.get(&atom("sessions.read")), None);
+    }
+
+    #[test]
+    fn optional_need_keeps_present_setting_when_another_is_absent() {
+        let needs = manifest(
+            vec![],
+            vec![scoped(vec![
+                ScopeRefEntry::setting("/missing").unwrap(),
+                ScopeRefEntry::setting("/scope").unwrap(),
+            ])],
+        );
+
+        let resolved = resolve_needs(
+            &needs,
+            &json!({ "scope": "current" }),
+            &SymbolicRoots::default(),
+            &registry(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.optional.get(&atom("sessions.read")),
+            Some(&GrantValue::Scopes(vec!["current".to_owned()]))
+        );
+    }
+
+    #[test]
+    fn required_need_with_an_absent_setting_still_fails() {
+        let needs = manifest(
+            vec![scoped(vec![ScopeRefEntry::setting("/scope").unwrap()])],
+            vec![],
+        );
+
+        assert!(matches!(
+            resolve_needs(
+                &needs,
+                &json!({}),
+                &SymbolicRoots::default(),
+                &registry(),
+            ),
+            Err(ScopeResolutionError::MissingSetting { ref atom, ref pointer })
+                if atom == &super::tests::atom("sessions.read") && pointer == "/scope"
+        ));
+    }
+
+    #[test]
+    fn optional_need_with_an_invalid_setting_value_still_fails() {
+        let needs = manifest(
+            vec![],
+            vec![scoped(vec![ScopeRefEntry::setting("/scope").unwrap()])],
+        );
+
+        assert!(matches!(
+            resolve_needs(
+                &needs,
+                &json!({ "scope": "gpu" }),
+                &SymbolicRoots::default(),
+                &registry(),
+            ),
+            Err(ScopeResolutionError::InvalidScope(ref error))
+                if error.atom == super::tests::atom("sessions.read")
+                    && error.reference
+                        == ScopeReference::Setting {
+                            pointer: "/scope".to_owned(),
+                        }
+                    && error.value == "gpu"
+        ));
     }
 
     #[test]
