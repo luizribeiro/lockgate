@@ -63,6 +63,8 @@ pub(crate) static REEXPORTED_PLUGIN_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|
 });
 pub(crate) static HOST_BINDINGS_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("host-bindings-guest", "lockgate_host_bindings_fixture.wasm"));
+pub(crate) static HTTP_CLIENT_FIXTURE: LazyLock<Vec<u8>> =
+    LazyLock::new(|| build_fixture("http-client-guest", "lockgate_http_client_fixture.wasm"));
 pub(crate) static GUARDED_BINDINGS_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
     build_fixture(
         "guarded-bindings-guest",

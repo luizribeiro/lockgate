@@ -1,0 +1,14 @@
+package test:http-client;
+
+interface guest {
+  record response {
+    status: u16,
+    body: string,
+  }
+
+  get: async func(url: string) -> result<response, string>;
+}
+
+world fixture {
+  export guest;
+}

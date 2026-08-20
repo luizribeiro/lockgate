@@ -12,6 +12,7 @@ members = [
     "host-export-values-guest",
     "guarded-bindings-guest",
     "inline-composed-guest",
+    "http-client-guest",
     "plugin-facade-reexport",
     "public-guest",
     "reexported-plugin-guest",

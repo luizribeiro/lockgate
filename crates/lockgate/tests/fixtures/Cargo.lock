@@ -644,6 +644,7 @@ checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
 dependencies = [
  "futures-channel",
  "futures-core",
+ "futures-executor",
  "futures-io",
  "futures-sink",
  "futures-task",
@@ -665,6 +666,17 @@ name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
+
+[[package]]
+name = "futures-executor"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
 
 [[package]]
 name = "futures-io"
@@ -1300,6 +1312,26 @@ dependencies = [
 name = "lockgate-host-export-values-guest"
 version = "0.1.0"
 dependencies = [
+ "lockgate-plugin",
+]
+
+[[package]]
+name = "lockgate-http"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "wasi-fetch",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "lockgate-http-client-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-http",
  "lockgate-plugin",
 ]
 
@@ -2498,11 +2530,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
+name = "wasi-fetch"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "292c62fe37626bb3c2b43d41eaa2bcbc209b14855d5a62dedf010634121fb410"
+dependencies = [
+ "bytes",
+ "futures",
+ "http",
+ "http-body",
+ "serde",
+ "serde_json",
+ "url",
+ "wasip3",
+]
+
+[[package]]
 name = "wasip2"
 version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
+name = "wasip3"
+version = "0.7.1+wasi-0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e9ed91ee5a995b6fe16c89d4511a8c12eb76967be20b57557618e02e781bcc"
+dependencies = [
+ "bytes",
+ "http",
+ "http-body",
+ "thiserror 2.0.20",
  "wit-bindgen",
 ]
 
@@ -3215,6 +3276,8 @@ version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 dependencies = [
+ "bitflags",
+ "futures",
  "wit-bindgen-rust-macro",
 ]
 
