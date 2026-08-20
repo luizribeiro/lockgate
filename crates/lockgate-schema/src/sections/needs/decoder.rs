@@ -9,17 +9,17 @@ use crate::needs::{
     Requirement, ScopeRefEntry, validate_reason,
 };
 
-use super::DecodeError;
+use super::NeedsDecodeError;
 
 /// Decodes and validates a `lockgate:needs` custom-section payload.
-pub(super) fn decode(bytes: &[u8]) -> Result<NeedsManifest, DecodeError> {
-    check_payload_size(bytes.len()).map_err(|error| DecodeError::PayloadTooLarge {
+pub(super) fn decode(bytes: &[u8]) -> Result<NeedsManifest, NeedsDecodeError> {
+    check_payload_size(bytes.len()).map_err(|error| NeedsDecodeError::PayloadTooLarge {
         actual_bytes: error.actual_bytes,
         max_bytes: error.max_bytes,
     })?;
-    let raw: RawManifest = serde_json::from_slice(bytes).map_err(DecodeError::InvalidJson)?;
+    let raw: RawManifest = serde_json::from_slice(bytes).map_err(NeedsDecodeError::InvalidJson)?;
     if raw.format != NEEDS_FORMAT {
-        return Err(DecodeError::InvalidManifest(
+        return Err(NeedsDecodeError::InvalidManifest(
             NeedsManifestValidationError::UnsupportedFormat { found: raw.format },
         ));
     }
@@ -48,35 +48,38 @@ pub(super) fn decode(bytes: &[u8]) -> Result<NeedsManifest, DecodeError> {
         }))
         .collect::<HashMap<_, _>>();
     let mut manifest =
-        NeedsManifest::new(required, optional).map_err(DecodeError::InvalidManifest)?;
+        NeedsManifest::new(required, optional).map_err(NeedsDecodeError::InvalidManifest)?;
     attach_reasons(&mut manifest, raw.reasons.0, &locations)?;
-    manifest.validate().map_err(DecodeError::InvalidManifest)?;
+    manifest
+        .validate()
+        .map_err(NeedsDecodeError::InvalidManifest)?;
     Ok(manifest)
 }
 
 fn decode_entries(
     raw: Vec<(String, RawNeed)>,
     requirement: Requirement,
-) -> Result<Vec<NeedEntry>, DecodeError> {
+) -> Result<Vec<NeedEntry>, NeedsDecodeError> {
     raw.into_iter()
         .enumerate()
         .map(|(index, (value, need))| {
             let location = EntryLocation { requirement, index };
-            let atom = AtomKey::from_str(&value).map_err(|source| DecodeError::InvalidAtom {
-                location,
-                value,
-                source,
-            })?;
+            let atom =
+                AtomKey::from_str(&value).map_err(|source| NeedsDecodeError::InvalidAtom {
+                    location,
+                    value,
+                    source,
+                })?;
             match need {
                 RawNeed::Flag(true) => Ok(NeedEntry::flag(atom)),
-                RawNeed::Flag(false) => Err(DecodeError::FalseFlag { location, atom }),
+                RawNeed::Flag(false) => Err(NeedsDecodeError::FalseFlag { location, atom }),
                 RawNeed::Scoped(values) => {
                     let scopes = values
                         .into_iter()
                         .enumerate()
                         .map(|(scope_index, value)| {
                             ScopeRefEntry::from_wire(&value).map_err(|source| {
-                                DecodeError::InvalidScope {
+                                NeedsDecodeError::InvalidScope {
                                     location,
                                     atom: atom.clone(),
                                     scope_index,
@@ -87,11 +90,13 @@ fn decode_entries(
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     NeedEntry::scoped(atom.clone(), scopes).map_err(|source| {
-                        DecodeError::InvalidManifest(NeedsManifestValidationError::InvalidEntry {
-                            location,
-                            atom,
-                            source,
-                        })
+                        NeedsDecodeError::InvalidManifest(
+                            NeedsManifestValidationError::InvalidEntry {
+                                location,
+                                atom,
+                                source,
+                            },
+                        )
                     })
                 }
             }
@@ -103,25 +108,26 @@ fn attach_reasons(
     manifest: &mut NeedsManifest,
     reasons: Vec<(String, String)>,
     locations: &HashMap<AtomKey, EntryLocation>,
-) -> Result<(), DecodeError> {
+) -> Result<(), NeedsDecodeError> {
     let mut seen = HashMap::new();
     for (reason_index, (value, reason)) in reasons.into_iter().enumerate() {
-        let atom = AtomKey::from_str(&value).map_err(|source| DecodeError::InvalidReasonAtom {
-            reason_index,
-            value,
-            source,
-        })?;
+        let atom =
+            AtomKey::from_str(&value).map_err(|source| NeedsDecodeError::InvalidReasonAtom {
+                reason_index,
+                value,
+                source,
+            })?;
         if let Some(first_index) = seen.insert(atom.clone(), reason_index) {
-            return Err(DecodeError::DuplicateReason {
+            return Err(NeedsDecodeError::DuplicateReason {
                 atom,
                 first_index,
                 duplicate_index: reason_index,
             });
         }
         let Some(&location) = locations.get(&atom) else {
-            return Err(DecodeError::UndeclaredReason { reason_index, atom });
+            return Err(NeedsDecodeError::UndeclaredReason { reason_index, atom });
         };
-        validate_reason(&reason).map_err(|source| DecodeError::InvalidReason {
+        validate_reason(&reason).map_err(|source| NeedsDecodeError::InvalidReason {
             location,
             atom: atom.clone(),
             reason_index,
@@ -134,7 +140,7 @@ fn attach_reasons(
         let entry = entries
             .iter_mut()
             .find(|entry| entry.atom == atom)
-            .ok_or_else(|| DecodeError::UndeclaredReason {
+            .ok_or_else(|| NeedsDecodeError::UndeclaredReason {
                 reason_index,
                 atom: atom.clone(),
             })?;

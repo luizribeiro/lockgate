@@ -1,7 +1,7 @@
-use lockgate_schema::sections::needs::DecodeError;
+use lockgate_schema::sections::needs::NeedsDecodeError;
 use lockgate_schema::{NeedReasonError, NeedsManifest};
 
-fn decode_reason(reason: &str) -> Result<(), DecodeError> {
+fn decode_reason(reason: &str) -> Result<(), NeedsDecodeError> {
     let bytes = serde_json::json!({
         "format": 1,
         "optional": {},
@@ -50,7 +50,7 @@ fn rejects_every_invalid_reason_shape() {
         let error = decode_reason(&reason).unwrap_err();
         assert!(matches!(
             &error,
-            DecodeError::InvalidReason {
+            NeedsDecodeError::InvalidReason {
                 reason_index: 0,
                 source,
                 ..
@@ -86,7 +86,7 @@ fn rejects_duplicate_reason_keys() {
 
     assert!(matches!(
         error,
-        DecodeError::DuplicateReason {
+        NeedsDecodeError::DuplicateReason {
             first_index: 0,
             duplicate_index: 1,
             ..
@@ -102,7 +102,7 @@ fn rejects_malformed_and_undeclared_reason_atoms() {
     .unwrap_err();
     assert!(matches!(
         malformed,
-        DecodeError::InvalidReasonAtom {
+        NeedsDecodeError::InvalidReasonAtom {
             reason_index: 0,
             ..
         }
@@ -114,7 +114,7 @@ fn rejects_malformed_and_undeclared_reason_atoms() {
     .unwrap_err();
     assert!(matches!(
         undeclared,
-        DecodeError::UndeclaredReason {
+        NeedsDecodeError::UndeclaredReason {
             reason_index: 0,
             ..
         }

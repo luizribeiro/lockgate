@@ -10,7 +10,7 @@ use super::super::format_payload_too_large;
 /// A failure while decoding a needs manifest custom-section payload.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum DecodeError {
+pub enum NeedsDecodeError {
     PayloadTooLarge {
         actual_bytes: usize,
         max_bytes: usize,
@@ -55,7 +55,7 @@ pub enum DecodeError {
     InvalidManifest(NeedsManifestValidationError),
 }
 
-impl fmt::Display for DecodeError {
+impl fmt::Display for NeedsDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PayloadTooLarge {
@@ -130,7 +130,7 @@ impl fmt::Display for DecodeError {
     }
 }
 
-impl Error for DecodeError {
+impl Error for NeedsDecodeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::PayloadTooLarge { .. } => None,

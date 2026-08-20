@@ -1,5 +1,5 @@
 use lockgate_schema::needs::{MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
-use lockgate_schema::sections::needs::{DecodeError, EncodeError};
+use lockgate_schema::sections::needs::{NeedsDecodeError, NeedsEncodeError};
 use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, ScopeRefEntry};
 
@@ -118,7 +118,7 @@ fn enforces_needs_section_payload_ceiling_on_encode_and_decode() {
     exact_decode.push(b' ');
     assert!(matches!(
         NeedsManifest::from_section_bytes(&exact_decode).unwrap_err(),
-        DecodeError::PayloadTooLarge {
+        NeedsDecodeError::PayloadTooLarge {
             actual_bytes,
             max_bytes: MAX_SECTION_PAYLOAD_BYTES,
         } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1
@@ -144,7 +144,7 @@ fn enforces_needs_section_payload_ceiling_on_encode_and_decode() {
     *adjustable += 1;
     assert!(matches!(
         large_manifest(&lengths).to_section_bytes().unwrap_err(),
-        EncodeError::PayloadTooLarge {
+        NeedsEncodeError::PayloadTooLarge {
             actual_bytes,
             max_bytes: MAX_SECTION_PAYLOAD_BYTES,
         } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1

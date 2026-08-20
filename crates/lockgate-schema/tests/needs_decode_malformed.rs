@@ -1,5 +1,5 @@
 use lockgate_schema::NeedsManifest;
-use lockgate_schema::sections::needs::DecodeError;
+use lockgate_schema::sections::needs::NeedsDecodeError;
 
 #[test]
 fn malformed_payloads_return_errors_without_panicking() {
@@ -10,7 +10,7 @@ fn malformed_payloads_return_errors_without_panicking() {
 
         assert!(result.is_ok(), "decoder panicked for {payload:?}");
         let error = result.unwrap().unwrap_err();
-        assert!(matches!(error, DecodeError::InvalidJson(_)));
+        assert!(matches!(error, NeedsDecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("not valid schema JSON"));
     }
 }
@@ -30,7 +30,7 @@ fn rejects_wrong_typed_manifest_fields() {
     for payload in payloads {
         let error = NeedsManifest::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, DecodeError::InvalidJson(_)));
+        assert!(matches!(error, NeedsDecodeError::InvalidJson(_)));
     }
 }
 
@@ -46,7 +46,7 @@ fn rejects_missing_top_level_fields() {
     for payload in payloads {
         let error = NeedsManifest::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, DecodeError::InvalidJson(_)));
+        assert!(matches!(error, NeedsDecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("missing field"));
     }
 }
@@ -61,6 +61,6 @@ fn rejects_unknown_and_duplicate_top_level_fields() {
     for payload in payloads {
         let error = NeedsManifest::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, DecodeError::InvalidJson(_)));
+        assert!(matches!(error, NeedsDecodeError::InvalidJson(_)));
     }
 }

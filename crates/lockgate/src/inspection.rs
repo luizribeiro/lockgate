@@ -1,5 +1,7 @@
 use std::{error::Error, fmt};
 
+use lockgate_schema::sections::metadata::MetadataDecodeError;
+use lockgate_schema::sections::needs::{NeedsDecodeError, NeedsEncodeError};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{NeedsDigest, NeedsManifest, PluginMetadata};
 use wasmparser::{Encoding, Parser, Payload};
@@ -200,9 +202,9 @@ pub enum InspectError {
     MissingMetadata,
     MissingNeeds,
     DuplicateSection { name: &'static str },
-    Metadata(lockgate_schema::sections::metadata::DecodeError),
-    Needs(lockgate_schema::sections::needs::DecodeError),
-    NeedsDigest(lockgate_schema::sections::needs::EncodeError),
+    Metadata(MetadataDecodeError),
+    Needs(NeedsDecodeError),
+    NeedsDigest(NeedsEncodeError),
 }
 
 impl fmt::Display for InspectError {

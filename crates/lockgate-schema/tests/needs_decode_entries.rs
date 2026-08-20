@@ -1,11 +1,11 @@
 use lockgate_schema::NeedsManifest;
 use lockgate_schema::needs::{MAX_ATOMS_PER_MANIFEST, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
-use lockgate_schema::sections::needs::DecodeError;
+use lockgate_schema::sections::needs::NeedsDecodeError;
 use lockgate_schema::{
     NeedEntryError, NeedsManifestValidationError, ScopeRefEntryError, ScopeValueKind,
 };
 
-fn decode(required: &str, optional: &str) -> Result<(), DecodeError> {
+fn decode(required: &str, optional: &str) -> Result<(), NeedsDecodeError> {
     let bytes =
         format!(r#"{{"format":1,"optional":{optional},"reasons":{{}},"required":{required}}}"#);
     NeedsManifest::from_section_bytes(bytes.as_bytes()).map(|_| ())
@@ -35,7 +35,7 @@ fn rejects_duplicate_atoms_within_and_across_lists() {
         let error = decode(required, optional).unwrap_err();
         assert!(matches!(
             error,
-            DecodeError::InvalidManifest(NeedsManifestValidationError::DuplicateAtom { .. })
+            NeedsDecodeError::InvalidManifest(NeedsManifestValidationError::DuplicateAtom { .. })
         ));
         assert!(error.to_string().contains(duplicate));
         assert!(error.to_string().contains("first declared at"));
@@ -46,12 +46,12 @@ fn rejects_duplicate_atoms_within_and_across_lists() {
 fn rejects_malformed_atom_keys_and_false_flags_at_their_entry_index() {
     for atom in ["notify", ".send", "notify.", "notify.send.extra"] {
         let error = decode(&format!(r#"{{"{atom}":true}}"#), "{}").unwrap_err();
-        assert!(matches!(error, DecodeError::InvalidAtom { .. }));
+        assert!(matches!(error, NeedsDecodeError::InvalidAtom { .. }));
         assert!(error.to_string().contains("required entry 0"));
     }
 
     let error = decode(r#"{"notify.send":false}"#, "{}").unwrap_err();
-    assert!(matches!(error, DecodeError::FalseFlag { .. }));
+    assert!(matches!(error, NeedsDecodeError::FalseFlag { .. }));
     assert!(error.to_string().contains("declared flags must be true"));
 }
 
@@ -61,7 +61,7 @@ fn rejects_empty_scoped_entries() {
 
     assert!(matches!(
         error,
-        DecodeError::InvalidManifest(NeedsManifestValidationError::InvalidEntry {
+        NeedsDecodeError::InvalidManifest(NeedsManifestValidationError::InvalidEntry {
             source: NeedEntryError::EmptyScopes,
             ..
         })
@@ -76,7 +76,7 @@ fn rejects_malformed_setting_and_root_references() {
         ("$Workspace", "root name must start with a lowercase letter"),
     ] {
         let error = decode(&format!(r#"{{"fs.read":["{scope}"]}}"#), "{}").unwrap_err();
-        assert!(matches!(error, DecodeError::InvalidScope { .. }));
+        assert!(matches!(error, NeedsDecodeError::InvalidScope { .. }));
         assert!(error.to_string().contains("required entry 0"));
         assert!(error.to_string().contains(expected));
     }
@@ -88,7 +88,7 @@ fn rejects_empty_literal_scopes() {
 
     assert!(matches!(
         error,
-        DecodeError::InvalidScope {
+        NeedsDecodeError::InvalidScope {
             source: ScopeRefEntryError::EmptyLiteral,
             ..
         }
@@ -122,7 +122,7 @@ fn rejects_every_unsafe_root_subpath_form() {
 
     for (scope, expected) in cases {
         let error = decode(&format!(r#"{{"fs.read":["{scope}"]}}"#), "{}").unwrap_err();
-        assert!(matches!(error, DecodeError::InvalidScope { .. }));
+        assert!(matches!(error, NeedsDecodeError::InvalidScope { .. }));
         assert!(error.to_string().contains(expected), "{scope}: {error}");
     }
 }
@@ -170,7 +170,7 @@ fn rejects_control_and_format_characters_in_every_scope_value_kind() {
             NeedsManifest::from_section_bytes(&serde_json::to_vec(&payload).unwrap()).unwrap_err();
         assert!(matches!(
             error,
-            DecodeError::InvalidScope {
+            NeedsDecodeError::InvalidScope {
                 source: ScopeRefEntryError::DisallowedCharacter {
                     kind: found_kind,
                     byte_index: found_byte_index,
@@ -216,7 +216,7 @@ fn bounds_literal_and_setting_pointer_utf8_bytes() {
             Ok(()) => result.unwrap(),
             Err(kind) => assert!(matches!(
                 result.unwrap_err(),
-                DecodeError::InvalidScope {
+                NeedsDecodeError::InvalidScope {
                     source: ScopeRefEntryError::ScopeValueTooLong {
                         kind: found_kind,
                         max_bytes: MAX_SCOPE_VALUE_BYTES,
@@ -246,7 +246,7 @@ fn bounds_scopes_before_deduplication() {
             Ok(()) => result.unwrap(),
             Err(()) => assert!(matches!(
                 result.unwrap_err(),
-                DecodeError::InvalidManifest(
+                NeedsDecodeError::InvalidManifest(
                     NeedsManifestValidationError::InvalidEntry {
                         source: NeedEntryError::TooManyScopes {
                             found,
@@ -279,7 +279,7 @@ fn bounds_combined_atoms_before_deduplication() {
     let error = decode(&format!("{{{duplicate_entries}}}"), "{}").unwrap_err();
     assert!(matches!(
         error,
-        DecodeError::InvalidManifest(
+        NeedsDecodeError::InvalidManifest(
             NeedsManifestValidationError::TooManyAtoms {
                 found,
                 max: MAX_ATOMS_PER_MANIFEST,
@@ -304,7 +304,7 @@ fn rejects_overlong_and_overdeep_root_subpaths() {
             decode(&format!(r#"{{"fs.read":["$workspace/{subpath}"]}}"#), "{}").unwrap_err();
         assert!(matches!(
             error,
-            DecodeError::InvalidScope { source, .. } if source == expected
+            NeedsDecodeError::InvalidScope { source, .. } if source == expected
         ));
     }
 }

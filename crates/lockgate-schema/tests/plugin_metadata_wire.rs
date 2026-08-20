@@ -1,7 +1,7 @@
 #[path = "data/donor_vectors.rs"]
 mod donor_vectors;
 
-use lockgate_schema::sections::metadata::{DecodeError, EncodeError};
+use lockgate_schema::sections::metadata::{MetadataDecodeError, MetadataEncodeError};
 use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_METADATA_SECTION};
 use lockgate_schema::{PluginMetadata, PluginMetadataValidationError};
 
@@ -78,11 +78,11 @@ fn rejects_disallowed_version_format_characters_at_their_byte_index() {
 
     assert!(matches!(
         error,
-        DecodeError::InvalidMetadata(PluginMetadataValidationError::DisallowedCharacter {
+        MetadataDecodeError::InvalidMetadata(PluginMetadataValidationError::DisallowedCharacter {
             field: lockgate_schema::PluginMetadataField::Version,
             byte_index: 7,
             character: '\u{202e}',
-        })
+        },)
     ));
     assert!(error.to_string().contains("format character at byte 7"));
 }
@@ -106,7 +106,7 @@ fn bounds_version_display_strings_by_utf8_bytes() {
 fn rejects_truncated_payloads_without_panicking() {
     let error = PluginMetadata::from_section_bytes(br#"{"format":1,"id":"plugin""#).unwrap_err();
 
-    assert!(matches!(error, DecodeError::InvalidJson(_)));
+    assert!(matches!(error, MetadataDecodeError::InvalidJson(_)));
     assert!(error.to_string().contains("not valid schema JSON"));
 }
 
@@ -119,7 +119,9 @@ fn rejects_unknown_format_versions_with_the_version_in_the_error() {
 
     assert!(matches!(
         error,
-        DecodeError::InvalidMetadata(PluginMetadataValidationError::UnsupportedFormat { found: 7 })
+        MetadataDecodeError::InvalidMetadata(PluginMetadataValidationError::UnsupportedFormat {
+            found: 7
+        },)
     ));
     assert_eq!(
         error.to_string(),
@@ -167,7 +169,7 @@ fn rejects_non_utf8_and_non_json_payloads() {
     for payload in [&[0xff, 0xfe][..], &b"not JSON"[..]] {
         let error = PluginMetadata::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, DecodeError::InvalidJson(_)));
+        assert!(matches!(error, MetadataDecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("not valid schema JSON"));
     }
 }
@@ -180,7 +182,7 @@ fn rejects_wrong_typed_fields() {
     ] {
         let error = PluginMetadata::from_section_bytes(payload).unwrap_err();
 
-        assert!(matches!(error, DecodeError::InvalidJson(_)));
+        assert!(matches!(error, MetadataDecodeError::InvalidJson(_)));
         assert!(error.to_string().contains("invalid type"));
     }
 }
@@ -192,7 +194,7 @@ fn rejects_fields_outside_the_wire_schema() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, DecodeError::InvalidJson(_)));
+    assert!(matches!(error, MetadataDecodeError::InvalidJson(_)));
     assert!(error.to_string().contains("unknown field `publisher`"));
 }
 
@@ -202,7 +204,7 @@ fn rejects_missing_required_fields() {
         PluginMetadata::from_section_bytes(br#"{"format":1,"name":"Plugin","version":"1.0.0"}"#)
             .unwrap_err();
 
-    assert!(matches!(error, DecodeError::InvalidJson(_)));
+    assert!(matches!(error, MetadataDecodeError::InvalidJson(_)));
     assert!(error.to_string().contains("missing field `id`"));
 }
 
@@ -228,7 +230,7 @@ fn validates_fields_before_encoding_and_enforces_decode_ceiling() {
         .with_description("x".repeat(2049));
     assert!(matches!(
         over.to_section_bytes().unwrap_err(),
-        EncodeError::InvalidMetadata(PluginMetadataValidationError::FieldTooLong {
+        MetadataEncodeError::InvalidMetadata(PluginMetadataValidationError::FieldTooLong {
             field: lockgate_schema::PluginMetadataField::Description,
             max_bytes: 2048,
         })
@@ -237,7 +239,7 @@ fn validates_fields_before_encoding_and_enforces_decode_ceiling() {
     let oversized_garbage = vec![0; MAX_SECTION_PAYLOAD_BYTES + 1];
     assert!(matches!(
         PluginMetadata::from_section_bytes(&oversized_garbage).unwrap_err(),
-        DecodeError::PayloadTooLarge {
+        MetadataDecodeError::PayloadTooLarge {
             actual_bytes,
             max_bytes: MAX_SECTION_PAYLOAD_BYTES,
         } if actual_bytes == MAX_SECTION_PAYLOAD_BYTES + 1

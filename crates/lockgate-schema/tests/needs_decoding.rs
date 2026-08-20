@@ -1,4 +1,4 @@
-use lockgate_schema::sections::needs::DecodeError;
+use lockgate_schema::sections::needs::NeedsDecodeError;
 use lockgate_schema::{NeedsManifest, NeedsManifestValidationError};
 
 #[test]
@@ -32,7 +32,9 @@ fn decoding_rejects_unknown_format_versions() {
 
     assert!(matches!(
         error,
-        DecodeError::InvalidManifest(NeedsManifestValidationError::UnsupportedFormat { found: 2 })
+        NeedsDecodeError::InvalidManifest(NeedsManifestValidationError::UnsupportedFormat {
+            found: 2,
+        })
     ));
     assert!(
         error
