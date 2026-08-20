@@ -98,6 +98,7 @@ impl ExecEngine {
             plugin: None,
             jobs: None,
             settings: SettingsState::NotReady,
+            environment: EnvironmentGrants::default(),
         })
     }
 
@@ -123,6 +124,7 @@ impl ExecEngine {
             plugin: None,
             jobs: None,
             settings: SettingsState::NotReady,
+            environment: EnvironmentGrants::default(),
         })
     }
 }
@@ -133,6 +135,29 @@ pub(crate) struct LoadedComponent<S: 'static> {
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     jobs: Option<DetachedJobContext>,
     settings: SettingsState,
+    environment: EnvironmentGrants,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct EnvironmentGrants {
+    required: Vec<String>,
+    optional: Vec<String>,
+}
+
+impl EnvironmentGrants {
+    pub(crate) fn new(required: Vec<String>, optional: Vec<String>) -> Self {
+        Self { required, optional }
+    }
+
+    fn wasi_context(&self) -> WasiCtx {
+        let mut wasi = WasiCtxBuilder::new();
+        for name in self.required.iter().chain(&self.optional) {
+            if let Ok(value) = std::env::var(name) {
+                wasi.env(name, value);
+            }
+        }
+        wasi.build()
+    }
 }
 
 impl<S: Send + Sync + 'static> LoadedComponent<S> {
@@ -143,6 +168,10 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
     ) {
         self.plugin = Some(Arc::new(plugin));
         self.jobs = Some(jobs);
+    }
+
+    pub(crate) fn set_environment_grants(&mut self, environment: EnvironmentGrants) {
+        self.environment = environment;
     }
 
     pub(crate) fn set_settings(&mut self, settings: ValidatedSettings) {
@@ -233,6 +262,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
     }
 
     fn configured_store(&self, data: S, max_memory_bytes: usize) -> Store<StoreCtx<S>> {
+        let wasi = self.environment.wasi_context();
         let mut store = Store::new(
             self.instance_pre.engine(),
             StoreCtx::new(
@@ -241,6 +271,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 self.plugin.clone(),
                 self.jobs.clone(),
                 self.settings.clone(),
+                wasi,
                 max_memory_bytes,
             ),
         );
@@ -316,6 +347,7 @@ impl<S> StoreCtx<S> {
         plugin: Option<Arc<dyn Any + Send + Sync>>,
         jobs: Option<DetachedJobContext>,
         settings: SettingsState,
+        wasi: WasiCtx,
         max_memory_bytes: usize,
     ) -> Self {
         let http_hooks = HttpHooks::new(plugin.clone());
@@ -327,11 +359,10 @@ impl<S> StoreCtx<S> {
             jobs,
             resources: ResourceStore::__new(),
             settings,
-            // WasiCtxBuilder is deliberately left at its deny-by-default
-            // network policy and receives no filesystem preopens. Keeping
-            // these grants absent prevents plugins from bypassing Lockgate's
-            // capability checks through raw WASI sockets or paths.
-            wasi: WasiCtxBuilder::new().build(),
+            // The context retains its deny-by-default network policy and no
+            // filesystem preopens. Raw WASI sockets and paths therefore cannot
+            // bypass Lockgate's capability checks.
+            wasi,
             wasi_http: WasiHttpCtx::new(),
             http_hooks,
             wasi_resources: ResourceTable::new(),

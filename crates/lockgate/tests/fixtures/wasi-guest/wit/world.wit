@@ -2,8 +2,11 @@ package test:wasi;
 
 interface guest {
   clock-seconds: func() -> u64;
+  environment-count: func() -> u64;
   filesystem-denied: func() -> bool;
   network-denied: func() -> bool;
+  variable-absent: func(name: string) -> bool;
+  variable-equals: func(name: string, value: string) -> bool;
 }
 
 world fixture {

@@ -18,6 +18,10 @@ impl exports::test::wasi::guest::Guest for Fixture {
             .as_secs()
     }
 
+    fn environment_count() -> u64 {
+        std::env::vars().count() as u64
+    }
+
     fn network_denied() -> bool {
         let loopback = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 9);
         TcpStream::connect(loopback)
@@ -31,6 +35,14 @@ impl exports::test::wasi::guest::Guest for Fixture {
             .expect_err("the default WASI context must deny filesystem access")
             .kind()
             == ErrorKind::NotFound
+    }
+
+    fn variable_absent(name: String) -> bool {
+        std::env::var_os(name).is_none()
+    }
+
+    fn variable_equals(name: String, value: String) -> bool {
+        std::env::var(name).is_ok_and(|observed| observed == value)
     }
 }
 

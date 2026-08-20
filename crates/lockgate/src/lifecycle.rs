@@ -7,13 +7,16 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use lockgate_schema::{AtomKey, NeedKind, NeedsManifest, PluginMetadata, hex_encode};
+use lockgate_schema::{
+    AtomKey, GrantSet, GrantValue, NeedKind, NeedsManifest, PluginMetadata, hex_encode,
+};
 use sha2::{Digest, Sha256};
 
 use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
 use crate::exec::{
-    ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError, LoadedComponent, TypedImports,
+    EnvironmentGrants, ExecEngine, ExecError, ExecLimits, ImportsFactory, LoadError,
+    LoadedComponent, TypedImports,
 };
 use crate::inspection::{
     InspectError, Inspection, decode_imported_interfaces, decode_metadata, decode_needs,
@@ -534,12 +537,14 @@ impl<S: CallContext> HostBuilder<S> {
         {
             return Err(AdmissionError::DuplicateInstanceId { instance_id });
         }
+        let environment = environment_grants(&resolved);
         let effective_grants =
             bind_effective_grants(&instance_id, prepared_digest, resolved, &acceptance)?;
 
         let mut artifact = artifact
             .downcast::<LoadedComponent<S>>()
             .expect("prepared artifact type must match its originating HostBuilder");
+        artifact.set_environment_grants(environment);
         let handle = PluginHandle {
             host: self.id,
             index: self.admitted.len(),
@@ -583,6 +588,27 @@ impl<S: CallContext> HostBuilder<S> {
             jobs: self.jobs,
             registry: self.registry,
         }
+    }
+}
+
+fn environment_grants(resolved: &ResolvedNeeds) -> EnvironmentGrants {
+    let (capability, permission) =
+        lockgate_policy::__private::scoped_permission_ids(lockgate_policy::env::READ);
+    let atom = AtomKey::new(capability, permission)
+        .expect("typed permissions always contain a valid wire atom");
+    EnvironmentGrants::new(
+        scoped_grant_values(&resolved.required, &atom),
+        scoped_grant_values(&resolved.optional, &atom),
+    )
+}
+
+fn scoped_grant_values(grants: &GrantSet, atom: &AtomKey) -> Vec<String> {
+    match grants.get(atom) {
+        Some(GrantValue::Scopes(values)) => values.clone(),
+        Some(GrantValue::Flag) => {
+            unreachable!("a resolved scoped permission cannot contain an unscoped grant")
+        }
+        None => Vec::new(),
     }
 }
 
