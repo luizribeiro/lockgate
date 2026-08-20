@@ -55,6 +55,12 @@ pub(crate) static EXEC_FUEL_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("exec-fuel-guest", "lockgate_exec_fuel_fixture.wasm"));
 pub(crate) static PUBLIC_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("public-guest", "lockgate_public_fixture.wasm"));
+pub(crate) static REEXPORTED_PLUGIN_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    build_fixture(
+        "reexported-plugin-guest",
+        "lockgate_reexported_plugin_fixture.wasm",
+    )
+});
 pub(crate) static HOST_BINDINGS_FIXTURE: LazyLock<Vec<u8>> =
     LazyLock::new(|| build_fixture("host-bindings-guest", "lockgate_host_bindings_fixture.wasm"));
 pub(crate) static GUARDED_BINDINGS_FIXTURE: LazyLock<Vec<u8>> = LazyLock::new(|| {

@@ -1337,6 +1337,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lockgate-plugin-facade-reexport-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin",
+]
+
+[[package]]
 name = "lockgate-plugin-macros"
 version = "0.1.0"
 dependencies = [
@@ -1362,6 +1369,13 @@ name = "lockgate-public-fixture"
 version = "0.1.0"
 dependencies = [
  "lockgate-plugin",
+]
+
+[[package]]
+name = "lockgate-reexported-plugin-fixture"
+version = "0.1.0"
+dependencies = [
+ "lockgate-plugin-facade-reexport-fixture",
 ]
 
 [[package]]

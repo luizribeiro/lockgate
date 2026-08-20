@@ -1,0 +1,10 @@
+[package]
+name = "lockgate-reexported-plugin-fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sage-plugin = { package = "lockgate-plugin-facade-reexport-fixture", path = "../plugin-facade-reexport" }

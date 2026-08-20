@@ -1,0 +1,7 @@
+[package]
+name = "lockgate-plugin-facade-reexport-fixture"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lockgate-plugin = { path = "../../../../lockgate-plugin" }
