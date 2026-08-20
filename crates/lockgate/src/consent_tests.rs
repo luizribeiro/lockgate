@@ -146,6 +146,7 @@ async fn review_projects_resolved_grants_and_author_reasons() {
     assert_eq!(review.instance_id, INSTANCE_ID);
     assert_eq!(review.plugin_label, "Session helper");
     assert_eq!(review.request_digest, prepared.review().request_digest);
+    assert_eq!(review.component_digest, prepared.review().component_digest);
     assert_eq!(review.grants.len(), 2);
     assert_eq!(review.grants[0].capability, "notify");
     assert_eq!(review.grants[0].permission, "send");
@@ -191,12 +192,17 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
 
     assert_eq!(record.instance_id, review.instance_id);
     assert_eq!(record.request_digest, review.request_digest);
+    assert_eq!(
+        record.component_digest.as_deref(),
+        Some(review.component_digest.as_str())
+    );
     assert_eq!(record.grants, review.grants);
     assert_eq!(decoded, record);
     assert_eq!(decoded.approved_at, "2026-08-19T14:30:00Z");
 
     let encoded: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(encoded["request_digest"], record.request_digest.to_string());
+    assert_eq!(encoded["component_digest"], review.component_digest);
     assert!(encoded.get("fingerprint").is_none());
 }
 
@@ -213,6 +219,7 @@ async fn approval_record_accepts_the_legacy_fingerprint_key() {
     let legacy_json = serde_json::json!({
         "instance_id": record.instance_id,
         "fingerprint": record.request_digest.to_string(),
+        "component_digest": record.component_digest,
         "grants": record.grants,
         "approved_at": record.approved_at,
     });
@@ -221,6 +228,77 @@ async fn approval_record_accepts_the_legacy_fingerprint_key() {
 
     assert_eq!(decoded, record);
     assert_eq!(decoded.request_digest, record.request_digest);
+}
+
+#[tokio::test]
+async fn approval_record_without_a_component_digest_deserializes() {
+    let needs =
+        NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap();
+    let mut builder = builder();
+    let prepared = builder
+        .prepare(INSTANCE_ID, &fixture(&needs), PluginConfig::default())
+        .await
+        .unwrap();
+    let record = prepared.approve("2026-08-19T14:30:00Z".to_owned());
+    let stored_json = serde_json::json!({
+        "instance_id": record.instance_id,
+        "request_digest": record.request_digest.to_string(),
+        "grants": record.grants,
+        "approved_at": record.approved_at,
+    });
+
+    let decoded: ConsentRecord = serde_json::from_value(stored_json).unwrap();
+
+    assert_eq!(
+        decoded,
+        ConsentRecord {
+            component_digest: None,
+            ..record.clone()
+        }
+    );
+    assert_eq!(decoded.component_digest, None);
+}
+
+#[tokio::test]
+async fn component_digest_changes_do_not_require_new_consent() {
+    let needs =
+        NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap();
+    let original_bytes = fixture(&needs);
+    let rebuilt_bytes = with_section(original_bytes.clone(), "build-id", b"rebuilt");
+    let mut prior_builder = builder();
+    let prior = prior_builder
+        .prepare(INSTANCE_ID, &original_bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let prior_record = prior.approve("2026-08-19T14:30:00Z".to_owned());
+
+    for component_digest in [None, prior_record.component_digest.clone()] {
+        let mut record = prior_record.clone();
+        record.component_digest = component_digest;
+        let mut current_builder = builder();
+        let current = current_builder
+            .prepare(INSTANCE_ID, &rebuilt_bytes, PluginConfig::default())
+            .await
+            .unwrap();
+
+        assert_eq!(record.request_digest, current.review().request_digest);
+        if let Some(prior_digest) = &record.component_digest {
+            assert_ne!(prior_digest, &current.review().component_digest);
+        }
+
+        let acceptance = current.accept_reviewed(Some(&record)).unwrap();
+        let admitted = current_builder
+            .admit(
+                current,
+                acceptance,
+                RuntimeLimits::default(),
+                InvocationCtx::bounded(1_000_000),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(admitted.id(), INSTANCE_ID);
+    }
 }
 
 #[tokio::test]

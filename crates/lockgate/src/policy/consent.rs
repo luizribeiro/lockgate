@@ -14,6 +14,7 @@ pub struct ConsentManifest {
     pub instance_id: String,
     pub plugin_label: String,
     pub request_digest: PreparedNeedsDigest,
+    pub component_digest: String,
     pub grants: Vec<GrantReview>,
 }
 
@@ -33,6 +34,8 @@ pub struct ConsentRecord {
     pub instance_id: String,
     #[serde(alias = "fingerprint")]
     pub request_digest: PreparedNeedsDigest,
+    #[serde(default)]
+    pub component_digest: Option<String>,
     pub grants: Vec<GrantReview>,
     pub approved_at: String,
 }
@@ -75,6 +78,7 @@ impl Prepared {
             instance_id: self.instance_id.clone(),
             plugin_label: self.inspection.metadata().name().to_owned(),
             request_digest: self.prepared_digest,
+            component_digest: self.component_digest.clone(),
             grants: grant_reviews(&self.resolved, self.inspection.needs()),
         }
     }
@@ -85,6 +89,7 @@ impl Prepared {
         ConsentRecord {
             instance_id: manifest.instance_id,
             request_digest: manifest.request_digest,
+            component_digest: Some(manifest.component_digest),
             grants: manifest.grants,
             approved_at,
         }

@@ -697,7 +697,6 @@ pub struct Prepared {
     pub(crate) inspection: Inspection,
     pub(crate) resolved: ResolvedNeeds,
     pub(crate) prepared_digest: PreparedNeedsDigest,
-    #[allow(dead_code, reason = "retained for the consent audit surface")]
     pub(crate) component_digest: String,
     artifact: Box<dyn Any + Send>,
 }
