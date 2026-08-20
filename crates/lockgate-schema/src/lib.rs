@@ -10,6 +10,6 @@ pub use grants::{GrantSet, GrantValue, GrantValueError};
 pub use metadata::{PluginMetadata, PluginMetadataField, PluginMetadataValidationError};
 pub use needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedEntry, NeedEntryError, NeedKind, NeedReasonError,
-    NeedsDigest, NeedsManifest, NeedsManifestValidationError, Requirement, ScopeRef, ScopeRefError,
-    ScopeValueKind, hex_encode,
+    NeedsDigest, NeedsManifest, NeedsManifestValidationError, Requirement, ScopeRefEntry,
+    ScopeRefEntryError, ScopeValueKind, hex_encode,
 };

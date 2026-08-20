@@ -7,7 +7,7 @@ use lockgate::{
     ScopeError, ScopeReference, ScopeRepr, SymbolicRoots,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
 const PLUGIN_ID: &str = "com.example.prepared-grants";
 
@@ -79,7 +79,7 @@ fn atom(value: &str) -> AtomKey {
     value.parse().unwrap()
 }
 
-fn scoped(references: Vec<ScopeRef>) -> NeedEntry {
+fn scoped(references: Vec<ScopeRefEntry>) -> NeedEntry {
     NeedEntry::scoped(atom("sessions.read"), references).unwrap()
 }
 
@@ -122,9 +122,12 @@ fn fixture(needs: &NeedsManifest) -> Vec<u8> {
 async fn literal_setting_and_root_references_prepare_accept_and_admit() {
     let needs = NeedsManifest::new(
         vec![scoped(vec![
-            ScopeRef::literal("everything").unwrap(),
-            ScopeRef::setting("/scope").unwrap(),
-            ScopeRef::root("workspace").unwrap().join("shared").unwrap(),
+            ScopeRefEntry::literal("everything").unwrap(),
+            ScopeRefEntry::setting("/scope").unwrap(),
+            ScopeRefEntry::root("workspace")
+                .unwrap()
+                .join("shared")
+                .unwrap(),
         ])],
         vec![NeedEntry::flag(atom("sessions.send"))],
     )
@@ -161,7 +164,7 @@ async fn literal_setting_and_root_references_prepare_accept_and_admit() {
 
 #[tokio::test]
 async fn malformed_literal_fails_prepare_with_the_complete_teaching_error() {
-    let needs = required(scoped(vec![ScopeRef::literal("gpu").unwrap()]));
+    let needs = required(scoped(vec![ScopeRefEntry::literal("gpu").unwrap()]));
     let mut builder = host_builder();
 
     let error = builder
@@ -191,7 +194,7 @@ async fn malformed_literal_fails_prepare_with_the_complete_teaching_error() {
 
 #[tokio::test]
 async fn setting_and_root_resolution_failures_are_prepare_errors() {
-    let setting = required(scoped(vec![ScopeRef::setting("/scope").unwrap()]));
+    let setting = required(scoped(vec![ScopeRefEntry::setting("/scope").unwrap()]));
     for (settings, expected_kind) in [
         (serde_json::json!({ "scope": null }), JsonValueKind::Null),
         (serde_json::json!({ "scope": 7 }), JsonValueKind::Number),
@@ -233,7 +236,7 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
         }) if pointer == "/scope"
     ));
 
-    let root = required(scoped(vec![ScopeRef::root("workspace").unwrap()]));
+    let root = required(scoped(vec![ScopeRefEntry::root("workspace").unwrap()]));
     let mut builder = host_builder();
     let error = builder
         .prepare(PLUGIN_ID, &fixture(&root), PluginConfig::default())
@@ -286,7 +289,7 @@ async fn acceptance_for_one_instance_cannot_admit_another() {
 
 #[tokio::test]
 async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
-    let needs = required(scoped(vec![ScopeRef::setting("/scope").unwrap()]));
+    let needs = required(scoped(vec![ScopeRefEntry::setting("/scope").unwrap()]));
     let bytes = fixture(&needs);
     let mut builder = host_builder();
     let stale = builder

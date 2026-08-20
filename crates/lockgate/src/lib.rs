@@ -35,7 +35,7 @@ pub use lifecycle::{
     InvocationCtx, LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
 };
 pub use lockgate_policy::{
-    CapabilityContract, EnvVarName, HttpOrigin, Permission, Scope, ScopeError, ScopeRepr,
+    CapabilityContract, EnvVarName, HttpOrigin, Permission, Scope, ScopeError, ScopeRef, ScopeRepr,
     ScopedPermission, capability, check_scope_laws, env, net,
 };
 pub use policy::{

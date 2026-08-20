@@ -8,7 +8,7 @@ use lockgate::{
     ResolveScopedResourceHandle, Resource, ResourceLookupError, RuntimeLimits, Scope,
     ScopedResource,
 };
-use lockgate_schema::{NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+use lockgate_schema::{NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
 mod common;
 
@@ -182,7 +182,7 @@ fn needs_current() -> NeedsManifest {
         vec![
             NeedEntry::scoped(
                 "session.send".parse().unwrap(),
-                vec![ScopeRef::literal("current").unwrap()],
+                vec![ScopeRefEntry::literal("current").unwrap()],
             )
             .unwrap(),
         ],

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use super::{AtomKey, ScopeRef, ScopeRefError};
+use super::{AtomKey, ScopeRefEntry, ScopeRefEntryError};
 use crate::text::{DisplayStringViolation, classify_disallowed_character, validate_display_string};
 
 /// Maximum number of scope values in one scoped entry before deduplication.
@@ -12,7 +12,7 @@ pub enum NeedKind {
     /// An unscoped yes/no operation.
     Flag,
     /// An operation over a non-empty union of symbolic scopes.
-    Scoped(Vec<ScopeRef>),
+    Scoped(Vec<ScopeRefEntry>),
 }
 
 /// One symbolic permission need.
@@ -34,9 +34,9 @@ impl NeedEntry {
     }
 
     /// Declares a scoped operation and canonicalizes its set of references.
-    pub fn scoped(atom: AtomKey, mut scopes: Vec<ScopeRef>) -> Result<Self, NeedEntryError> {
+    pub fn scoped(atom: AtomKey, mut scopes: Vec<ScopeRefEntry>) -> Result<Self, NeedEntryError> {
         validate_scopes(&scopes)?;
-        scopes.sort_by_key(ScopeRef::to_wire);
+        scopes.sort_by_key(ScopeRefEntry::to_wire);
         scopes.dedup();
         Ok(Self {
             atom,
@@ -79,7 +79,7 @@ impl NeedEntry {
     }
 }
 
-fn validate_scopes(scopes: &[ScopeRef]) -> Result<(), NeedEntryError> {
+fn validate_scopes(scopes: &[ScopeRefEntry]) -> Result<(), NeedEntryError> {
     if scopes.len() > MAX_SCOPES_PER_ENTRY {
         return Err(NeedEntryError::TooManyScopes {
             found: scopes.len(),
@@ -102,8 +102,14 @@ fn validate_scopes(scopes: &[ScopeRef]) -> Result<(), NeedEntryError> {
 #[non_exhaustive]
 pub enum NeedEntryError {
     EmptyScopes,
-    TooManyScopes { found: usize, max: usize },
-    InvalidScope { index: usize, source: ScopeRefError },
+    TooManyScopes {
+        found: usize,
+        max: usize,
+    },
+    InvalidScope {
+        index: usize,
+        source: ScopeRefEntryError,
+    },
     InvalidReason(NeedReasonError),
 }
 
@@ -193,9 +199,9 @@ mod tests {
         let entry = NeedEntry::scoped(
             atom(),
             vec![
-                ScopeRef::root("workspace").unwrap(),
-                ScopeRef::literal("all").unwrap(),
-                ScopeRef::root("workspace").unwrap(),
+                ScopeRefEntry::root("workspace").unwrap(),
+                ScopeRefEntry::literal("all").unwrap(),
+                ScopeRefEntry::root("workspace").unwrap(),
             ],
         )
         .unwrap();
@@ -203,8 +209,8 @@ mod tests {
         assert_eq!(
             entry.kind(),
             &NeedKind::Scoped(vec![
-                ScopeRef::root("workspace").unwrap(),
-                ScopeRef::literal("all").unwrap(),
+                ScopeRefEntry::root("workspace").unwrap(),
+                ScopeRefEntry::literal("all").unwrap(),
             ])
         );
     }
@@ -221,7 +227,7 @@ mod tests {
     fn validation_catches_publicly_constructed_invalid_references() {
         let error = NeedEntry::scoped(
             atom(),
-            vec![ScopeRef::Root {
+            vec![ScopeRefEntry::Root {
                 name: "Workspace".into(),
                 subpath: None,
             }],

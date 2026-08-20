@@ -6,7 +6,7 @@ use lockgate::{
     AdmissionError, CallError, Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, Role,
     RoleInvocation, RuntimeLimits, Value,
 };
-use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 use std::future::Future;
 use std::process::Command;
 use wasmtime::Result;
@@ -93,7 +93,7 @@ fn env_manifest(names: &[&str], optional: bool) -> NeedsManifest {
         atom,
         names
             .iter()
-            .map(|name| ScopeRef::literal(*name).unwrap())
+            .map(|name| ScopeRefEntry::literal(*name).unwrap())
             .collect(),
     )
     .unwrap();

@@ -10,7 +10,7 @@ use lockgate::{
     ScopedResource,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -635,7 +635,7 @@ fn runtime_fixture(plugin_id: &str, needs: &NeedsManifest) -> Vec<u8> {
 fn scoped_need(atom: &str, scope: &str) -> NeedEntry {
     NeedEntry::scoped(
         atom.parse().unwrap(),
-        vec![ScopeRef::literal(scope).unwrap()],
+        vec![ScopeRefEntry::literal(scope).unwrap()],
     )
     .unwrap()
 }

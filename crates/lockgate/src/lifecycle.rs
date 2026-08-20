@@ -1130,7 +1130,7 @@ mod grant_tests {
 
     use lockgate_policy::{Scope, ScopeError, ScopeRepr};
     use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
-    use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+    use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -1273,8 +1273,8 @@ mod grant_tests {
                 NeedEntry::scoped(
                     atom("sessions.read"),
                     vec![
-                        ScopeRef::literal("everything").unwrap(),
-                        ScopeRef::literal("all").unwrap(),
+                        ScopeRefEntry::literal("everything").unwrap(),
+                        ScopeRefEntry::literal("all").unwrap(),
                     ],
                 )
                 .unwrap(),
@@ -1330,7 +1330,7 @@ mod grant_tests {
             vec![
                 NeedEntry::scoped(
                     atom("sessions.read"),
-                    vec![ScopeRef::setting("/scope").unwrap()],
+                    vec![ScopeRefEntry::setting("/scope").unwrap()],
                 )
                 .unwrap(),
             ],
@@ -1478,7 +1478,7 @@ mod grant_tests {
             vec![
                 NeedEntry::scoped(
                     atom("net.egress"),
-                    vec![ScopeRef::literal("https://example.com").unwrap()],
+                    vec![ScopeRefEntry::literal("https://example.com").unwrap()],
                 )
                 .unwrap(),
             ],
@@ -1539,7 +1539,7 @@ mod grant_tests {
             vec![
                 NeedEntry::scoped(
                     atom("sessions.read"),
-                    vec![ScopeRef::literal("everything").unwrap()],
+                    vec![ScopeRefEntry::literal("everything").unwrap()],
                 )
                 .unwrap(),
             ],
@@ -1596,8 +1596,8 @@ mod grant_tests {
                 NeedEntry::scoped(
                     atom("sessions.read"),
                     vec![
-                        ScopeRef::literal("everything").unwrap(),
-                        ScopeRef::literal("all").unwrap(),
+                        ScopeRefEntry::literal("everything").unwrap(),
+                        ScopeRefEntry::literal("all").unwrap(),
                     ],
                 )
                 .unwrap(),

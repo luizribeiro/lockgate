@@ -3,7 +3,7 @@
 use std::{error::Error, fmt};
 
 use lockgate_policy::ScopeError;
-use lockgate_schema::{AtomKey, GrantSet, NeedKind, NeedsManifest, ScopeRef};
+use lockgate_schema::{AtomKey, GrantSet, NeedKind, NeedsManifest, ScopeRefEntry};
 use serde_json::Value;
 
 use super::CapabilityRegistry;
@@ -68,7 +68,7 @@ pub(crate) fn resolve_needs(
 
 fn resolve_scope(
     atom: &AtomKey,
-    reference: &ScopeRef,
+    reference: &ScopeRefEntry,
     settings: &Value,
     roots: &SymbolicRoots,
     permission: lockgate_policy::__private::ErasedPermission,
@@ -97,13 +97,13 @@ fn resolve_scope(
 
 fn resolve_reference(
     atom: &AtomKey,
-    reference: &ScopeRef,
+    reference: &ScopeRefEntry,
     settings: &Value,
     roots: &SymbolicRoots,
 ) -> Result<String, ScopeResolutionError> {
     match reference {
-        ScopeRef::Literal(value) => Ok(value.clone()),
-        ScopeRef::Setting(pointer) => {
+        ScopeRefEntry::Literal(value) => Ok(value.clone()),
+        ScopeRefEntry::Setting(pointer) => {
             let value =
                 settings
                     .pointer(pointer)
@@ -120,7 +120,7 @@ fn resolve_reference(
             };
             Ok(value.clone())
         }
-        ScopeRef::Root { name, subpath } => {
+        ScopeRefEntry::Root { name, subpath } => {
             let root = roots
                 .get(name)
                 .ok_or_else(|| ScopeResolutionError::UnmappedRoot {
@@ -211,14 +211,14 @@ pub struct InvalidScopeValue {
     pub source: ScopeError,
 }
 
-impl From<&ScopeRef> for ScopeReference {
-    fn from(reference: &ScopeRef) -> Self {
+impl From<&ScopeRefEntry> for ScopeReference {
+    fn from(reference: &ScopeRefEntry) -> Self {
         match reference {
-            ScopeRef::Literal(_) => Self::Literal,
-            ScopeRef::Setting(pointer) => Self::Setting {
+            ScopeRefEntry::Literal(_) => Self::Literal,
+            ScopeRefEntry::Setting(pointer) => Self::Setting {
                 pointer: pointer.clone(),
             },
-            ScopeRef::Root { .. } => Self::Root {
+            ScopeRefEntry::Root { .. } => Self::Root {
                 symbol: reference.to_wire(),
             },
         }
@@ -324,7 +324,7 @@ mod tests {
     use std::str::FromStr;
 
     use lockgate_policy::{Scope, ScopeRepr};
-    use lockgate_schema::{GrantValue, NeedEntry, ScopeRef};
+    use lockgate_schema::{GrantValue, NeedEntry, ScopeRefEntry};
     use serde_json::json;
 
     use super::*;
@@ -383,7 +383,7 @@ mod tests {
         value.parse().unwrap()
     }
 
-    fn scoped(references: Vec<ScopeRef>) -> NeedEntry {
+    fn scoped(references: Vec<ScopeRefEntry>) -> NeedEntry {
         NeedEntry::scoped(atom("sessions.read"), references).unwrap()
     }
 
@@ -401,10 +401,13 @@ mod tests {
     fn resolves_every_reference_kind_and_collapses_canonical_duplicates() {
         let needs = manifest(
             vec![scoped(vec![
-                ScopeRef::literal("everything").unwrap(),
-                ScopeRef::setting("/scope").unwrap(),
-                ScopeRef::root("workspace").unwrap().join("shared").unwrap(),
-                ScopeRef::literal("all").unwrap(),
+                ScopeRefEntry::literal("everything").unwrap(),
+                ScopeRefEntry::setting("/scope").unwrap(),
+                ScopeRefEntry::root("workspace")
+                    .unwrap()
+                    .join("shared")
+                    .unwrap(),
+                ScopeRefEntry::literal("all").unwrap(),
             ])],
             vec![NeedEntry::flag(atom("sessions.send"))],
         );
@@ -431,7 +434,7 @@ mod tests {
     #[test]
     fn missing_and_non_string_settings_are_teaching_errors() {
         let needs = manifest(
-            vec![scoped(vec![ScopeRef::setting("/scope").unwrap()])],
+            vec![scoped(vec![ScopeRefEntry::setting("/scope").unwrap()])],
             vec![],
         );
         let cases = [
@@ -475,7 +478,7 @@ mod tests {
     #[test]
     fn unmapped_roots_name_the_atom_and_symbol() {
         let needs = manifest(
-            vec![scoped(vec![ScopeRef::root("workspace").unwrap()])],
+            vec![scoped(vec![ScopeRefEntry::root("workspace").unwrap()])],
             vec![],
         );
 
@@ -495,7 +498,7 @@ mod tests {
     #[test]
     fn malformed_literals_name_reference_value_type_and_parser_error() {
         let needs = manifest(
-            vec![scoped(vec![ScopeRef::literal("gpu").unwrap()])],
+            vec![scoped(vec![ScopeRefEntry::literal("gpu").unwrap()])],
             vec![],
         );
 
@@ -528,7 +531,7 @@ mod tests {
     #[test]
     fn malformed_setting_values_retain_the_original_pointer() {
         let needs = manifest(
-            vec![scoped(vec![ScopeRef::setting("/pool").unwrap()])],
+            vec![scoped(vec![ScopeRefEntry::setting("/pool").unwrap()])],
             vec![],
         );
 
@@ -556,7 +559,7 @@ mod tests {
     fn malformed_optional_references_fail_resolution_too() {
         let needs = manifest(
             vec![NeedEntry::flag(atom("sessions.send"))],
-            vec![scoped(vec![ScopeRef::literal("gpu").unwrap()])],
+            vec![scoped(vec![ScopeRefEntry::literal("gpu").unwrap()])],
         );
 
         assert!(matches!(
@@ -579,7 +582,7 @@ mod tests {
                 vec![
                     NeedEntry::scoped(
                         atom("sessions.send"),
-                        vec![ScopeRef::literal("all").unwrap()],
+                        vec![ScopeRefEntry::literal("all").unwrap()],
                     )
                     .unwrap(),
                 ],

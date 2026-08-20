@@ -8,7 +8,7 @@ use lockgate::{
     BudgetClass, HostCtx, InvocationCtx, PermissionDenied, PluginConfig, PluginSubject,
     ResolveScopedResource, RuntimeLimits, Scope, ScopeRepr, ScopedResource,
 };
-use lockgate_schema::{NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+use lockgate_schema::{NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
 mod common;
 
@@ -265,7 +265,7 @@ fn needs(grant: &str) -> NeedsManifest {
         vec![
             NeedEntry::scoped(
                 "session.read".parse().unwrap(),
-                vec![ScopeRef::literal(grant).unwrap()],
+                vec![ScopeRefEntry::literal(grant).unwrap()],
             )
             .unwrap(),
         ],

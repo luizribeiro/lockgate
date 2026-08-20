@@ -16,7 +16,7 @@ pub use manifest::{
 };
 pub use scope_ref::{
     MAX_ROOT_NAME_BYTES, MAX_ROOT_SUBPATH_BYTES, MAX_ROOT_SUBPATH_SEGMENTS, MAX_SCOPE_VALUE_BYTES,
-    ScopeRef, ScopeRefError, ScopeValueKind,
+    ScopeRefEntry, ScopeRefEntryError, ScopeValueKind,
 };
 
 /// The identity of one permission operation, written `capability.operation`.

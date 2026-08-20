@@ -1,11 +1,8 @@
 use std::str::FromStr;
 
-use lockgate_policy::{
-    Need as AuthorNeed, Needs as AuthorNeeds, Scope, ScopeError, ScopeRef as AuthorScopeRef,
-    ScopeRepr, env,
-};
+use lockgate_policy::{Need, Needs, Scope, ScopeError, ScopeRef, ScopeRepr, env};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRef};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
 use crate::policy::diff_grants;
 use crate::test_support::{settings_schema_component, with_section};
@@ -15,10 +12,8 @@ use crate::{
 };
 
 const INSTANCE_ID: &str = "sessions-prod";
-const ENV_READ_NEEDS: AuthorNeeds = AuthorNeeds::required(&[env::READ.need(&[
-    AuthorScopeRef::literal("HOME"),
-    AuthorScopeRef::setting("/scope"),
-])]);
+const ENV_READ_NEEDS: Needs =
+    Needs::required(&[env::READ.need(&[ScopeRef::literal("HOME"), ScopeRef::setting("/scope")])]);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SessionScope {
@@ -78,7 +73,7 @@ fn scoped_need(atom_name: &str, scopes: &[&str]) -> NeedEntry {
         atom(atom_name),
         scopes
             .iter()
-            .map(|scope| ScopeRef::literal(*scope).unwrap())
+            .map(|scope| ScopeRefEntry::literal(*scope).unwrap())
             .collect(),
     )
     .unwrap()
@@ -122,7 +117,7 @@ fn env_read_manifest() -> NeedsManifest {
         scope_ref_wire_len,
     };
 
-    let [need]: &[AuthorNeed] = needs_required(&ENV_READ_NEEDS) else {
+    let [need]: &[Need] = needs_required(&ENV_READ_NEEDS) else {
         panic!("environment fixture must declare exactly one need")
     };
     let scopes = need_scopes(need)
@@ -132,7 +127,7 @@ fn env_read_manifest() -> NeedsManifest {
             let bytes = (0..scope_ref_wire_len(reference))
                 .map(|index| scope_ref_wire_byte(reference, index))
                 .collect::<Vec<_>>();
-            ScopeRef::from_wire(&String::from_utf8(bytes).unwrap()).unwrap()
+            ScopeRefEntry::from_wire(&String::from_utf8(bytes).unwrap()).unwrap()
         })
         .collect();
     let atom = AtomKey::new(need_capability(need), need_permission(need)).unwrap();
@@ -169,7 +164,7 @@ async fn review_projects_resolved_grants_and_author_reasons() {
         vec![
             NeedEntry::scoped(
                 atom("sessions.read"),
-                vec![ScopeRef::setting("/scope").unwrap()],
+                vec![ScopeRefEntry::setting("/scope").unwrap()],
             )
             .unwrap()
             .with_reason("Read the selected sessions")
@@ -227,7 +222,7 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
         vec![
             NeedEntry::scoped(
                 atom("sessions.read"),
-                vec![ScopeRef::literal("current").unwrap()],
+                vec![ScopeRefEntry::literal("current").unwrap()],
             )
             .unwrap(),
         ],
@@ -483,8 +478,8 @@ async fn config_widening_changes_the_request_digest_and_refuses_acceptance() {
             NeedEntry::scoped(
                 atom("sessions.read"),
                 vec![
-                    ScopeRef::literal("current").unwrap(),
-                    ScopeRef::setting("/scope").unwrap(),
+                    ScopeRefEntry::literal("current").unwrap(),
+                    ScopeRefEntry::setting("/scope").unwrap(),
                 ],
             )
             .unwrap(),

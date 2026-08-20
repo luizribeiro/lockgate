@@ -6,7 +6,7 @@ use super::super::check_payload_size;
 
 use crate::needs::{
     AtomKey, EntryLocation, NEEDS_FORMAT, NeedEntry, NeedsManifest, NeedsManifestValidationError,
-    Requirement, ScopeRef, validate_reason,
+    Requirement, ScopeRefEntry, validate_reason,
 };
 
 use super::DecodeError;
@@ -75,7 +75,7 @@ fn decode_entries(
                         .into_iter()
                         .enumerate()
                         .map(|(scope_index, value)| {
-                            ScopeRef::from_wire(&value).map_err(|source| {
+                            ScopeRefEntry::from_wire(&value).map_err(|source| {
                                 DecodeError::InvalidScope {
                                     location,
                                     atom: atom.clone(),

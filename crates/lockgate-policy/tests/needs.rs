@@ -2,7 +2,7 @@ extern crate alloc;
 extern crate lockgate_policy as lockgate;
 
 use lockgate_policy::{Need, Needs, ScopeRef};
-use lockgate_schema::ScopeRef as HostScopeRef;
+use lockgate_schema::ScopeRefEntry;
 
 #[path = "fixtures/vm_contract.rs"]
 mod vm_contract;
@@ -56,19 +56,19 @@ fn authoring_scope_references_match_the_frozen_schema_wire() {
     for (author, host) in [
         (
             ScopeRef::literal("pool:gpu"),
-            HostScopeRef::literal("pool:gpu").unwrap(),
+            ScopeRefEntry::literal("pool:gpu").unwrap(),
         ),
         (
             ScopeRef::setting("/endpoint/~0name/~1path"),
-            HostScopeRef::setting("/endpoint/~0name/~1path").unwrap(),
+            ScopeRefEntry::setting("/endpoint/~0name/~1path").unwrap(),
         ),
         (
             ScopeRef::root("workspace"),
-            HostScopeRef::root("workspace").unwrap(),
+            ScopeRefEntry::root("workspace").unwrap(),
         ),
         (
             ScopeRef::root("workspace").join("generated/html"),
-            HostScopeRef::root("workspace")
+            ScopeRefEntry::root("workspace")
                 .unwrap()
                 .join("generated/html")
                 .unwrap(),
@@ -76,7 +76,7 @@ fn authoring_scope_references_match_the_frozen_schema_wire() {
     ] {
         let wire = author_wire(&author);
         assert_eq!(wire, host.to_wire());
-        assert_eq!(HostScopeRef::from_wire(&wire).unwrap(), host);
+        assert_eq!(ScopeRefEntry::from_wire(&wire).unwrap(), host);
     }
 }
 
@@ -201,7 +201,7 @@ fn assert_literal_parity(value: &'static str, expected: bool) {
         "author literal validation disagreed for {value:?}"
     );
     assert_eq!(
-        HostScopeRef::literal(value).is_ok(),
+        ScopeRefEntry::literal(value).is_ok(),
         expected,
         "schema literal validation disagreed for {value:?}"
     );
@@ -214,7 +214,7 @@ fn assert_setting_parity(value: &'static str, expected: bool) {
         "author setting validation disagreed for {value:?}"
     );
     assert_eq!(
-        HostScopeRef::setting(value).is_ok(),
+        ScopeRefEntry::setting(value).is_ok(),
         expected,
         "schema setting validation disagreed for {value:?}"
     );
@@ -227,7 +227,7 @@ fn assert_root_parity(value: &'static str, expected: bool) {
         "author root validation disagreed for {value:?}"
     );
     assert_eq!(
-        HostScopeRef::root(value).is_ok(),
+        ScopeRefEntry::root(value).is_ok(),
         expected,
         "schema root validation disagreed for {value:?}"
     );
@@ -240,7 +240,10 @@ fn assert_join_parity(value: &'static str, expected: bool) {
         "author root join validation disagreed for {value:?}"
     );
     assert_eq!(
-        HostScopeRef::root("workspace").unwrap().join(value).is_ok(),
+        ScopeRefEntry::root("workspace")
+            .unwrap()
+            .join(value)
+            .is_ok(),
         expected,
         "schema root join validation disagreed for {value:?}"
     );

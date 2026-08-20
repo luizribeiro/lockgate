@@ -14,7 +14,7 @@ pub const MAX_SCOPE_VALUE_BYTES: usize = 2048;
 
 /// A symbolic scope in a plugin's needs declaration.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ScopeRef {
+pub enum ScopeRefEntry {
     /// A complete literal scope value.
     Literal(String),
     /// A JSON Pointer into the plugin's settings.
@@ -26,23 +26,23 @@ pub enum ScopeRef {
     },
 }
 
-impl ScopeRef {
+impl ScopeRefEntry {
     /// Creates a literal scope. Reserved symbolic prefixes are not literals.
-    pub fn literal(value: impl Into<String>) -> Result<Self, ScopeRefError> {
+    pub fn literal(value: impl Into<String>) -> Result<Self, ScopeRefEntryError> {
         let reference = Self::Literal(value.into());
         reference.validate()?;
         Ok(reference)
     }
 
     /// Creates a settings reference from an RFC 6901 JSON Pointer.
-    pub fn setting(pointer: impl Into<String>) -> Result<Self, ScopeRefError> {
+    pub fn setting(pointer: impl Into<String>) -> Result<Self, ScopeRefEntryError> {
         let reference = Self::Setting(pointer.into());
         reference.validate()?;
         Ok(reference)
     }
 
     /// Creates a symbolic root reference.
-    pub fn root(name: impl Into<String>) -> Result<Self, ScopeRefError> {
+    pub fn root(name: impl Into<String>) -> Result<Self, ScopeRefEntryError> {
         let reference = Self::Root {
             name: name.into(),
             subpath: None,
@@ -52,16 +52,16 @@ impl ScopeRef {
     }
 
     /// Narrows a symbolic root to a validated relative subpath.
-    pub fn join(self, subpath: impl Into<String>) -> Result<Self, ScopeRefError> {
+    pub fn join(self, subpath: impl Into<String>) -> Result<Self, ScopeRefEntryError> {
         let Self::Root {
             name,
             subpath: current,
         } = self
         else {
-            return Err(ScopeRefError::JoinRequiresRoot);
+            return Err(ScopeRefEntryError::JoinRequiresRoot);
         };
         if current.is_some() {
-            return Err(ScopeRefError::RootAlreadyJoined);
+            return Err(ScopeRefEntryError::RootAlreadyJoined);
         }
         let reference = Self::Root {
             name,
@@ -72,7 +72,7 @@ impl ScopeRef {
     }
 
     /// Parses the canonical symbolic wire spelling.
-    pub fn from_wire(value: &str) -> Result<Self, ScopeRefError> {
+    pub fn from_wire(value: &str) -> Result<Self, ScopeRefEntryError> {
         if let Some(pointer) = value.strip_prefix("setting:") {
             Self::setting(pointer)
         } else if let Some(root) = value.strip_prefix('$') {
@@ -97,11 +97,11 @@ impl ScopeRef {
         }
     }
 
-    pub(crate) fn validate(&self) -> Result<(), ScopeRefError> {
+    pub(crate) fn validate(&self) -> Result<(), ScopeRefEntryError> {
         match self {
-            Self::Literal(value) if value.is_empty() => Err(ScopeRefError::EmptyLiteral),
+            Self::Literal(value) if value.is_empty() => Err(ScopeRefEntryError::EmptyLiteral),
             Self::Literal(value) if value.starts_with("setting:") || value.starts_with('$') => {
-                Err(ScopeRefError::ReservedLiteralPrefix)
+                Err(ScopeRefEntryError::ReservedLiteralPrefix)
             }
             Self::Literal(value) => validate_bounded_scope_value(value, ScopeValueKind::Literal),
             Self::Setting(pointer) => validate_json_pointer(pointer),
@@ -119,7 +119,7 @@ impl ScopeRef {
 /// A malformed symbolic scope reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ScopeRefError {
+pub enum ScopeRefEntryError {
     EmptyLiteral,
     ReservedLiteralPrefix,
     InvalidSettingPointer,
@@ -154,7 +154,7 @@ pub enum ScopeRefError {
     },
 }
 
-impl fmt::Display for ScopeRefError {
+impl fmt::Display for ScopeRefEntryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyLiteral => formatter.write_str("literal scope must not be empty"),
@@ -208,7 +208,7 @@ impl fmt::Display for ScopeRefError {
     }
 }
 
-impl Error for ScopeRefError {}
+impl Error for ScopeRefEntryError {}
 
 /// The scope value whose characters failed validation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,9 +228,9 @@ impl fmt::Display for ScopeValueKind {
     }
 }
 
-fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {
+fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefEntryError> {
     if let Some((byte_index, character, _)) = find_disallowed_character(value) {
-        return Err(ScopeRefError::DisallowedCharacter {
+        return Err(ScopeRefEntryError::DisallowedCharacter {
             kind,
             byte_index,
             character,
@@ -239,10 +239,13 @@ fn validate_scope_characters(value: &str, kind: ScopeValueKind) -> Result<(), Sc
     Ok(())
 }
 
-fn validate_bounded_scope_value(value: &str, kind: ScopeValueKind) -> Result<(), ScopeRefError> {
+fn validate_bounded_scope_value(
+    value: &str,
+    kind: ScopeValueKind,
+) -> Result<(), ScopeRefEntryError> {
     validate_scope_characters(value, kind)?;
     if value.len() > MAX_SCOPE_VALUE_BYTES {
-        return Err(ScopeRefError::ScopeValueTooLong {
+        return Err(ScopeRefEntryError::ScopeValueTooLong {
             kind,
             max_bytes: MAX_SCOPE_VALUE_BYTES,
         });
@@ -250,23 +253,23 @@ fn validate_bounded_scope_value(value: &str, kind: ScopeValueKind) -> Result<(),
     Ok(())
 }
 
-fn validate_json_pointer(pointer: &str) -> Result<(), ScopeRefError> {
+fn validate_json_pointer(pointer: &str) -> Result<(), ScopeRefEntryError> {
     validate_bounded_scope_value(pointer, ScopeValueKind::SettingPointer)?;
     if !pointer.is_empty() && !pointer.starts_with('/') {
-        return Err(ScopeRefError::InvalidSettingPointer);
+        return Err(ScopeRefEntryError::InvalidSettingPointer);
     }
     let mut bytes = pointer.bytes();
     while let Some(byte) = bytes.next() {
         if byte == b'~' && !matches!(bytes.next(), Some(b'0' | b'1')) {
-            return Err(ScopeRefError::InvalidSettingPointer);
+            return Err(ScopeRefEntryError::InvalidSettingPointer);
         }
     }
     Ok(())
 }
 
-fn validate_root_name(name: &str) -> Result<(), ScopeRefError> {
+fn validate_root_name(name: &str) -> Result<(), ScopeRefEntryError> {
     if name.len() > MAX_ROOT_NAME_BYTES {
-        return Err(ScopeRefError::RootNameTooLong {
+        return Err(ScopeRefEntryError::RootNameTooLong {
             max_bytes: MAX_ROOT_NAME_BYTES,
         });
     }
@@ -274,35 +277,35 @@ fn validate_root_name(name: &str) -> Result<(), ScopeRefError> {
     if !matches!(bytes.next(), Some(b'a'..=b'z'))
         || !bytes.all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-'))
     {
-        return Err(ScopeRefError::InvalidRootName);
+        return Err(ScopeRefEntryError::InvalidRootName);
     }
     Ok(())
 }
 
-fn validate_root_subpath(subpath: &str) -> Result<(), ScopeRefError> {
+fn validate_root_subpath(subpath: &str) -> Result<(), ScopeRefEntryError> {
     validate_scope_characters(subpath, ScopeValueKind::RootSubpathSegment)?;
     if subpath.starts_with('/') {
-        return Err(ScopeRefError::AbsoluteRootSubpath);
+        return Err(ScopeRefEntryError::AbsoluteRootSubpath);
     }
     if subpath.contains('\\') {
-        return Err(ScopeRefError::RootSubpathContainsBackslash);
+        return Err(ScopeRefEntryError::RootSubpathContainsBackslash);
     }
     if subpath.len() > MAX_ROOT_SUBPATH_BYTES {
-        return Err(ScopeRefError::RootSubpathTooLong {
+        return Err(ScopeRefEntryError::RootSubpathTooLong {
             max_bytes: MAX_ROOT_SUBPATH_BYTES,
         });
     }
     for (index, segment) in subpath.split('/').enumerate() {
         if index >= MAX_ROOT_SUBPATH_SEGMENTS {
-            return Err(ScopeRefError::RootSubpathTooDeep {
+            return Err(ScopeRefEntryError::RootSubpathTooDeep {
                 max_segments: MAX_ROOT_SUBPATH_SEGMENTS,
             });
         }
         if segment.is_empty() {
-            return Err(ScopeRefError::EmptyRootSubpathSegment { index });
+            return Err(ScopeRefEntryError::EmptyRootSubpathSegment { index });
         }
         if matches!(segment, "." | "..") {
-            return Err(ScopeRefError::DotRootSubpathSegment { index });
+            return Err(ScopeRefEntryError::DotRootSubpathSegment { index });
         }
     }
     Ok(())
@@ -315,16 +318,16 @@ mod tests {
     #[test]
     fn scope_references_round_trip_through_wire_strings() {
         for reference in [
-            ScopeRef::literal("https://example.com").unwrap(),
-            ScopeRef::setting("/endpoint/~0name/~1path").unwrap(),
-            ScopeRef::root("workspace").unwrap(),
-            ScopeRef::root("workspace")
+            ScopeRefEntry::literal("https://example.com").unwrap(),
+            ScopeRefEntry::setting("/endpoint/~0name/~1path").unwrap(),
+            ScopeRefEntry::root("workspace").unwrap(),
+            ScopeRefEntry::root("workspace")
                 .unwrap()
                 .join("generated/html")
                 .unwrap(),
         ] {
             assert_eq!(
-                ScopeRef::from_wire(&reference.to_wire()).unwrap(),
+                ScopeRefEntry::from_wire(&reference.to_wire()).unwrap(),
                 reference
             );
         }
@@ -332,27 +335,27 @@ mod tests {
 
     #[test]
     fn setting_references_require_valid_json_pointers() {
-        assert!(ScopeRef::setting("").is_ok());
+        assert!(ScopeRefEntry::setting("").is_ok());
         for pointer in ["endpoint", "/bad~", "/bad~2escape"] {
             assert_eq!(
-                ScopeRef::setting(pointer).unwrap_err(),
-                ScopeRefError::InvalidSettingPointer
+                ScopeRefEntry::setting(pointer).unwrap_err(),
+                ScopeRefEntryError::InvalidSettingPointer
             );
         }
     }
 
     #[test]
     fn roots_use_bounded_lowercase_names() {
-        assert!(ScopeRef::root("a".repeat(MAX_ROOT_NAME_BYTES)).is_ok());
+        assert!(ScopeRefEntry::root("a".repeat(MAX_ROOT_NAME_BYTES)).is_ok());
         for name in ["", "Workspace", "two_words", "9root"] {
             assert_eq!(
-                ScopeRef::root(name).unwrap_err(),
-                ScopeRefError::InvalidRootName
+                ScopeRefEntry::root(name).unwrap_err(),
+                ScopeRefEntryError::InvalidRootName
             );
         }
         assert_eq!(
-            ScopeRef::root("a".repeat(65)).unwrap_err(),
-            ScopeRefError::RootNameTooLong { max_bytes: 64 }
+            ScopeRefEntry::root("a".repeat(65)).unwrap_err(),
+            ScopeRefEntryError::RootNameTooLong { max_bytes: 64 }
         );
     }
 
@@ -360,8 +363,8 @@ mod tests {
     fn literals_cannot_impersonate_symbolic_references() {
         for value in ["setting:/endpoint", "$workspace"] {
             assert_eq!(
-                ScopeRef::literal(value).unwrap_err(),
-                ScopeRefError::ReservedLiteralPrefix
+                ScopeRefEntry::literal(value).unwrap_err(),
+                ScopeRefEntryError::ReservedLiteralPrefix
             );
         }
     }
@@ -369,36 +372,36 @@ mod tests {
     #[test]
     fn literal_scopes_cannot_be_empty() {
         assert_eq!(
-            ScopeRef::literal("").unwrap_err(),
-            ScopeRefError::EmptyLiteral
+            ScopeRefEntry::literal("").unwrap_err(),
+            ScopeRefEntryError::EmptyLiteral
         );
     }
 
     #[test]
     fn rejects_unsafe_root_subpaths() {
         let cases = [
-            ("/absolute", ScopeRefError::AbsoluteRootSubpath),
-            ("", ScopeRefError::EmptyRootSubpathSegment { index: 0 }),
-            (".", ScopeRefError::DotRootSubpathSegment { index: 0 }),
+            ("/absolute", ScopeRefEntryError::AbsoluteRootSubpath),
+            ("", ScopeRefEntryError::EmptyRootSubpathSegment { index: 0 }),
+            (".", ScopeRefEntryError::DotRootSubpathSegment { index: 0 }),
             (
                 "generated//html",
-                ScopeRefError::EmptyRootSubpathSegment { index: 1 },
+                ScopeRefEntryError::EmptyRootSubpathSegment { index: 1 },
             ),
             (
                 "generated/",
-                ScopeRefError::EmptyRootSubpathSegment { index: 1 },
+                ScopeRefEntryError::EmptyRootSubpathSegment { index: 1 },
             ),
             (
                 "generated/../html",
-                ScopeRefError::DotRootSubpathSegment { index: 1 },
+                ScopeRefEntryError::DotRootSubpathSegment { index: 1 },
             ),
             (
                 "generated\\html",
-                ScopeRefError::RootSubpathContainsBackslash,
+                ScopeRefEntryError::RootSubpathContainsBackslash,
             ),
             (
                 "generated\0html",
-                ScopeRefError::DisallowedCharacter {
+                ScopeRefEntryError::DisallowedCharacter {
                     kind: ScopeValueKind::RootSubpathSegment,
                     byte_index: 9,
                     character: '\0',
@@ -407,7 +410,7 @@ mod tests {
         ];
         for (subpath, expected) in cases {
             assert_eq!(
-                ScopeRef::root("workspace")
+                ScopeRefEntry::root("workspace")
                     .unwrap()
                     .join(subpath)
                     .unwrap_err(),
@@ -419,30 +422,30 @@ mod tests {
     #[test]
     fn bounds_root_subpath_length_and_depth() {
         assert!(
-            ScopeRef::root("workspace")
+            ScopeRefEntry::root("workspace")
                 .unwrap()
                 .join("a".repeat(MAX_ROOT_SUBPATH_BYTES))
                 .is_ok()
         );
         assert!(
-            ScopeRef::root("workspace")
+            ScopeRefEntry::root("workspace")
                 .unwrap()
                 .join(["a"; MAX_ROOT_SUBPATH_SEGMENTS].join("/"))
                 .is_ok()
         );
         assert_eq!(
-            ScopeRef::root("workspace")
+            ScopeRefEntry::root("workspace")
                 .unwrap()
                 .join("a".repeat(1025))
                 .unwrap_err(),
-            ScopeRefError::RootSubpathTooLong { max_bytes: 1024 }
+            ScopeRefEntryError::RootSubpathTooLong { max_bytes: 1024 }
         );
         assert_eq!(
-            ScopeRef::root("workspace")
+            ScopeRefEntry::root("workspace")
                 .unwrap()
                 .join(["a"; 65].join("/"))
                 .unwrap_err(),
-            ScopeRefError::RootSubpathTooDeep { max_segments: 64 }
+            ScopeRefEntryError::RootSubpathTooDeep { max_segments: 64 }
         );
     }
 }

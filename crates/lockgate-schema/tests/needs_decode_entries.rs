@@ -2,7 +2,7 @@ use lockgate_schema::NeedsManifest;
 use lockgate_schema::needs::{MAX_ATOMS_PER_MANIFEST, MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
 use lockgate_schema::sections::needs::DecodeError;
 use lockgate_schema::{
-    NeedEntryError, NeedsManifestValidationError, ScopeRefError, ScopeValueKind,
+    NeedEntryError, NeedsManifestValidationError, ScopeRefEntryError, ScopeValueKind,
 };
 
 fn decode(required: &str, optional: &str) -> Result<(), DecodeError> {
@@ -89,7 +89,7 @@ fn rejects_empty_literal_scopes() {
     assert!(matches!(
         error,
         DecodeError::InvalidScope {
-            source: ScopeRefError::EmptyLiteral,
+            source: ScopeRefEntryError::EmptyLiteral,
             ..
         }
     ));
@@ -171,7 +171,7 @@ fn rejects_control_and_format_characters_in_every_scope_value_kind() {
         assert!(matches!(
             error,
             DecodeError::InvalidScope {
-                source: ScopeRefError::DisallowedCharacter {
+                source: ScopeRefEntryError::DisallowedCharacter {
                     kind: found_kind,
                     byte_index: found_byte_index,
                     character: found_character,
@@ -217,7 +217,7 @@ fn bounds_literal_and_setting_pointer_utf8_bytes() {
             Err(kind) => assert!(matches!(
                 result.unwrap_err(),
                 DecodeError::InvalidScope {
-                    source: ScopeRefError::ScopeValueTooLong {
+                    source: ScopeRefEntryError::ScopeValueTooLong {
                         kind: found_kind,
                         max_bytes: MAX_SCOPE_VALUE_BYTES,
                     },
@@ -293,11 +293,11 @@ fn rejects_overlong_and_overdeep_root_subpaths() {
     for (subpath, expected) in [
         (
             "a".repeat(1025),
-            ScopeRefError::RootSubpathTooLong { max_bytes: 1024 },
+            ScopeRefEntryError::RootSubpathTooLong { max_bytes: 1024 },
         ),
         (
             ["a"; 65].join("/"),
-            ScopeRefError::RootSubpathTooDeep { max_segments: 64 },
+            ScopeRefEntryError::RootSubpathTooDeep { max_segments: 64 },
         ),
     ] {
         let error =

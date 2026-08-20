@@ -156,7 +156,7 @@ fn hash_len(digest: &mut Sha256, length: usize) {
 
 #[cfg(test)]
 mod tests {
-    use lockgate_schema::{NeedEntry, NeedsManifest, ScopeRef};
+    use lockgate_schema::{NeedEntry, NeedsManifest, ScopeRefEntry};
 
     use super::*;
 
@@ -193,8 +193,11 @@ mod tests {
         let manifest = NeedsManifest::new(
             vec![
                 NeedEntry::flag(atom("ab.c-x")),
-                NeedEntry::scoped(atom("ab-c.x"), vec![ScopeRef::setting("/scope").unwrap()])
-                    .unwrap(),
+                NeedEntry::scoped(
+                    atom("ab-c.x"),
+                    vec![ScopeRefEntry::setting("/scope").unwrap()],
+                )
+                .unwrap(),
             ],
             vec![],
         )

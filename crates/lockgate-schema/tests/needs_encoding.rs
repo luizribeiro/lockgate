@@ -1,7 +1,7 @@
 use lockgate_schema::needs::{MAX_SCOPE_VALUE_BYTES, MAX_SCOPES_PER_ENTRY};
 use lockgate_schema::sections::needs::{DecodeError, EncodeError};
 use lockgate_schema::sections::{MAX_SECTION_PAYLOAD_BYTES, PLUGIN_NEEDS_SECTION};
-use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, ScopeRef};
+use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, ScopeRefEntry};
 
 fn atom(value: &str) -> AtomKey {
     value.parse().unwrap()
@@ -24,11 +24,11 @@ fn encoding_sorts_maps_and_uses_symbolic_scope_strings() {
             NeedEntry::scoped(
                 atom("fs.read"),
                 vec![
-                    ScopeRef::root("workspace")
+                    ScopeRefEntry::root("workspace")
                         .unwrap()
                         .join("generated/html")
                         .unwrap(),
-                    ScopeRef::literal("current").unwrap(),
+                    ScopeRefEntry::literal("current").unwrap(),
                 ],
             )
             .unwrap(),
@@ -36,7 +36,7 @@ fn encoding_sorts_maps_and_uses_symbolic_scope_strings() {
         vec![
             NeedEntry::scoped(
                 atom("http.request"),
-                vec![ScopeRef::setting("/endpoint").unwrap()],
+                vec![ScopeRefEntry::setting("/endpoint").unwrap()],
             )
             .unwrap()
             .with_reason("deliver notifications")
@@ -96,7 +96,7 @@ fn large_manifest(scope_lengths: &[usize]) -> NeedsManifest {
                 .enumerate()
                 .map(|(scope_index, &length)| {
                     let prefix = format!("{entry_index:03}{scope_index:03}");
-                    ScopeRef::literal(format!("{prefix}{}", "x".repeat(length - prefix.len())))
+                    ScopeRefEntry::literal(format!("{prefix}{}", "x".repeat(length - prefix.len())))
                         .unwrap()
                 })
                 .collect();

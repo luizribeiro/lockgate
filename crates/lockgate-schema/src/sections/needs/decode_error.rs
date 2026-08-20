@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crate::needs::{
     AtomKey, AtomKeyError, EntryLocation, NeedReasonError, NeedsManifestValidationError,
-    ScopeRefError,
+    ScopeRefEntryError,
 };
 
 use super::super::format_payload_too_large;
@@ -30,7 +30,7 @@ pub enum DecodeError {
         atom: AtomKey,
         scope_index: usize,
         value: String,
-        source: ScopeRefError,
+        source: ScopeRefEntryError,
     },
     InvalidReasonAtom {
         reason_index: usize,
