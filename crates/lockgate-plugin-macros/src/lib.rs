@@ -84,23 +84,30 @@ impl Parse for GenerateInput {
 }
 
 fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
-    let path = match &input.source {
-        GenerateSource::Path(path) => path,
+    let mut resolve = Resolve::default();
+    let (plugin_package, sources) = match &input.source {
+        GenerateSource::Path(path) => {
+            let manifest_dir = PathBuf::from(
+                std::env::var("CARGO_MANIFEST_DIR")
+                    .map_err(|error| syn::Error::new(path.span(), error))?,
+            );
+            let source_path = manifest_dir.join(path.value());
+            let (package, sources) = resolve
+                .push_path(&source_path)
+                .map_err(|error| syn::Error::new(path.span(), format!("{error:#}")))?;
+            (package, Some(sources))
+        }
         GenerateSource::Inline(source) => {
-            return Err(syn::Error::new(
-                source.span(),
-                "generate! inline sources are not yet supported",
-            ));
+            let source_text = source.value();
+            let package = resolve
+                .push_group(
+                    UnresolvedPackageGroup::parse("lockgate-inline.wit", &source_text)
+                        .map_err(|error| syn::Error::new(source.span(), format!("{error:#}")))?,
+                )
+                .map_err(|error| syn::Error::new(source.span(), format!("{error:#}")))?;
+            (package, None)
         }
     };
-    let manifest_dir = PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR").map_err(|error| syn::Error::new(path.span(), error))?,
-    );
-    let source_path = manifest_dir.join(path.value());
-    let mut resolve = Resolve::default();
-    let (plugin_package, sources) = resolve
-        .push_path(&source_path)
-        .map_err(|error| syn::Error::new(path.span(), format!("{error:#}")))?;
     let plugin_world = resolve
         .select_world(&[plugin_package], Some(&input.world.value()))
         .map_err(|error| syn::Error::new(input.world.span(), format!("{error:#}")))?;
@@ -158,11 +165,13 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
         .map_err(|error| syn::Error::new(Span::call_site(), error))?
         .parse::<TokenStream2>()
         .map_err(|error| syn::Error::new(Span::call_site(), error))?;
-    for file in sources.paths() {
-        let file = LitStr::new(&file.to_string_lossy(), Span::call_site());
-        output.extend(quote!(
-            const _: &[u8] = include_bytes!(#file);
-        ));
+    if let Some(sources) = sources {
+        for file in sources.paths() {
+            let file = LitStr::new(&file.to_string_lossy(), Span::call_site());
+            output.extend(quote!(
+                const _: &[u8] = include_bytes!(#file);
+            ));
+        }
     }
     let facade = format_ident!("{facade_name}");
     output.extend(quote! {
