@@ -7,7 +7,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use lockgate_schema::{AtomKey, NeedKind, NeedsManifest, PluginMetadata};
+use lockgate_schema::{AtomKey, NeedKind, NeedsManifest, PluginMetadata, hex_encode};
+use sha2::{Digest, Sha256};
 
 use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
@@ -28,6 +29,11 @@ use crate::role::{Role, RoleError, RoleInvocation};
 use crate::validate::{ValidationError, validate_and_collect_exported_interfaces};
 
 static NEXT_HOST_ID: AtomicU64 = AtomicU64::new(1);
+
+fn raw_component_digest(bytes: &[u8]) -> String {
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    format!("sha256:{}", hex_encode(&digest))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct HostId(u64);
@@ -413,6 +419,7 @@ impl<S: CallContext> HostBuilder<S> {
         let resolved = resolve_needs(&needs, settings.value(), &config.roots, &self.registry)
             .map_err(AdmissionError::ScopeResolution)?;
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
+        let component_digest = raw_component_digest(bytes);
         artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
@@ -421,6 +428,7 @@ impl<S: CallContext> HostBuilder<S> {
             inspection,
             resolved,
             prepared_digest,
+            component_digest,
             artifact: Box::new(artifact),
         })
     }
@@ -508,6 +516,7 @@ impl<S: CallContext> HostBuilder<S> {
             inspection,
             resolved,
             prepared_digest,
+            component_digest: _,
             artifact,
         } = prepared;
         if host != self.id {
@@ -688,6 +697,8 @@ pub struct Prepared {
     pub(crate) inspection: Inspection,
     pub(crate) resolved: ResolvedNeeds,
     pub(crate) prepared_digest: PreparedNeedsDigest,
+    #[allow(dead_code, reason = "retained for the consent audit surface")]
+    pub(crate) component_digest: String,
     artifact: Box<dyn Any + Send>,
 }
 
@@ -1162,6 +1173,33 @@ mod grant_tests {
             .unwrap()
     }
 
+    #[tokio::test]
+    async fn prepare_records_the_raw_component_sha256() {
+        let metadata = PluginMetadata::new("digest", "Digest", "1.0").unwrap();
+        let needs = NeedsManifest::empty();
+        let bytes = with_section(
+            with_section(
+                component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
+            ),
+            PLUGIN_NEEDS_SECTION,
+            &needs.to_section_bytes().unwrap(),
+        );
+        let expected = {
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            format!("sha256:{}", hex_encode(&digest))
+        };
+        let mut builder = HostBuilder::new(()).unwrap();
+
+        let prepared = builder
+            .prepare("digest", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+
+        assert_eq!(prepared.component_digest, expected);
+    }
+
     #[test]
     fn pure_declared_needs_resolve_accept_and_freeze_for_queries() {
         let metadata = PluginMetadata::new("pure-grants", "Pure grants", "1.0").unwrap();
@@ -1190,12 +1228,15 @@ mod grant_tests {
         )
         .unwrap();
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
+        let component_bytes = component();
+        let component_digest = raw_component_digest(&component_bytes);
         let prepared = Prepared {
             host: HostId::next(),
             instance_id: "pure-instance".to_owned(),
             inspection: Inspection::new(metadata, needs, needs_digest, Vec::new()),
             resolved,
             prepared_digest,
+            component_digest,
             artifact: Box::new(()),
         };
         let acceptance = prepared.accept_all();
