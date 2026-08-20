@@ -13,7 +13,7 @@ use wit_bindgen_core::wit_parser::{
     WorldItem, WorldKey,
 };
 use wit_bindgen_core::{Files, WorldGenerator};
-use wit_bindgen_rust::Opts;
+use wit_bindgen_rust::{Opts, WithOption};
 
 const CONFIG_WIT: &str = include_str!("../../lockgate/wit/config.wit");
 
@@ -188,10 +188,21 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
         .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
 
     let facade = resolve_facade(input.facade.as_ref(), Span::call_site())?;
+    let with = input
+        .with
+        .iter()
+        .map(|(interface, path)| {
+            (
+                interface.value(),
+                WithOption::Path(quote!(#path).to_string()),
+            )
+        })
+        .collect();
     let options = Opts {
         export_macro_name: Some("__lockgate_wit_export".into()),
         runtime_path: Some(quote!(#facade::__wit_bindgen::rt).to_string()),
         generate_all: true,
+        with,
         ..Opts::default()
     };
     let mut files = Files::default();
