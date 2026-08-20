@@ -1,0 +1,12 @@
+[package]
+name = "lockgate-http"
+version.workspace = true
+edition.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+http.workspace = true
+http-body-util = "0.1.3"
+serde = { workspace = true, default-features = false, features = ["alloc"] }
+serde_json = { workspace = true, default-features = false, features = ["alloc"] }
+wasi-fetch = "0.2.0"
+wit-bindgen = { workspace = true, default-features = false, features = ["async"] }
