@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use proc_macro::TokenStream;
@@ -1198,15 +1201,16 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
             format!("failed to locate package root: {error}"),
         )
     })?;
-    let source = std::path::Path::new(&manifest_dir).join(input.path.value());
+    let source = Path::new(&manifest_dir).join(input.path.value());
     let mut resolve = Resolve::new();
     resolve.all_features = true;
-    let (package, _) = resolve.push_path(&source).map_err(|error| {
+    let (package, wit_sources) = resolve.push_path(&source).map_err(|error| {
         syn::Error::new_spanned(
             &input.path,
             format!("failed to parse {}: {error:#}", source.display()),
         )
     })?;
+    let wit_source_guards = wit_source_guards(wit_sources.paths());
     let world = resolve
         .select_world(&[package], Some(&input.world.value()))
         .map_err(|error| syn::Error::new_spanned(&input.world, error.to_string()))?;
@@ -1522,6 +1526,8 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
     });
 
     Ok(quote! {
+        #wit_source_guards
+
         #[doc(hidden)]
         pub mod __lockgate_host_bindings {
             use super::*;
@@ -1533,6 +1539,20 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         #(#export_modules)*
         #host_imports_impl
     })
+}
+
+/// Cargo only reruns a proc macro when a tracked file changes, and it tracks Rust
+/// sources. `include_bytes!` is a compile-time read it does track, so one guard per WIT
+/// file is what makes an edit to the interface invalidate the crate that generated
+/// bindings from it.
+fn wit_source_guards<'a>(paths: impl Iterator<Item = &'a Path>) -> TokenStream2 {
+    let guards = paths.map(|path| {
+        let path = LitStr::new(&path.to_string_lossy(), Span::call_site());
+        quote!(
+            const _: &[u8] = include_bytes!(#path);
+        )
+    });
+    quote!(#(#guards)*)
 }
 
 fn validate_import_options(
@@ -2117,7 +2137,48 @@ fn lockgate_policy_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2>
 
 #[cfg(test)]
 mod tests {
-    use super::{HostBindingsInput, validate_import_options};
+    use std::path::Path;
+
+    use super::{HostBindingsInput, Resolve, validate_import_options, wit_source_guards};
+
+    #[test]
+    fn guards_every_wit_source_so_edits_invalidate_the_crate() {
+        let sources = [
+            Path::new("/workspace/crates/chap-plugin/wit/types.wit"),
+            Path::new("/workspace/crates/chap-plugin/wit/provider.wit"),
+        ];
+
+        let guards = wit_source_guards(sources.into_iter()).to_string();
+
+        assert_eq!(guards.matches("include_bytes").count(), 2);
+        for source in sources {
+            assert!(
+                guards.contains(source.to_str().unwrap()),
+                "`{}` is not tracked by the generated bindings",
+                source.display()
+            );
+        }
+    }
+
+    #[test]
+    fn guards_nothing_when_a_world_has_no_wit_sources() {
+        assert!(wit_source_guards([].into_iter()).is_empty());
+    }
+
+    /// `include_bytes!` resolves a relative path against the invoking source file rather
+    /// than the manifest, so a guard only tracks the right file while `push_path` keeps
+    /// reporting absolute sources.
+    #[test]
+    fn guards_a_real_wit_directory_with_absolute_paths() {
+        let wit = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unexported-type/wit");
+        let mut resolve = Resolve::new();
+        let (_, sources) = resolve.push_path(&wit).unwrap();
+
+        let guards = wit_source_guards(sources.paths()).to_string();
+
+        assert_eq!(guards.matches("include_bytes").count(), 1);
+        assert!(guards.contains(wit.join("world.wit").to_str().unwrap()));
+    }
 
     #[test]
     fn accepts_import_options_as_a_pair_or_not_at_all() {
