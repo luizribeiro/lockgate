@@ -1290,11 +1290,12 @@ dependencies = [
 name = "lockgate-http"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "http",
  "http-body-util",
  "serde",
  "serde_json",
- "wasi-fetch",
+ "wasip3",
  "wit-bindgen",
 ]
 
@@ -2569,22 +2570,6 @@ name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
-
-[[package]]
-name = "wasi-fetch"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "292c62fe37626bb3c2b43d41eaa2bcbc209b14855d5a62dedf010634121fb410"
-dependencies = [
- "bytes",
- "futures",
- "http",
- "http-body",
- "serde",
- "serde_json",
- "url",
- "wasip3",
-]
 
 [[package]]
 name = "wasip2"

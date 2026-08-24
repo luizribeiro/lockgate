@@ -17,10 +17,13 @@ mod wasm {
     use alloc::vec::Vec;
     use core::fmt;
 
+    use bytes::Bytes;
     use http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName, HeaderValue};
-    use http::{HeaderMap, StatusCode};
-    use http_body_util::BodyExt as _;
+    use http::{HeaderMap, Method, StatusCode};
+    use http_body_util::{BodyExt as _, Full};
     use serde::Serialize;
+    use wasip3::http::types::Response as WasiResponse;
+    use wasip3::http_compat::{IncomingBody, http_from_wasi_response, http_into_wasi_request};
 
     use super::DEFAULT_MAX_RESPONSE_BYTES;
 
@@ -45,12 +48,12 @@ mod wasm {
 
         /// Starts a GET request.
         pub fn get(&self, url: &str) -> RequestBuilder {
-            RequestBuilder::new(wasi_fetch::Client::new().get(url), self.max_response_bytes)
+            RequestBuilder::new(Method::GET, url, self.max_response_bytes)
         }
 
         /// Starts a POST request.
         pub fn post(&self, url: &str) -> RequestBuilder {
-            RequestBuilder::new(wasi_fetch::Client::new().post(url), self.max_response_bytes)
+            RequestBuilder::new(Method::POST, url, self.max_response_bytes)
         }
     }
 
@@ -62,15 +65,21 @@ mod wasm {
 
     /// A request awaiting optional headers/body configuration and dispatch.
     pub struct RequestBuilder {
-        inner: wasi_fetch::RequestBuilder,
+        method: Method,
+        url: String,
+        headers: HeaderMap,
+        body: Vec<u8>,
         max_response_bytes: usize,
         pending_error: Option<Error>,
     }
 
     impl RequestBuilder {
-        fn new(inner: wasi_fetch::RequestBuilder, max_response_bytes: usize) -> Self {
+        fn new(method: Method, url: &str, max_response_bytes: usize) -> Self {
             Self {
-                inner,
+                method,
+                url: url.to_string(),
+                headers: HeaderMap::new(),
+                body: Vec::new(),
                 max_response_bytes,
                 pending_error: None,
             }
@@ -81,7 +90,7 @@ mod wasm {
             self.fail_if_pending()?;
             let name = HeaderName::try_from(name).map_err(Error::InvalidHeaderName)?;
             let value = HeaderValue::try_from(value).map_err(Error::InvalidHeaderValue)?;
-            self.inner = self.inner.header(name, value);
+            self.headers.insert(name, value);
             Ok(self)
         }
 
@@ -96,7 +105,7 @@ mod wasm {
                 let value = alloc::format!("Bearer {token}");
                 match HeaderValue::try_from(value) {
                     Ok(value) => {
-                        self.inner = self.inner.header(AUTHORIZATION, value);
+                        self.headers.insert(AUTHORIZATION, value);
                     }
                     Err(error) => self.pending_error = Some(Error::InvalidHeaderValue(error)),
                 }
@@ -107,24 +116,35 @@ mod wasm {
         /// Serializes a JSON request body and sets its content type.
         pub fn json<T: Serialize + ?Sized>(mut self, value: &T) -> Result<Self, Error> {
             self.fail_if_pending()?;
-            let body = serde_json::to_vec(value).map_err(Error::Json)?;
-            self.inner = self
-                .inner
-                .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-                .body(body);
+            self.body = serde_json::to_vec(value).map_err(Error::Json)?;
+            self.headers
+                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             Ok(self)
         }
 
         /// Sets an arbitrary request body.
         pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
-            self.inner = self.inner.body(body.into());
+            self.body = body.into();
             self
         }
 
         /// Sends the request and collects its response under the configured cap.
         pub async fn send(mut self) -> Result<Response, Error> {
             self.fail_if_pending()?;
-            let response = self.inner.send().await.map_err(Error::Request)?;
+            let mut request = http::Request::builder()
+                .method(self.method)
+                .uri(self.url)
+                .body(Full::new(Bytes::from(self.body)))
+                .map_err(|error| Error::Request(RequestError::build(error)))?;
+            *request.headers_mut() = self.headers;
+            let request = http_into_wasi_request(request)
+                .map_err(|error| Error::Request(RequestError::wasi("request conversion", error)))?;
+            let response = wasip3::http::client::send(request)
+                .await
+                .map_err(|error| Error::Request(RequestError::wasi("send", error)))?;
+            let response = http_from_wasi_response(response).map_err(|error| {
+                Error::Request(RequestError::wasi("response conversion", error))
+            })?;
             let (parts, body) = response.into_parts();
             let body = collect_limited(body, self.max_response_bytes).await?;
             Ok(Response {
@@ -161,8 +181,13 @@ mod wasm {
         }
 
         /// Returns the collected response body.
-        pub fn bytes(&self) -> &[u8] {
+        pub fn body(&self) -> &[u8] {
             &self.body
+        }
+
+        /// Returns the collected response body.
+        pub fn bytes(&self) -> &[u8] {
+            self.body()
         }
 
         /// Decodes the collected response body as UTF-8.
@@ -179,11 +204,45 @@ mod wasm {
         InvalidHeaderName(http::header::InvalidHeaderName),
         InvalidHeaderValue(http::header::InvalidHeaderValue),
         Json(serde_json::Error),
-        Request(wasi_fetch::Error),
-        Body(wasi_fetch::Error),
+        Request(RequestError),
+        Body(BodyError),
         ResponseTooLarge { limit: usize },
         Utf8(core::str::Utf8Error),
     }
+
+    /// Keeps request transport details outside the stable public API.
+    #[derive(Debug)]
+    pub struct RequestError(String);
+
+    impl RequestError {
+        fn build(error: http::Error) -> Self {
+            Self(alloc::format!("could not build HTTP request: {error}"))
+        }
+
+        fn wasi(operation: &str, error: impl fmt::Debug) -> Self {
+            Self(alloc::format!("wasi:http {operation} returned {error:?}"))
+        }
+    }
+
+    impl fmt::Display for RequestError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str(&self.0)
+        }
+    }
+
+    impl core::error::Error for RequestError {}
+
+    /// Keeps response transport details outside the stable public API.
+    #[derive(Debug)]
+    pub struct BodyError(String);
+
+    impl fmt::Display for BodyError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str(&self.0)
+        }
+    }
+
+    impl core::error::Error for BodyError {}
 
     impl fmt::Display for Error {
         fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -211,10 +270,17 @@ mod wasm {
 
     impl core::error::Error for Error {}
 
-    async fn collect_limited(mut body: wasi_fetch::Body, limit: usize) -> Result<Vec<u8>, Error> {
+    async fn collect_limited(
+        mut body: IncomingBody<WasiResponse>,
+        limit: usize,
+    ) -> Result<Vec<u8>, Error> {
         let mut bytes = Vec::new();
         while let Some(frame) = body.frame().await {
-            let frame = frame.map_err(Error::Body)?;
+            let frame = frame.map_err(|error| {
+                Error::Body(BodyError(alloc::format!(
+                    "wasi:http body stream returned {error:?}"
+                )))
+            })?;
             let Ok(chunk) = frame.into_data() else {
                 continue;
             };
@@ -230,4 +296,4 @@ mod wasm {
 #[cfg(target_arch = "wasm32")]
 pub use http;
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{Client, Error, RequestBuilder, Response};
+pub use wasm::{BodyError, Client, Error, RequestBuilder, RequestError, Response};
