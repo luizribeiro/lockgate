@@ -232,7 +232,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         deadline: Option<Duration>,
     ) -> Result<Vec<Val>, ExecError> {
         let mut store = self
-            .configured_store(data, limits.max_memory_bytes)
+            .configured_store(data, limits)
             .map_err(ExecError::Environment)?;
         store
             .set_fuel(limits.instantiation_fuel)
@@ -286,7 +286,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         deadline: Option<Duration>,
     ) -> Result<(), ExecError> {
         let store = self
-            .configured_store(data, limits.max_memory_bytes)
+            .configured_store(data, limits)
             .map_err(ExecError::Environment)?;
         // Admission charges constructor work to the app-chosen startup budget;
         // `HostBuilder::admit` documents the deliberate steady-state asymmetry.
@@ -297,7 +297,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
     fn configured_store(
         &self,
         data: S,
-        max_memory_bytes: usize,
+        limits: ExecLimits,
     ) -> Result<Store<StoreCtx<S>>, EnvironmentError> {
         let wasi = self.environment.wasi_context()?;
         let mut store = Store::new(
@@ -309,7 +309,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 self.jobs.clone(),
                 self.settings.clone(),
                 wasi,
-                max_memory_bytes,
+                limits,
             ),
         );
         store.limiter(|ctx| &mut ctx.limiter);
@@ -344,7 +344,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         dropped: Arc<AtomicBool>,
     ) -> Result<(), ExecError> {
         let mut store = self
-            .configured_store(data, limits.max_memory_bytes)
+            .configured_store(data, limits)
             .map_err(ExecError::Environment)?;
         store.data_mut().observe_drop(dropped);
         self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel), None)
@@ -362,6 +362,7 @@ pub(crate) struct ExportRef {
 pub(crate) struct ExecLimits {
     pub(crate) instantiation_fuel: u64,
     pub(crate) max_memory_bytes: usize,
+    pub(crate) http_request_timeout_ceiling: Option<Duration>,
 }
 
 /// Data owned by every `Store` this module creates.
@@ -396,11 +397,13 @@ impl<S> StoreCtx<S> {
         jobs: Option<DetachedJobContext>,
         settings: SettingsState,
         wasi: WasiCtx,
-        max_memory_bytes: usize,
+        limits: ExecLimits,
     ) -> Self {
-        let http_hooks = HttpHooks::new(plugin.clone());
+        let http_hooks = HttpHooks::new(plugin.clone(), limits.http_request_timeout_ceiling);
         Self {
-            limiter: MemoryLimiter { max_memory_bytes },
+            limiter: MemoryLimiter {
+                max_memory_bytes: limits.max_memory_bytes,
+            },
             data: Arc::new(data),
             imports,
             plugin,

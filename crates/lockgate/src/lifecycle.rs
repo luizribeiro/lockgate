@@ -104,6 +104,7 @@ pub struct RuntimeLimits {
     pub instantiation_fuel: u64,
     pub max_memory_bytes: usize,
     pub max_detached_jobs: usize,
+    pub http_request_timeout_ceiling: Option<Duration>,
 }
 
 impl Default for RuntimeLimits {
@@ -112,6 +113,7 @@ impl Default for RuntimeLimits {
             instantiation_fuel: 10_000_000,
             max_memory_bytes: 64 * 1024 * 1024,
             max_detached_jobs: 32,
+            http_request_timeout_ceiling: None,
         }
     }
 }
@@ -121,6 +123,7 @@ impl From<RuntimeLimits> for ExecLimits {
         Self {
             instantiation_fuel: limits.instantiation_fuel,
             max_memory_bytes: limits.max_memory_bytes,
+            http_request_timeout_ceiling: limits.http_request_timeout_ceiling,
         }
     }
 }

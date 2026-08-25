@@ -1,6 +1,6 @@
 //! Mediated outbound HTTP policy.
 
-use std::{any::Any, future::Future, str::FromStr, sync::Arc};
+use std::{any::Any, future::Future, str::FromStr, sync::Arc, time::Duration};
 
 use ::http::{Request, Response, Uri};
 use lockgate_policy::{HttpOrigin, net};
@@ -15,11 +15,18 @@ use lockgate::PluginHandle;
 
 pub(crate) struct HttpHooks {
     plugin: Option<Arc<dyn Any + Send + Sync>>,
+    request_timeout_ceiling: Option<Duration>,
 }
 
 impl HttpHooks {
-    pub(crate) fn new(plugin: Option<Arc<dyn Any + Send + Sync>>) -> Self {
-        Self { plugin }
+    pub(crate) fn new(
+        plugin: Option<Arc<dyn Any + Send + Sync>>,
+        request_timeout_ceiling: Option<Duration>,
+    ) -> Self {
+        Self {
+            plugin,
+            request_timeout_ceiling,
+        }
     }
 
     fn allows(&self, uri: &Uri) -> bool {
@@ -53,8 +60,28 @@ impl WasiHttpHooks for HttpHooks {
         if !self.allows(request.uri()) {
             return Box::new(async { Err(WasiHttpError::HttpRequestDenied) });
         }
+        let options = clamp_request_options(options, self.request_timeout_ceiling);
         default_hooks().send_request(request, options, fut)
     }
+}
+
+pub(crate) fn clamp_request_options(
+    options: Option<RequestOptions>,
+    ceiling: Option<Duration>,
+) -> Option<RequestOptions> {
+    let Some(ceiling) = ceiling else {
+        return options;
+    };
+    let mut options = options.unwrap_or_default();
+    options.connect_timeout = Some(options.connect_timeout.unwrap_or(ceiling).min(ceiling));
+    options.first_byte_timeout = Some(options.first_byte_timeout.unwrap_or(ceiling).min(ceiling));
+    options.between_bytes_timeout = Some(
+        options
+            .between_bytes_timeout
+            .unwrap_or(ceiling)
+            .min(ceiling),
+    );
+    Some(options)
 }
 
 fn request_origin(uri: &Uri) -> Option<HttpOrigin> {

@@ -12,11 +12,14 @@ use ::http::{Request, Response, StatusCode};
 use http_body_util::{BodyExt, Empty};
 use lockgate_policy::{HttpOrigin, ScopeRepr};
 use lockgate_schema::GrantSet;
-use wasmtime_wasi_http::{Error as WasiHttpError, WasiBody, WasiHttpHooks};
+use wasmtime_wasi_http::{Error as WasiHttpError, RequestOptions, WasiBody, WasiHttpHooks};
 
 use crate::{
     PluginHandle,
-    exec::{ExecEngine, StoreCtx, add_http_to_linker, wasi_http::HttpHooks},
+    exec::{
+        ExecEngine, StoreCtx, add_http_to_linker,
+        wasi_http::{HttpHooks, clamp_request_options},
+    },
     net,
     policy::{CapabilityRegistry, EffectiveGrants, ResolvedNeeds},
 };
@@ -42,7 +45,60 @@ fn hooks_with_origins(origins: &[HttpOrigin]) -> HttpHooks {
         registry,
     );
     let plugin: Arc<dyn Any + Send + Sync> = Arc::new(plugin);
-    HttpHooks::new(Some(plugin))
+    HttpHooks::new(Some(plugin), None)
+}
+
+const TIMEOUT_CEILING: Duration = Duration::from_secs(5);
+
+fn request_options(timeout: Option<Duration>) -> RequestOptions {
+    RequestOptions {
+        connect_timeout: timeout,
+        first_byte_timeout: timeout,
+        between_bytes_timeout: timeout,
+    }
+}
+
+#[test]
+fn ceiling_populates_all_unset_guest_timeouts() {
+    assert_eq!(
+        clamp_request_options(None, Some(TIMEOUT_CEILING)),
+        Some(request_options(Some(TIMEOUT_CEILING)))
+    );
+}
+
+#[test]
+fn ceiling_clamps_longer_guest_timeouts() {
+    assert_eq!(
+        clamp_request_options(
+            Some(request_options(Some(Duration::from_secs(10)))),
+            Some(TIMEOUT_CEILING),
+        ),
+        Some(request_options(Some(TIMEOUT_CEILING)))
+    );
+}
+
+#[test]
+fn ceiling_preserves_shorter_guest_timeouts() {
+    let guest_timeout = Duration::from_secs(2);
+    assert_eq!(
+        clamp_request_options(
+            Some(request_options(Some(guest_timeout))),
+            Some(TIMEOUT_CEILING),
+        ),
+        Some(request_options(Some(guest_timeout)))
+    );
+}
+
+#[test]
+fn no_ceiling_preserves_guest_options() {
+    let options = RequestOptions {
+        connect_timeout: Some(Duration::from_secs(1)),
+        first_byte_timeout: None,
+        between_bytes_timeout: Some(Duration::from_secs(3)),
+    };
+
+    assert_eq!(clamp_request_options(Some(options), None), Some(options));
+    assert_eq!(clamp_request_options(None, None), None);
 }
 
 fn empty_body() -> WasiBody {

@@ -300,6 +300,7 @@ mod tests {
                 ExecLimits {
                     instantiation_fuel: 1_000_000,
                     max_memory_bytes: 1024 * 1024,
+                    http_request_timeout_ceiling: None,
                 },
             )
             .await
@@ -312,6 +313,7 @@ mod tests {
                 ExecLimits {
                     instantiation_fuel: 1_000_000,
                     max_memory_bytes: 0,
+                    http_request_timeout_ceiling: None,
                 },
             )
             .await

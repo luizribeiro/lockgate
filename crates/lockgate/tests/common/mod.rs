@@ -26,6 +26,7 @@ use exec::{ExecLimits, StoreCtx};
 pub(crate) const LIMITS: ExecLimits = ExecLimits {
     instantiation_fuel: 1_000_000,
     max_memory_bytes: 16 * 1024 * 1024,
+    http_request_timeout_ceiling: None,
 };
 pub(crate) const INVOCATION_FUEL: u64 = 1_000_000;
 
