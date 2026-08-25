@@ -15,15 +15,17 @@ mod wasm {
 
     use alloc::string::{String, ToString};
     use alloc::vec::Vec;
-    use core::fmt;
+    use core::{fmt, time::Duration};
 
     use bytes::Bytes;
     use http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName, HeaderValue};
     use http::{HeaderMap, Method, StatusCode};
     use http_body_util::{BodyExt as _, Full};
     use serde::Serialize;
-    use wasip3::http::types::Response as WasiResponse;
-    use wasip3::http_compat::{IncomingBody, http_from_wasi_response, http_into_wasi_request};
+    use wasip3::http::types::{RequestOptions, Response as WasiResponse};
+    use wasip3::http_compat::{
+        IncomingBody, RequestOptionsExtension, http_from_wasi_response, http_into_wasi_request,
+    };
 
     use super::DEFAULT_MAX_RESPONSE_BYTES;
 
@@ -31,6 +33,9 @@ mod wasm {
     #[derive(Clone, Copy, Debug)]
     pub struct Client {
         max_response_bytes: usize,
+        connect_timeout: Option<Duration>,
+        first_byte_timeout: Option<Duration>,
+        between_bytes_timeout: Option<Duration>,
     }
 
     impl Client {
@@ -38,22 +43,48 @@ mod wasm {
         pub const fn new() -> Self {
             Self {
                 max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+                connect_timeout: None,
+                first_byte_timeout: None,
+                between_bytes_timeout: None,
             }
         }
 
         /// Creates a client with a caller-selected response body limit.
         pub const fn with_max_response_bytes(max_response_bytes: usize) -> Self {
-            Self { max_response_bytes }
+            Self {
+                max_response_bytes,
+                connect_timeout: None,
+                first_byte_timeout: None,
+                between_bytes_timeout: None,
+            }
+        }
+
+        /// Sets the timeout for connecting to the HTTP server.
+        pub const fn with_connect_timeout(mut self, timeout: Duration) -> Self {
+            self.connect_timeout = Some(timeout);
+            self
+        }
+
+        /// Sets the timeout for receiving the first byte of the response.
+        pub const fn with_first_byte_timeout(mut self, timeout: Duration) -> Self {
+            self.first_byte_timeout = Some(timeout);
+            self
+        }
+
+        /// Sets the timeout between subsequent response-body chunks.
+        pub const fn with_between_bytes_timeout(mut self, timeout: Duration) -> Self {
+            self.between_bytes_timeout = Some(timeout);
+            self
         }
 
         /// Starts a GET request.
         pub fn get(&self, url: &str) -> RequestBuilder {
-            RequestBuilder::new(Method::GET, url, self.max_response_bytes)
+            RequestBuilder::new(Method::GET, url, self)
         }
 
         /// Starts a POST request.
         pub fn post(&self, url: &str) -> RequestBuilder {
-            RequestBuilder::new(Method::POST, url, self.max_response_bytes)
+            RequestBuilder::new(Method::POST, url, self)
         }
     }
 
@@ -70,17 +101,23 @@ mod wasm {
         headers: HeaderMap,
         body: Vec<u8>,
         max_response_bytes: usize,
+        connect_timeout: Option<Duration>,
+        first_byte_timeout: Option<Duration>,
+        between_bytes_timeout: Option<Duration>,
         pending_error: Option<Error>,
     }
 
     impl RequestBuilder {
-        fn new(method: Method, url: &str, max_response_bytes: usize) -> Self {
+        fn new(method: Method, url: &str, client: &Client) -> Self {
             Self {
                 method,
                 url: url.to_string(),
                 headers: HeaderMap::new(),
                 body: Vec::new(),
-                max_response_bytes,
+                max_response_bytes: client.max_response_bytes,
+                connect_timeout: client.connect_timeout,
+                first_byte_timeout: client.first_byte_timeout,
+                between_bytes_timeout: client.between_bytes_timeout,
                 pending_error: None,
             }
         }
@@ -131,12 +168,18 @@ mod wasm {
         /// Sends the request and collects its response under the configured cap.
         pub async fn send(mut self) -> Result<Response, Error> {
             self.fail_if_pending()?;
+            let options = self.request_options()?;
             let mut request = http::Request::builder()
                 .method(self.method)
                 .uri(self.url)
                 .body(Full::new(Bytes::from(self.body)))
                 .map_err(|error| Error::Request(RequestError::build(error)))?;
             *request.headers_mut() = self.headers;
+            if let Some(options) = options {
+                request
+                    .extensions_mut()
+                    .insert(RequestOptionsExtension(options));
+            }
             let request = http_into_wasi_request(request)
                 .map_err(|error| Error::Request(RequestError::wasi("request conversion", error)))?;
             let response = wasip3::http::client::send(request)
@@ -160,6 +203,52 @@ mod wasm {
                 None => Ok(()),
             }
         }
+
+        fn request_options(&self) -> Result<Option<RequestOptions>, Error> {
+            if self.connect_timeout.is_none()
+                && self.first_byte_timeout.is_none()
+                && self.between_bytes_timeout.is_none()
+            {
+                return Ok(None);
+            }
+
+            let options = RequestOptions::new();
+            apply_timeout("connect", self.connect_timeout, |timeout| {
+                options.set_connect_timeout(timeout)
+            })?;
+            apply_timeout("first-byte", self.first_byte_timeout, |timeout| {
+                options.set_first_byte_timeout(timeout)
+            })?;
+            apply_timeout("between-bytes", self.between_bytes_timeout, |timeout| {
+                options.set_between_bytes_timeout(timeout)
+            })?;
+            Ok(Some(options))
+        }
+    }
+
+    fn apply_timeout(
+        kind: &str,
+        timeout: Option<Duration>,
+        setter: impl FnOnce(Option<u64>) -> Result<(), wasip3::http::types::RequestOptionsError>,
+    ) -> Result<(), Error> {
+        let Some(timeout) = timeout else {
+            return Ok(());
+        };
+        let timeout = timeout_nanos(kind, timeout)?;
+        setter(Some(timeout)).map_err(|error| {
+            Error::Request(RequestError::wasi(
+                &alloc::format!("{kind} timeout configuration"),
+                error,
+            ))
+        })
+    }
+
+    fn timeout_nanos(kind: &str, timeout: Duration) -> Result<u64, Error> {
+        u64::try_from(timeout.as_nanos()).map_err(|_| {
+            Error::Request(RequestError(alloc::format!(
+                "{kind} timeout {timeout:?} exceeds wasi:http's duration range"
+            )))
+        })
     }
 
     /// Fully collected HTTP response.

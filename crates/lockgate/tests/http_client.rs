@@ -5,7 +5,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::thread;
 use std::time::Duration;
 
-use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
+use lockgate::{Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, RuntimeLimits};
 
 lockgate::host_bindings!({
     path: "tests/fixtures/http-client-guest/wit",
@@ -15,6 +15,7 @@ lockgate::host_bindings!({
 use guest::HostExt as _;
 
 const RESPONSE_BODY: &str = "lockgate-http works!";
+const SHORT_TIMEOUT_MILLIS: u64 = 100;
 
 fn serve_once() -> (String, thread::JoinHandle<SocketAddr>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -37,26 +38,34 @@ fn serve_once() -> (String, thread::JoinHandle<SocketAddr>) {
     (format!("http://{address}"), server)
 }
 
-fn assert_no_connection(listener: TcpListener) {
-    listener.set_nonblocking(true).unwrap();
-    thread::sleep(Duration::from_millis(50));
-    match listener.accept() {
-        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-        Err(error) => panic!("unexpected accept error: {error}"),
-        Ok((_, peer)) => panic!("request unexpectedly connected from {peer}"),
-    }
+fn serve_after_delay(delay: Duration) -> (String, thread::JoinHandle<SocketAddr>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut connection, peer) = listener.accept().unwrap();
+        connection
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = [0; 1024];
+        let _ = connection.read(&mut request).unwrap();
+        thread::sleep(delay);
+        let _ = write!(
+            connection,
+            "HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        );
+        peer
+    });
+    (format!("http://{address}"), server)
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn guest_http_client_reaches_only_its_granted_origin() {
-    let (allowed_origin, server) = serve_once();
+async fn admitted_client(origin: String) -> (Host<()>, PluginHandle) {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
             "http-client",
             &common::HTTP_CLIENT_FIXTURE,
             PluginConfig {
-                settings: Some(serde_json::json!({ "origin": allowed_origin })),
+                settings: Some(serde_json::json!({ "origin": origin })),
                 ..PluginConfig::default()
             },
         )
@@ -72,7 +81,23 @@ async fn guest_http_client_reaches_only_its_granted_origin() {
         )
         .await
         .unwrap();
-    let host = builder.finish();
+    (builder.finish(), plugin)
+}
+
+fn assert_no_connection(listener: TcpListener) {
+    listener.set_nonblocking(true).unwrap();
+    thread::sleep(Duration::from_millis(50));
+    match listener.accept() {
+        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+        Err(error) => panic!("unexpected accept error: {error}"),
+        Ok((_, peer)) => panic!("request unexpectedly connected from {peer}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn guest_http_client_reaches_only_its_granted_origin() {
+    let (allowed_origin, server) = serve_once();
+    let (host, plugin) = admitted_client(allowed_origin.clone()).await;
     let guest = host.guest(&plugin).unwrap();
 
     let allowed_url = format!("{allowed_origin}/client");
@@ -106,29 +131,7 @@ async fn guest_http_client_reaches_only_its_granted_origin() {
 async fn base_url_setting_resolves_to_its_origin() {
     let (allowed_origin, server) = serve_once();
     let base_url = format!("{allowed_origin}/v1");
-    let mut builder = HostBuilder::new(()).unwrap();
-    let prepared = builder
-        .prepare(
-            "http-client",
-            &common::HTTP_CLIENT_FIXTURE,
-            PluginConfig {
-                settings: Some(serde_json::json!({ "origin": base_url })),
-                ..PluginConfig::default()
-            },
-        )
-        .await
-        .unwrap();
-    let acceptance = prepared.accept_all();
-    let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
-        )
-        .await
-        .unwrap();
-    let host = builder.finish();
+    let (host, plugin) = admitted_client(base_url).await;
     let guest = host.guest(&plugin).unwrap();
 
     let allowed_url = format!("{allowed_origin}/client");
@@ -140,6 +143,48 @@ async fn base_url_setting_resolves_to_its_origin() {
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(response.status, 201);
+    assert_eq!(response.body, RESPONSE_BODY);
+    server.join().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn first_byte_timeout_fails_a_stalled_request() {
+    let (allowed_origin, server) = serve_after_delay(Duration::from_millis(500));
+    let (host, plugin) = admitted_client(allowed_origin.clone()).await;
+    let guest = host.guest(&plugin).unwrap();
+
+    let error = guest
+        .get_with_first_byte_timeout(
+            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            &format!("{allowed_origin}/stall"),
+            SHORT_TIMEOUT_MILLIS,
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert!(error.contains("HTTP request failed"), "{error}");
+    assert!(error.to_ascii_lowercase().contains("timeout"), "{error}");
+    server.join().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn normal_request_succeeds_with_generous_timeouts() {
+    let (allowed_origin, server) = serve_once();
+    let (host, plugin) = admitted_client(allowed_origin.clone()).await;
+    let guest = host.guest(&plugin).unwrap();
+
+    let response = guest
+        .get_with_timeouts(
+            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            &format!("{allowed_origin}/timeouts"),
+            5_000,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
     assert_eq!(response.status, 201);
     assert_eq!(response.body, RESPONSE_BODY);
     server.join().unwrap();

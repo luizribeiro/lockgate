@@ -7,6 +7,8 @@ interface guest {
   }
 
   get: async func(url: string) -> result<response, string>;
+  get-with-first-byte-timeout: async func(url: string, timeout-millis: u64) -> result<response, string>;
+  get-with-timeouts: async func(url: string, timeout-millis: u64) -> result<response, string>;
 }
 
 world fixture {

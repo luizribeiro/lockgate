@@ -1,3 +1,4 @@
+use core::time::Duration;
 use lockgate_http::Client;
 use lockgate_plugin::{
     Deserialize, JsonSchema, MetadataSource, Need, Needs, Plugin, ScopeRef, net,
@@ -34,20 +35,51 @@ impl Plugin for Fixture {
 }
 
 impl exports::test::http_client::guest::Guest for Fixture {
-    async fn get(
-        url: String,
-    ) -> Result<exports::test::http_client::guest::Response, String> {
-        let settings = Self::settings();
-        let _ = settings.origin;
-        let response = Client::new()
-            .get(&url)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?;
-        let status = response.status();
-        let body = response.text().map_err(|error| error.to_string())?;
-        Ok(exports::test::http_client::guest::Response { status, body })
+    async fn get(url: String) -> Result<exports::test::http_client::guest::Response, String> {
+        get(Client::new(), url).await
     }
+
+    async fn get_with_first_byte_timeout(
+        url: String,
+        timeout_millis: u64,
+    ) -> Result<exports::test::http_client::guest::Response, String> {
+        get(
+            Client::new().with_first_byte_timeout(Duration::from_millis(timeout_millis)),
+            url,
+        )
+        .await
+    }
+
+    async fn get_with_timeouts(
+        url: String,
+        timeout_millis: u64,
+    ) -> Result<exports::test::http_client::guest::Response, String> {
+        let timeout = Duration::from_millis(timeout_millis);
+        get(
+            Client::new()
+                .with_connect_timeout(timeout)
+                .with_first_byte_timeout(timeout)
+                .with_between_bytes_timeout(timeout),
+            url,
+        )
+        .await
+    }
+}
+
+async fn get(
+    client: Client,
+    url: String,
+) -> Result<exports::test::http_client::guest::Response, String> {
+    let settings = Fixture::settings();
+    let _ = settings.origin;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    let body = response.text().map_err(|error| error.to_string())?;
+    Ok(exports::test::http_client::guest::Response { status, body })
 }
 
 lockgate_plugin::export!(Fixture);
