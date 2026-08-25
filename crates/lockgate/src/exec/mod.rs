@@ -6,7 +6,7 @@ use std::sync::{
 
 #[cfg(not(test))]
 use std::sync::Arc;
-use std::{any::Any, marker::PhantomData};
+use std::{any::Any, marker::PhantomData, time::Duration};
 
 use wasmtime::component::{
     Component, ComponentExportIndex, InstancePre, Linker, ResourceTable, Val, types::ComponentItem,
@@ -229,6 +229,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         data: S,
         limits: ExecLimits,
         invocation_fuel: u64,
+        deadline: Option<Duration>,
     ) -> Result<Vec<Val>, ExecError> {
         let mut store = self
             .configured_store(data, limits.max_memory_bytes)
@@ -253,18 +254,22 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         };
         let mut results = vec![Val::Bool(false); export.result_count];
 
-        let call_result = store
-            .run_concurrent(async |accessor| {
-                func.call_concurrent(accessor, args, &mut results).await
-            })
-            .await
-            .map_err(map_call_error)?;
+        let call = store.run_concurrent(async |accessor| {
+            func.call_concurrent(accessor, args, &mut results).await
+        });
+        let call_result = match deadline {
+            Some(deadline) => tokio::time::timeout(deadline, call)
+                .await
+                .map_err(|_| ExecError::DeadlineExceeded(deadline))?,
+            None => call.await,
+        }
+        .map_err(map_call_error)?;
         call_result.map_err(map_call_error)?;
 
         Ok(results)
     }
 
-    /// Instantiates the component under its runtime limits and startup budget.
+    /// Instantiates the component under its runtime limits, startup fuel, and deadline.
     ///
     /// Instantiation executes the component plan: inner core modules instantiate,
     /// `start` sections run, memories and tables allocate, and guest runtime and
@@ -278,13 +283,14 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         data: S,
         limits: ExecLimits,
         startup_fuel: u64,
+        deadline: Option<Duration>,
     ) -> Result<(), ExecError> {
         let store = self
             .configured_store(data, limits.max_memory_bytes)
             .map_err(ExecError::Environment)?;
         // Admission charges constructor work to the app-chosen startup budget;
         // `HostBuilder::admit` documents the deliberate steady-state asymmetry.
-        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel))
+        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel), deadline)
             .await
     }
 
@@ -311,12 +317,21 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         Ok(store)
     }
 
-    async fn smoke_store(&self, mut store: Store<StoreCtx<S>>, fuel: u64) -> Result<(), ExecError> {
+    async fn smoke_store(
+        &self,
+        mut store: Store<StoreCtx<S>>,
+        fuel: u64,
+        deadline: Option<Duration>,
+    ) -> Result<(), ExecError> {
         store.set_fuel(fuel).map_err(map_instantiate_error)?;
-        self.instance_pre
-            .instantiate_async(&mut store)
-            .await
-            .map_err(map_instantiate_error)?;
+        let instantiate = self.instance_pre.instantiate_async(&mut store);
+        match deadline {
+            Some(deadline) => tokio::time::timeout(deadline, instantiate)
+                .await
+                .map_err(|_| ExecError::DeadlineExceeded(deadline))?,
+            None => instantiate.await,
+        }
+        .map_err(map_instantiate_error)?;
         Ok(())
     }
 
@@ -332,7 +347,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
             .configured_store(data, limits.max_memory_bytes)
             .map_err(ExecError::Environment)?;
         store.data_mut().observe_drop(dropped);
-        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel))
+        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel), None)
             .await
     }
 }

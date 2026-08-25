@@ -312,7 +312,7 @@ async fn wasi_importing_guest_instantiates_and_runs() -> Result<()> {
         .expect("clock export should resolve structurally");
 
     let results = loaded
-        .invoke(clock, &[], TestState, LIMITS, INVOCATION_FUEL)
+        .invoke(clock, &[], TestState, LIMITS, INVOCATION_FUEL, None)
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::U64(seconds)] if *seconds > 0));
@@ -328,7 +328,7 @@ async fn wasi_outbound_network_is_denied_at_runtime() -> Result<()> {
         .expect("network denial export should resolve structurally");
 
     let results = loaded
-        .invoke(connect, &[], TestState, LIMITS, INVOCATION_FUEL)
+        .invoke(connect, &[], TestState, LIMITS, INVOCATION_FUEL, None)
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::Bool(true)]));
@@ -344,7 +344,7 @@ async fn wasi_filesystem_access_is_denied_at_runtime() -> Result<()> {
         .expect("filesystem denial export should resolve structurally");
 
     let results = loaded
-        .invoke(open, &[], TestState, LIMITS, INVOCATION_FUEL)
+        .invoke(open, &[], TestState, LIMITS, INVOCATION_FUEL, None)
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::Bool(true)]));

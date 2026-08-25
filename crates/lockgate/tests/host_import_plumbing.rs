@@ -89,7 +89,10 @@ impl GuestClient<'_, u32> {
 }
 
 fn budget() -> lockgate::BudgetClass {
-    lockgate::BudgetClass::Bounded { fuel: 1_000_000 }
+    lockgate::BudgetClass::Bounded {
+        fuel: 1_000_000,
+        deadline: None,
+    }
 }
 
 fn component() -> Vec<u8> {

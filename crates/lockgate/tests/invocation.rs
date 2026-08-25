@@ -21,7 +21,7 @@ async fn value_export_returns_expected_value() -> Result<()> {
         .expect("value export should resolve structurally");
 
     let results = loaded
-        .invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL)
+        .invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL, None)
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::U32(42)]));
@@ -61,7 +61,8 @@ async fn dropping_invocation_drops_store_and_stops_guest() -> Result<()> {
         .export("test:exec/guest", "suspend")
         .expect("suspend export should resolve structurally");
 
-    let mut invocation = Box::pin(loaded.invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL));
+    let mut invocation =
+        Box::pin(loaded.invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL, None));
     tokio::select! {
         result = &mut invocation => panic!("invocation completed before cancellation: {result:?}"),
         () = entered.notified() => {}
@@ -77,7 +78,7 @@ async fn dropping_invocation_drops_store_and_stops_guest() -> Result<()> {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     let results = loaded
-        .invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL)
+        .invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL, None)
         .await?;
     assert!(matches!(results.as_slice(), [Val::U32(7)]));
     assert_eq!(calls.load(Ordering::SeqCst), 2);

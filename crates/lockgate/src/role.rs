@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, time::Duration};
 
 use wasmtime::component::Val;
 
@@ -73,9 +73,16 @@ impl<'a, S: CallContext> RoleInvocation<'a, S> {
                     self.interface
                 ),
             })?;
-        let BudgetClass::Bounded { fuel } = ctx.budget;
+        let BudgetClass::Bounded { fuel, deadline } = ctx.budget;
         self.artifact
-            .invoke(export, arguments, ctx.data, self.limits.into(), fuel)
+            .invoke(
+                export,
+                arguments,
+                ctx.data,
+                self.limits.into(),
+                fuel,
+                deadline,
+            )
             .await
             .map_err(|error| CallError::from_exec(error, fuel))
     }
@@ -94,6 +101,8 @@ pub enum CallError {
     Trap { detail: String },
     /// The invocation exhausted its bounded fuel allowance.
     OutOfBudget { fuel: u64 },
+    /// The invocation exceeded its bounded wall-clock allowance.
+    DeadlineExceeded { deadline: Duration },
     /// Dynamic function lookup, argument lowering, or result lifting failed.
     Dispatch { message: String },
 }
@@ -118,6 +127,7 @@ impl CallError {
                 detail: detail.to_string(),
             },
             ExecError::OutOfBudget => Self::OutOfBudget { fuel },
+            ExecError::DeadlineExceeded(deadline) => Self::DeadlineExceeded { deadline },
             // Generated application imports have no outer failure channel yet:
             // WIT `result` values are guest data, while only future fallible
             // capability adapters can create the internal HostImport marker.
@@ -140,6 +150,10 @@ impl fmt::Display for CallError {
             Self::OutOfBudget { fuel } => write!(
                 formatter,
                 "plugin exhausted its bounded call budget of {fuel} fuel units"
+            ),
+            Self::DeadlineExceeded { deadline } => write!(
+                formatter,
+                "plugin exceeded its bounded call deadline of {deadline:?}"
             ),
             Self::Dispatch { message } => {
                 write!(formatter, "plugin call could not be dispatched: {message}")

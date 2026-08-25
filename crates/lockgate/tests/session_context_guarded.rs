@@ -279,7 +279,10 @@ fn call(session: Option<&str>) -> InvocationCtx<SageCall> {
         SageCall {
             session: session.map(SessionId::new),
         },
-        BudgetClass::Bounded { fuel: 5_000_000 },
+        BudgetClass::Bounded {
+            fuel: 5_000_000,
+            deadline: None,
+        },
     )
 }
 

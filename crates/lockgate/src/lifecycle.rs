@@ -5,6 +5,7 @@ use std::{
     fmt,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
 use lockgate_schema::{
@@ -51,8 +52,11 @@ impl HostId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BudgetClass {
-    /// A deterministic fuel ceiling for one invocation.
-    Bounded { fuel: u64 },
+    /// A deterministic fuel ceiling and optional wall-clock deadline for one invocation.
+    Bounded {
+        fuel: u64,
+        deadline: Option<Duration>,
+    },
 }
 
 /// A [`CallContext`] and execution budget installed for one invocation.
@@ -65,7 +69,24 @@ pub struct InvocationCtx<S> {
 impl InvocationCtx<()> {
     /// Creates a context with no application data and a bounded fuel budget.
     pub fn bounded(fuel: u64) -> Self {
-        Self::new((), BudgetClass::Bounded { fuel })
+        Self::new(
+            (),
+            BudgetClass::Bounded {
+                fuel,
+                deadline: None,
+            },
+        )
+    }
+
+    /// Creates a context with no application data and bounded fuel and time budgets.
+    pub fn bounded_with_deadline(fuel: u64, deadline: Duration) -> Self {
+        Self::new(
+            (),
+            BudgetClass::Bounded {
+                fuel,
+                deadline: Some(deadline),
+            },
+        )
     }
 }
 
@@ -506,9 +527,9 @@ impl<S: CallContext> HostBuilder<S> {
 
     /// Verifies prepared acceptance and smoke-instantiates the plugin.
     /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
-    /// `startup_ctx`'s fuel, so an application-chosen startup budget may reject
-    /// a constructor that steady-state calls would instantiate under the full
-    /// limit.
+    /// `startup_ctx`'s fuel, plus its optional deadline, so an application-chosen
+    /// startup budget may reject a constructor that steady-state calls would
+    /// instantiate under the full limit.
     pub async fn admit(
         &mut self,
         prepared: Prepared,
@@ -561,9 +582,9 @@ impl<S: CallContext> HostBuilder<S> {
                 limits.max_detached_jobs,
             ),
         );
-        let BudgetClass::Bounded { fuel } = startup_ctx.budget;
+        let BudgetClass::Bounded { fuel, deadline } = startup_ctx.budget;
         artifact
-            .smoke(startup_ctx.data, limits.into(), fuel)
+            .smoke(startup_ctx.data, limits.into(), fuel, deadline)
             .await
             .map_err(AdmissionError::from_smoke)?;
 

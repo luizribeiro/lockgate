@@ -1,5 +1,4 @@
-use std::error::Error;
-use std::fmt;
+use std::{error::Error, fmt, time::Duration};
 
 use anyhow::Error as AnyError;
 use wasmtime::{Error as WasmtimeError, Trap};
@@ -72,6 +71,7 @@ pub(crate) enum ExecError {
     Instantiate(AnyError),
     Trap(TrapDetail),
     OutOfBudget,
+    DeadlineExceeded(Duration),
     HostImport(AnyError),
     Dispatch(AnyError),
 }
@@ -83,6 +83,7 @@ impl fmt::Display for ExecError {
             Self::Instantiate(error) => write!(f, "component instantiation failed: {error}"),
             Self::Trap(detail) => write!(f, "component trapped: {detail}"),
             Self::OutOfBudget => f.write_str("component exhausted its invocation fuel"),
+            Self::DeadlineExceeded(_) => f.write_str("component exceeded its invocation deadline"),
             Self::HostImport(error) => write!(f, "host import failed: {error}"),
             Self::Dispatch(error) => write!(f, "component dispatch failed: {error}"),
         }

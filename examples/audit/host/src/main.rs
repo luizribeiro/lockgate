@@ -89,7 +89,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
 fn call(user: &str, fuel: u64) -> InvocationCtx<CallOrigin> {
     InvocationCtx::new(
         CallOrigin { user: user.into() },
-        BudgetClass::Bounded { fuel },
+        BudgetClass::Bounded {
+            fuel,
+            deadline: None,
+        },
     )
 }
 

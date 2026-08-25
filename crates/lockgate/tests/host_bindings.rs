@@ -140,7 +140,10 @@ async fn host() -> (
                     label: "startup".into(),
                     startup: 17,
                 },
-                BudgetClass::Bounded { fuel: 1_000_000 },
+                BudgetClass::Bounded {
+                    fuel: 1_000_000,
+                    deadline: None,
+                },
             ),
         )
         .await
@@ -154,7 +157,10 @@ fn context(label: &str) -> InvocationCtx<CallData> {
             label: label.into(),
             startup: 0,
         },
-        BudgetClass::Bounded { fuel: 1_000_000 },
+        BudgetClass::Bounded {
+            fuel: 1_000_000,
+            deadline: None,
+        },
     )
 }
 
@@ -241,7 +247,10 @@ async fn smoke_imports_observe_startup_data() {
                     label: "startup".into(),
                     startup: 17,
                 },
-                BudgetClass::Bounded { fuel: 1_000_000 },
+                BudgetClass::Bounded {
+                    fuel: 1_000_000,
+                    deadline: None,
+                },
             ),
         )
         .await

@@ -212,10 +212,23 @@ fn runtime_inputs_are_bounded_and_explicit() {
 
     assert_eq!(
         InvocationCtx::bounded(123),
-        InvocationCtx::new((), BudgetClass::Bounded { fuel: 123 })
+        InvocationCtx::new(
+            (),
+            BudgetClass::Bounded {
+                fuel: 123,
+                deadline: None,
+            },
+        )
     );
     assert_eq!(
-        InvocationCtx::new("startup", BudgetClass::Bounded { fuel: 456 }).data,
+        InvocationCtx::new(
+            "startup",
+            BudgetClass::Bounded {
+                fuel: 456,
+                deadline: None,
+            },
+        )
+        .data,
         "startup"
     );
 }
