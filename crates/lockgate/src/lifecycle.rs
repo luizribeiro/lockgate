@@ -53,6 +53,12 @@ impl HostId {
 #[non_exhaustive]
 pub enum BudgetClass {
     /// A deterministic fuel ceiling and wall-clock deadline for one invocation.
+    ///
+    /// The two bounds answer different questions and neither substitutes for the other.
+    /// `fuel` bounds guest instructions, so it is what stops a guest spinning on the CPU.
+    /// `deadline` is enforced with [`tokio::time::timeout`], which fires only while the
+    /// invocation future is pending — so it bounds a guest *parked on an async host import*,
+    /// such as an unanswered HTTP request, and cannot interrupt a busy loop.
     Bounded { fuel: u64, deadline: Duration },
 }
 
@@ -65,6 +71,13 @@ pub struct InvocationCtx<S> {
 
 impl InvocationCtx<()> {
     /// Creates a context with no application data and bounded fuel and time budgets.
+    ///
+    /// # Requires a time-enabled Tokio runtime
+    ///
+    /// The deadline is enforced with [`tokio::time::timeout`], so invoking with this context
+    /// **panics on a runtime built without timers**. `#[tokio::main]` and `#[tokio::test]`
+    /// enable them by default; a hand-built [`tokio::runtime::Builder`] needs `.enable_time()`
+    /// (or `.enable_all()`).
     pub fn bounded(fuel: u64, deadline: Duration) -> Self {
         Self::new((), BudgetClass::Bounded { fuel, deadline })
     }
