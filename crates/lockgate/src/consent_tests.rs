@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
 
 use lockgate_policy::{Need, Needs, Scope, ScopeError, ScopeRef, ScopeRepr, env};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
@@ -341,7 +341,7 @@ async fn component_digest_changes_do_not_require_new_consent() {
                 current,
                 acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
             )
             .await
             .unwrap();
@@ -373,7 +373,7 @@ async fn first_run_refuses_acceptance_until_explicit_approval_then_admits() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
         )
         .await
         .unwrap();
@@ -603,7 +603,7 @@ async fn scope_and_requirement_narrowing_rebinds_to_the_current_manifest() {
             current,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
         )
         .await
         .unwrap();

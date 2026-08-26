@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use lockgate::{BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RuntimeLimits};
 
@@ -9,6 +10,7 @@ const DEFAULT_PLUGIN_PATH: &str =
     "examples/audit/plugin/target/wasm32-wasip2/release/audit_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
 examples/audit/plugin/Cargo.toml --target wasm32-wasip2 --release";
+const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct CallOrigin {
@@ -91,7 +93,7 @@ fn call(user: &str, fuel: u64) -> InvocationCtx<CallOrigin> {
         CallOrigin { user: user.into() },
         BudgetClass::Bounded {
             fuel,
-            deadline: None,
+            deadline: INVOCATION_DEADLINE,
         },
     )
 }

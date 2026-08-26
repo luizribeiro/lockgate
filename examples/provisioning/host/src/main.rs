@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use lockgate::{
     HostBuilder, HostCtx, InvocationCtx, PermissionDenied, PluginConfig, PluginSubject,
@@ -14,6 +15,7 @@ const DEFAULT_PLUGIN_PATH: &str =
     "examples/provisioning/plugin/target/wasm32-wasip2/release/provisioning_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
 examples/provisioning/plugin/Cargo.toml --target wasm32-wasip2 --release";
+const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MockVm {
@@ -211,14 +213,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, INVOCATION_DEADLINE),
         )
         .await?;
     let host = builder.finish();
 
     let lines = host
         .provisioner(&plugin)?
-        .run(InvocationCtx::bounded(25_000_000))
+        .run(InvocationCtx::bounded(25_000_000, INVOCATION_DEADLINE))
         .await?
         .map_err(std::io::Error::other)?;
     for line in lines {

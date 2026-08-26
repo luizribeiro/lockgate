@@ -28,7 +28,11 @@ impl InlineComposedClient<'_, ()> {
     async fn run(&self) -> Result<u32, CallError> {
         let values = self
             .0
-            .invoke("run", &[], InvocationCtx::bounded(common::INVOCATION_FUEL))
+            .invoke(
+                "run",
+                &[],
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
+            )
             .await?;
         match values.as_slice() {
             [Value::U32(value)] => Ok(*value),
@@ -54,7 +58,7 @@ async fn inline_composed_world_builds_admits_and_invokes() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();

@@ -32,7 +32,7 @@ impl WithReuseClient<'_, ()> {
             .invoke(
                 "round-trip",
                 &arguments,
-                InvocationCtx::bounded(common::INVOCATION_FUEL),
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             )
             .await?;
         match values.as_slice() {
@@ -62,7 +62,7 @@ async fn mapped_shared_type_builds_admits_and_round_trips() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();

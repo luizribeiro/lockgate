@@ -142,7 +142,7 @@ async fn host() -> (
                 },
                 BudgetClass::Bounded {
                     fuel: 1_000_000,
-                    deadline: None,
+                    deadline: common::INVOCATION_DEADLINE,
                 },
             ),
         )
@@ -159,7 +159,7 @@ fn context(label: &str) -> InvocationCtx<CallData> {
         },
         BudgetClass::Bounded {
             fuel: 1_000_000,
-            deadline: None,
+            deadline: common::INVOCATION_DEADLINE,
         },
     )
 }
@@ -249,7 +249,7 @@ async fn smoke_imports_observe_startup_data() {
                 },
                 BudgetClass::Bounded {
                     fuel: 1_000_000,
-                    deadline: None,
+                    deadline: common::INVOCATION_DEADLINE,
                 },
             ),
         )

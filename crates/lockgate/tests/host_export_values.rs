@@ -30,7 +30,7 @@ async fn host() -> (lockgate::Host<()>, lockgate::PluginHandle) {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -66,7 +66,7 @@ async fn exotic_values_and_shared_records_round_trip_through_both_clients() {
     assert_eq!(
         values
             .round_trip(
-                InvocationCtx::bounded(common::INVOCATION_FUEL),
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
                 count.clone()
             )
             .await
@@ -82,7 +82,7 @@ async fn exotic_values_and_shared_records_round_trip_through_both_clients() {
     assert_eq!(
         mirror
             .round_trip(
-                InvocationCtx::bounded(common::INVOCATION_FUEL),
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
                 text.clone()
             )
             .await
@@ -98,7 +98,7 @@ async fn exotic_values_and_shared_records_round_trip_through_both_clients() {
     assert_eq!(
         values
             .round_trip(
-                InvocationCtx::bounded(common::INVOCATION_FUEL),
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
                 none.clone()
             )
             .await
@@ -114,13 +114,16 @@ async fn top_level_result_keeps_its_wit_data_channel() {
 
     assert!(matches!(
         values
-            .probe(InvocationCtx::bounded(common::INVOCATION_FUEL), true)
+            .probe(
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
+                true
+            )
             .await,
         Ok(Ok(42)),
     ));
     assert!(matches!(
         values
-            .probe(InvocationCtx::bounded(common::INVOCATION_FUEL), false)
+            .probe(InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE), false)
             .await,
         Ok(Err(error)) if error == "rejected",
     ));
@@ -132,7 +135,10 @@ async fn rust_keyword_interfaces_use_their_sanitized_modules() {
     assert_eq!(
         host.type_(&plugin)
             .unwrap()
-            .ping(InvocationCtx::bounded(common::INVOCATION_FUEL))
+            .ping(InvocationCtx::bounded(
+                common::INVOCATION_FUEL,
+                common::INVOCATION_DEADLINE
+            ))
             .await
             .unwrap(),
         13,
@@ -140,7 +146,10 @@ async fn rust_keyword_interfaces_use_their_sanitized_modules() {
     assert_eq!(
         host.union_(&plugin)
             .unwrap()
-            .ping(InvocationCtx::bounded(common::INVOCATION_FUEL))
+            .ping(InvocationCtx::bounded(
+                common::INVOCATION_FUEL,
+                common::INVOCATION_DEADLINE
+            ))
             .await
             .unwrap(),
         17,

@@ -91,7 +91,7 @@ async fn admit(builder: &mut HostBuilder<()>, id: &str, component: &[u8]) -> Plu
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap()
@@ -129,7 +129,10 @@ async fn role_clients_skip_non_exporters_and_yield_invokable_clients() {
     assert!(clients.next().is_none());
     assert_eq!(
         diagnostics
-            .value(InvocationCtx::bounded(CALL_FUEL))
+            .value(InvocationCtx::bounded(
+                CALL_FUEL,
+                common::INVOCATION_DEADLINE
+            ))
             .await
             .unwrap(),
         42
@@ -168,8 +171,14 @@ async fn concurrently_submitted_calls_complete_without_a_busy_error() {
     // same execution path this public client delegates to. This import-free
     // fixture has no await point; the public barrier version arrives with host imports.
     let (first, second) = tokio::join!(
-        diagnostics.work(InvocationCtx::bounded(CALL_FUEL), 1_000),
-        diagnostics.work(InvocationCtx::bounded(CALL_FUEL), 1_000),
+        diagnostics.work(
+            InvocationCtx::bounded(CALL_FUEL, common::INVOCATION_DEADLINE),
+            1_000
+        ),
+        diagnostics.work(
+            InvocationCtx::bounded(CALL_FUEL, common::INVOCATION_DEADLINE),
+            1_000
+        ),
     );
 
     assert_eq!(first.unwrap(), second.unwrap());
@@ -181,13 +190,19 @@ async fn a_guest_trap_does_not_poison_the_next_call() {
     let diagnostics = host.client::<DiagnosticsRole>(&plugin).unwrap();
 
     let error = diagnostics
-        .trap(InvocationCtx::bounded(CALL_FUEL))
+        .trap(InvocationCtx::bounded(
+            CALL_FUEL,
+            common::INVOCATION_DEADLINE,
+        ))
         .await
         .unwrap_err();
     assert!(matches!(error, CallError::Trap { .. }));
     assert_eq!(
         diagnostics
-            .value(InvocationCtx::bounded(CALL_FUEL))
+            .value(InvocationCtx::bounded(
+                CALL_FUEL,
+                common::INVOCATION_DEADLINE
+            ))
             .await
             .unwrap(),
         42
@@ -202,7 +217,10 @@ async fn every_call_gets_fresh_guest_globals() {
     for _ in 0..2 {
         assert_eq!(
             diagnostics
-                .pin(InvocationCtx::bounded(CALL_FUEL))
+                .pin(InvocationCtx::bounded(
+                    CALL_FUEL,
+                    common::INVOCATION_DEADLINE
+                ))
                 .await
                 .unwrap(),
             1
@@ -221,7 +239,10 @@ async fn equal_fuel_exhausts_at_the_same_iteration_boundary() {
     assert_eq!(first, second);
 
     let error = diagnostics
-        .work(InvocationCtx::bounded(LOW_FUEL), first)
+        .work(
+            InvocationCtx::bounded(LOW_FUEL, common::INVOCATION_DEADLINE),
+            first,
+        )
         .await
         .unwrap_err();
     assert!(matches!(
@@ -235,7 +256,10 @@ async fn first_exhausted_iteration(diagnostics: &DiagnosticsClient<'_, ()>, fuel
     let mut completes = 0;
     let mut exhausts = 10_000;
     let upper_error = diagnostics
-        .work(InvocationCtx::bounded(fuel), exhausts)
+        .work(
+            InvocationCtx::bounded(fuel, common::INVOCATION_DEADLINE),
+            exhausts,
+        )
         .await
         .expect_err("the boundary-search upper limit should exhaust its fuel");
     assert!(matches!(
@@ -246,7 +270,10 @@ async fn first_exhausted_iteration(diagnostics: &DiagnosticsClient<'_, ()>, fuel
     while completes + 1 < exhausts {
         let candidate = completes + (exhausts - completes) / 2;
         match diagnostics
-            .work(InvocationCtx::bounded(fuel), candidate)
+            .work(
+                InvocationCtx::bounded(fuel, common::INVOCATION_DEADLINE),
+                candidate,
+            )
             .await
         {
             Ok(_) => completes = candidate,

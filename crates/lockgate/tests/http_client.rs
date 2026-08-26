@@ -77,7 +77,7 @@ async fn admitted_client(origin: String) -> (Host<()>, PluginHandle) {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -103,7 +103,7 @@ async fn guest_http_client_reaches_only_its_granted_origin() {
     let allowed_url = format!("{allowed_origin}/client");
     let response = guest
         .get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             &allowed_url,
         )
         .await
@@ -117,7 +117,7 @@ async fn guest_http_client_reaches_only_its_granted_origin() {
     let blocked_url = format!("http://{}/blocked", blocked.local_addr().unwrap());
     let error = guest
         .get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             &blocked_url,
         )
         .await
@@ -137,7 +137,7 @@ async fn base_url_setting_resolves_to_its_origin() {
     let allowed_url = format!("{allowed_origin}/client");
     let response = guest
         .get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             &allowed_url,
         )
         .await
@@ -156,7 +156,7 @@ async fn first_byte_timeout_fails_a_stalled_request() {
 
     let error = guest
         .get_with_first_byte_timeout(
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             &format!("{allowed_origin}/stall"),
             SHORT_TIMEOUT_MILLIS,
         )
@@ -177,7 +177,7 @@ async fn normal_request_succeeds_with_generous_timeouts() {
 
     let response = guest
         .get_with_timeouts(
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             &format!("{allowed_origin}/timeouts"),
             5_000,
         )

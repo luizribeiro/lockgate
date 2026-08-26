@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
 
@@ -8,6 +9,7 @@ const DEFAULT_PLUGIN_PATH: &str =
     "examples/configuration/plugin/target/wasm32-wasip2/release/configuration_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
 examples/configuration/plugin/Cargo.toml --target wasm32-wasip2 --release";
+const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 
 lockgate::host_bindings!({
     path: "../wit",
@@ -51,14 +53,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, INVOCATION_DEADLINE),
         )
         .await?;
     let host = builder.finish();
 
     let output = host
         .formatter(&plugin)?
-        .format(InvocationCtx::bounded(25_000_000), "world")
+        .format(
+            InvocationCtx::bounded(25_000_000, INVOCATION_DEADLINE),
+            "world",
+        )
         .await?;
     println!("{output}");
     Ok(())

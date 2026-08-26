@@ -154,7 +154,7 @@ async fn literal_setting_and_root_references_prepare_accept_and_admit() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -271,7 +271,7 @@ async fn acceptance_for_one_instance_cannot_admit_another() {
             prepared_a,
             acceptance_b,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap_err();
@@ -321,7 +321,7 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
             current,
             stale_acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap_err();
@@ -375,7 +375,7 @@ async fn dash_prefix_declaration_orders_admit_identically() {
                 prepared,
                 acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
             )
             .await
             .unwrap();

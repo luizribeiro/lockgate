@@ -35,7 +35,7 @@ async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
                 TestState,
                 LIMITS,
                 LOW_FUEL,
-                None,
+                common::INVOCATION_DEADLINE,
             )
             .await
             .expect_err("the low fuel allowance should be exhausted");
@@ -57,7 +57,7 @@ async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
             TestState,
             LIMITS,
             HIGH_FUEL,
-            None,
+            common::INVOCATION_DEADLINE,
         )
         .await
         .expect("the higher fuel allowance should complete");

@@ -62,7 +62,7 @@ async fn minimal_embedder_calls_a_greeter() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -70,7 +70,10 @@ async fn minimal_embedder_calls_a_greeter() {
 
     let greeter = host.client::<GreeterRole>(&plugin).unwrap();
     let output = greeter
-        .greet(InvocationCtx::bounded(25_000_000), "world")
+        .greet(
+            InvocationCtx::bounded(25_000_000, common::INVOCATION_DEADLINE),
+            "world",
+        )
         .await
         .unwrap();
     assert_eq!(output, "Hello, world!");

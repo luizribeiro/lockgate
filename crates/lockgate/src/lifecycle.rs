@@ -52,11 +52,8 @@ impl HostId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BudgetClass {
-    /// A deterministic fuel ceiling and optional wall-clock deadline for one invocation.
-    Bounded {
-        fuel: u64,
-        deadline: Option<Duration>,
-    },
+    /// A deterministic fuel ceiling and wall-clock deadline for one invocation.
+    Bounded { fuel: u64, deadline: Duration },
 }
 
 /// A [`CallContext`] and execution budget installed for one invocation.
@@ -67,26 +64,9 @@ pub struct InvocationCtx<S> {
 }
 
 impl InvocationCtx<()> {
-    /// Creates a context with no application data and a bounded fuel budget.
-    pub fn bounded(fuel: u64) -> Self {
-        Self::new(
-            (),
-            BudgetClass::Bounded {
-                fuel,
-                deadline: None,
-            },
-        )
-    }
-
     /// Creates a context with no application data and bounded fuel and time budgets.
-    pub fn bounded_with_deadline(fuel: u64, deadline: Duration) -> Self {
-        Self::new(
-            (),
-            BudgetClass::Bounded {
-                fuel,
-                deadline: Some(deadline),
-            },
-        )
+    pub fn bounded(fuel: u64, deadline: Duration) -> Self {
+        Self::new((), BudgetClass::Bounded { fuel, deadline })
     }
 }
 
@@ -530,7 +510,7 @@ impl<S: CallContext> HostBuilder<S> {
 
     /// Verifies prepared acceptance and smoke-instantiates the plugin.
     /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
-    /// `startup_ctx`'s fuel, plus its optional deadline, so an application-chosen
+    /// `startup_ctx`'s fuel and deadline, so an application-chosen
     /// startup budget may reject a constructor that steady-state calls would
     /// instantiate under the full limit.
     pub async fn admit(
@@ -1406,7 +1386,7 @@ mod grant_tests {
                 prod,
                 prod_acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
             )
             .await
             .unwrap();
@@ -1415,7 +1395,7 @@ mod grant_tests {
                 staging,
                 staging_acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
             )
             .await
             .unwrap();
@@ -1465,7 +1445,7 @@ mod grant_tests {
                 rejected,
                 mismatched_acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
             )
             .await
             .unwrap_err();
@@ -1487,7 +1467,7 @@ mod grant_tests {
                 retry,
                 acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
             )
             .await
             .unwrap();
@@ -1598,7 +1578,7 @@ mod grant_tests {
                 prepared,
                 acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
             )
             .await
             .unwrap_err();
@@ -1653,7 +1633,7 @@ mod grant_tests {
                 prepared,
                 acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
             )
             .await
             .unwrap();

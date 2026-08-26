@@ -229,7 +229,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         data: S,
         limits: ExecLimits,
         invocation_fuel: u64,
-        deadline: Option<Duration>,
+        deadline: Duration,
     ) -> Result<Vec<Val>, ExecError> {
         let mut store = self
             .configured_store(data, limits)
@@ -257,13 +257,10 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         let call = store.run_concurrent(async |accessor| {
             func.call_concurrent(accessor, args, &mut results).await
         });
-        let call_result = match deadline {
-            Some(deadline) => tokio::time::timeout(deadline, call)
-                .await
-                .map_err(|_| ExecError::DeadlineExceeded(deadline))?,
-            None => call.await,
-        }
-        .map_err(map_call_error)?;
+        let call_result = tokio::time::timeout(deadline, call)
+            .await
+            .map_err(|_| ExecError::DeadlineExceeded(deadline))?
+            .map_err(map_call_error)?;
         call_result.map_err(map_call_error)?;
 
         Ok(results)
@@ -283,7 +280,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         data: S,
         limits: ExecLimits,
         startup_fuel: u64,
-        deadline: Option<Duration>,
+        deadline: Duration,
     ) -> Result<(), ExecError> {
         let store = self
             .configured_store(data, limits)
@@ -321,17 +318,14 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         &self,
         mut store: Store<StoreCtx<S>>,
         fuel: u64,
-        deadline: Option<Duration>,
+        deadline: Duration,
     ) -> Result<(), ExecError> {
         store.set_fuel(fuel).map_err(map_instantiate_error)?;
         let instantiate = self.instance_pre.instantiate_async(&mut store);
-        match deadline {
-            Some(deadline) => tokio::time::timeout(deadline, instantiate)
-                .await
-                .map_err(|_| ExecError::DeadlineExceeded(deadline))?,
-            None => instantiate.await,
-        }
-        .map_err(map_instantiate_error)?;
+        tokio::time::timeout(deadline, instantiate)
+            .await
+            .map_err(|_| ExecError::DeadlineExceeded(deadline))?
+            .map_err(map_instantiate_error)?;
         Ok(())
     }
 
@@ -341,13 +335,14 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         data: S,
         limits: ExecLimits,
         startup_fuel: u64,
+        deadline: Duration,
         dropped: Arc<AtomicBool>,
     ) -> Result<(), ExecError> {
         let mut store = self
             .configured_store(data, limits)
             .map_err(ExecError::Environment)?;
         store.data_mut().observe_drop(dropped);
-        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel), None)
+        self.smoke_store(store, limits.instantiation_fuel.min(startup_fuel), deadline)
             .await
     }
 }

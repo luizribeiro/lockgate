@@ -212,7 +212,7 @@ async fn runtime_host(
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -220,7 +220,7 @@ async fn runtime_host(
 }
 
 fn call() -> InvocationCtx<()> {
-    InvocationCtx::bounded(5_000_000)
+    InvocationCtx::bounded(5_000_000, common::INVOCATION_DEADLINE)
 }
 
 #[tokio::test]

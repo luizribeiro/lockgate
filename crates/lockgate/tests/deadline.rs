@@ -94,7 +94,7 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(CALL_FUEL),
+            InvocationCtx::bounded(CALL_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -145,7 +145,7 @@ async fn blocking_start_returns_a_smoke_deadline_error() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded_with_deadline(CALL_FUEL, deadline),
+            InvocationCtx::bounded(CALL_FUEL, deadline),
         )
         .await
         .unwrap_err();
@@ -164,7 +164,7 @@ async fn blocking_guest_returns_deadline_exceeded() {
     let deadline = Duration::from_millis(200);
 
     let error = guest
-        .suspend(InvocationCtx::bounded_with_deadline(CALL_FUEL, deadline))
+        .suspend(InvocationCtx::bounded(CALL_FUEL, deadline))
         .await
         .unwrap_err();
 
@@ -180,23 +180,7 @@ async fn fast_guest_succeeds_with_a_generous_deadline() {
     let guest = host.client::<GuestRole>(&plugin).unwrap();
 
     let value = guest
-        .value(InvocationCtx::bounded_with_deadline(
-            CALL_FUEL,
-            Duration::from_secs(5),
-        ))
-        .await
-        .unwrap();
-
-    assert_eq!(value, 42);
-}
-
-#[tokio::test]
-async fn fast_guest_succeeds_without_a_deadline() {
-    let (host, plugin) = admitted_fixture().await;
-    let guest = host.client::<GuestRole>(&plugin).unwrap();
-
-    let value = guest
-        .value(InvocationCtx::bounded(CALL_FUEL))
+        .value(InvocationCtx::bounded(CALL_FUEL, Duration::from_secs(5)))
         .await
         .unwrap();
 

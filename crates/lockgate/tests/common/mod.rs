@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{NeedsManifest, PluginMetadata};
@@ -29,6 +30,7 @@ pub(crate) const LIMITS: ExecLimits = ExecLimits {
     http_request_timeout_ceiling: None,
 };
 pub(crate) const INVOCATION_FUEL: u64 = 1_000_000;
+pub(crate) const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 
 pub(crate) struct TestState;
 

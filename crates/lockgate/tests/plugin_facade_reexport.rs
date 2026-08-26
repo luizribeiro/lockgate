@@ -31,7 +31,7 @@ impl ReexportedPluginClient<'_, ()> {
             .invoke(
                 "value",
                 &[],
-                InvocationCtx::bounded(common::INVOCATION_FUEL),
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             )
             .await?;
         match values.as_slice() {
@@ -58,7 +58,7 @@ async fn reexport_only_guest_builds_admits_and_invokes() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();

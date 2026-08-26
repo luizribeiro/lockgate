@@ -511,7 +511,7 @@ fn host_builder() -> lockgate::HostBuilder<()> {
 }
 
 fn startup_context() -> InvocationCtx<()> {
-    InvocationCtx::bounded(1_000_000)
+    InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE)
 }
 
 async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
@@ -670,7 +670,7 @@ async fn runtime_host(
 }
 
 fn call() -> InvocationCtx<()> {
-    InvocationCtx::bounded(25_000_000)
+    InvocationCtx::bounded(25_000_000, common::INVOCATION_DEADLINE)
 }
 
 #[tokio::test]

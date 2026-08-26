@@ -42,7 +42,7 @@ impl WasiClient<'_, ()> {
             .invoke(
                 "environment-count",
                 &[],
-                InvocationCtx::bounded(INVOCATION_FUEL),
+                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             )
             .await?;
         match values.as_slice() {
@@ -78,7 +78,11 @@ impl WasiClient<'_, ()> {
     ) -> std::result::Result<bool, CallError> {
         let values = self
             .0
-            .invoke(function, arguments, InvocationCtx::bounded(INVOCATION_FUEL))
+            .invoke(
+                function,
+                arguments,
+                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
+            )
             .await?;
         match values.as_slice() {
             [Value::Bool(value)] => Ok(*value),
@@ -122,7 +126,7 @@ async fn admitted_wasi(needs: &NeedsManifest) -> (Host<()>, PluginHandle) {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(INVOCATION_FUEL),
+            InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -160,6 +164,7 @@ fn enter_controlled_environment(test_name: &str, variables: &[(&str, Option<&str
 
 fn run_async(future: impl Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .unwrap()
         .block_on(future);
@@ -263,7 +268,7 @@ fn required_unset_env_read_grant_fails_admission() {
                 prepared,
                 acceptance,
                 RuntimeLimits::default(),
-                InvocationCtx::bounded(INVOCATION_FUEL),
+                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             )
             .await
             .unwrap_err();
@@ -312,7 +317,14 @@ async fn wasi_importing_guest_instantiates_and_runs() -> Result<()> {
         .expect("clock export should resolve structurally");
 
     let results = loaded
-        .invoke(clock, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            clock,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::U64(seconds)] if *seconds > 0));
@@ -328,7 +340,14 @@ async fn wasi_outbound_network_is_denied_at_runtime() -> Result<()> {
         .expect("network denial export should resolve structurally");
 
     let results = loaded
-        .invoke(connect, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            connect,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::Bool(true)]));
@@ -344,7 +363,14 @@ async fn wasi_filesystem_access_is_denied_at_runtime() -> Result<()> {
         .expect("filesystem denial export should resolve structurally");
 
     let results = loaded
-        .invoke(open, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            open,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::Bool(true)]));

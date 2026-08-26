@@ -21,7 +21,14 @@ async fn value_export_returns_expected_value() -> Result<()> {
         .expect("value export should resolve structurally");
 
     let results = loaded
-        .invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            export,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await?;
 
     assert!(matches!(results.as_slice(), [Val::U32(42)]));
@@ -35,7 +42,13 @@ async fn smoke_probe_drops_its_store() -> Result<()> {
     let dropped = Arc::new(AtomicBool::new(false));
 
     loaded
-        .smoke_observing_drop(TestState, LIMITS, INVOCATION_FUEL, Arc::clone(&dropped))
+        .smoke_observing_drop(
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+            Arc::clone(&dropped),
+        )
         .await?;
 
     assert!(dropped.load(Ordering::SeqCst));
@@ -61,8 +74,14 @@ async fn dropping_invocation_drops_store_and_stops_guest() -> Result<()> {
         .export("test:exec/guest", "suspend")
         .expect("suspend export should resolve structurally");
 
-    let mut invocation =
-        Box::pin(loaded.invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL, None));
+    let mut invocation = Box::pin(loaded.invoke(
+        export,
+        &[],
+        TestState,
+        LIMITS,
+        INVOCATION_FUEL,
+        common::INVOCATION_DEADLINE,
+    ));
     tokio::select! {
         result = &mut invocation => panic!("invocation completed before cancellation: {result:?}"),
         () = entered.notified() => {}
@@ -78,7 +97,14 @@ async fn dropping_invocation_drops_store_and_stops_guest() -> Result<()> {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     let results = loaded
-        .invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            export,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await?;
     assert!(matches!(results.as_slice(), [Val::U32(7)]));
     assert_eq!(calls.load(Ordering::SeqCst), 2);

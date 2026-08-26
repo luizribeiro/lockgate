@@ -32,7 +32,14 @@ async fn trap_is_isolated_from_the_next_invocation() {
         .expect("value export should resolve structurally");
 
     let error = loaded
-        .invoke(trap, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            trap,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await
         .expect_err("guest unreachable should trap");
     assert!(matches!(
@@ -44,7 +51,14 @@ async fn trap_is_isolated_from_the_next_invocation() {
     ));
 
     let results = loaded
-        .invoke(value, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            value,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await
         .expect("a trap must not poison later invocations");
     assert!(matches!(
@@ -75,7 +89,14 @@ async fn marked_host_failure_maps_to_host_import() {
         .expect("suspend export should resolve structurally");
 
     let error = loaded
-        .invoke(suspend, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            suspend,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await
         .expect_err("marked host failure should fail the invocation");
     let ExecError::HostImport(error) = error else {
@@ -95,7 +116,14 @@ async fn guest_trap_after_successful_import_stays_a_trap() {
         .expect("import-then-trap export should resolve structurally");
 
     let error = loaded
-        .invoke(export, &[], TestState, LIMITS, INVOCATION_FUEL, None)
+        .invoke(
+            export,
+            &[],
+            TestState,
+            LIMITS,
+            INVOCATION_FUEL,
+            common::INVOCATION_DEADLINE,
+        )
         .await
         .expect_err("guest unreachable should trap after its import returns");
     assert!(matches!(

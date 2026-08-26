@@ -211,12 +211,12 @@ fn runtime_inputs_are_bounded_and_explicit() {
     assert!(limits.max_memory_bytes < usize::MAX);
 
     assert_eq!(
-        InvocationCtx::bounded(123),
+        InvocationCtx::bounded(123, common::INVOCATION_DEADLINE),
         InvocationCtx::new(
             (),
             BudgetClass::Bounded {
                 fuel: 123,
-                deadline: None,
+                deadline: common::INVOCATION_DEADLINE,
             },
         )
     );
@@ -225,7 +225,7 @@ fn runtime_inputs_are_bounded_and_explicit() {
             "startup",
             BudgetClass::Bounded {
                 fuel: 456,
-                deadline: None,
+                deadline: common::INVOCATION_DEADLINE,
             },
         )
         .data,
@@ -247,7 +247,7 @@ async fn empty_needs_accept_all_round_trips() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -269,7 +269,7 @@ async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -295,7 +295,7 @@ async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -356,7 +356,7 @@ async fn smoke_instantiation_budget_exhaustion_is_typed() {
             prepared,
             acceptance,
             limits,
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap_err();
@@ -383,7 +383,7 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
             prepared,
             acceptance,
             limits,
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap_err();
@@ -410,7 +410,7 @@ async fn smoke_instantiation_observes_ready_validated_settings() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -593,7 +593,7 @@ async fn embedded_label_can_differ_from_the_admitted_instance_id() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -616,7 +616,7 @@ async fn duplicate_instance_id_is_rejected() {
             first,
             first_acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -631,7 +631,7 @@ async fn duplicate_instance_id_is_rejected() {
             duplicate,
             duplicate_acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap_err();

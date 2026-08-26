@@ -183,7 +183,7 @@ impl DetachedClient<'_, ()> {
             .invoke(
                 "start",
                 &[Value::U8(kind)],
-                InvocationCtx::bounded(1_000_000),
+                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
             )
             .await?;
         match values.as_slice() {
@@ -195,7 +195,11 @@ impl DetachedClient<'_, ()> {
     async fn cancel(&self) -> Result<(), CallError> {
         let values = self
             .0
-            .invoke("cancel", &[], InvocationCtx::bounded(1_000_000))
+            .invoke(
+                "cancel",
+                &[],
+                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+            )
             .await?;
         if values.is_empty() {
             Ok(())
@@ -207,7 +211,11 @@ impl DetachedClient<'_, ()> {
     async fn healthy(&self) -> Result<u32, CallError> {
         let values = self
             .0
-            .invoke("healthy", &[], InvocationCtx::bounded(1_000_000))
+            .invoke(
+                "healthy",
+                &[],
+                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+            )
             .await?;
         match values.as_slice() {
             [Value::U32(value)] => Ok(*value),
@@ -239,7 +247,7 @@ async fn host(
                 max_detached_jobs: 1,
                 ..RuntimeLimits::default()
             },
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();

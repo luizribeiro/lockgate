@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RoleError, RuntimeLimits};
 
@@ -15,6 +16,7 @@ const COUNTER_BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path 
 examples/workbench/plugins/counter/Cargo.toml --target wasm32-wasip2 --release";
 const SAMPLE_TEXT: &str = "  alpha   beta\ngamma   \n";
 const CALL_FUEL: u64 = 25_000_000;
+const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 
 lockgate::host_bindings!({
     path: "../wit",
@@ -56,7 +58,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             tidy,
             tidy_acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, INVOCATION_DEADLINE),
         )
         .await?;
     builder
@@ -64,7 +66,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             counter,
             counter_acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, INVOCATION_DEADLINE),
         )
         .await?;
     let host = builder.finish();
@@ -81,13 +83,19 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     for (plugin, formatter) in formatter::HostExt::formatter_clients(&host) {
         let result = formatter
-            .format(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
+            .format(
+                InvocationCtx::bounded(CALL_FUEL, INVOCATION_DEADLINE),
+                SAMPLE_TEXT,
+            )
             .await?;
         println!("formatter fan-out: {} -> {result}", plugin.id());
     }
     for (plugin, linter) in linter::HostExt::linter_clients(&host) {
         let findings = linter
-            .lint(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
+            .lint(
+                InvocationCtx::bounded(CALL_FUEL, INVOCATION_DEADLINE),
+                SAMPLE_TEXT,
+            )
             .await?;
         let result = if findings.is_empty() {
             "no findings".to_owned()
@@ -98,7 +106,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
     for (plugin, stats) in stats::HostExt::stats_clients(&host) {
         let result = stats
-            .measure(InvocationCtx::bounded(CALL_FUEL), SAMPLE_TEXT)
+            .measure(
+                InvocationCtx::bounded(CALL_FUEL, INVOCATION_DEADLINE),
+                SAMPLE_TEXT,
+            )
             .await?;
         println!("stats fan-out: {} -> {result}", plugin.id());
     }

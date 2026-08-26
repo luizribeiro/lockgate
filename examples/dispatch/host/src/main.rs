@@ -9,6 +9,7 @@ const DEFAULT_PLUGIN_PATH: &str =
     "examples/dispatch/plugin/target/wasm32-wasip2/release/dispatch_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
 examples/dispatch/plugin/Cargo.toml --target wasm32-wasip2 --release";
+const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 const INDEX_DELAY: Duration = Duration::from_millis(250);
 const BACKUP_DELAY: Duration = Duration::from_millis(350);
 const FAILURE_DELAY: Duration = Duration::from_millis(450);
@@ -87,17 +88,23 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 max_detached_jobs: 3,
                 ..RuntimeLimits::default()
             },
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, INVOCATION_DEADLINE),
         )
         .await?;
     let host = builder.finish();
     let tasks = host.tasks(&plugin)?;
 
     let index = tasks
-        .run(InvocationCtx::bounded(25_000_000), "index")
+        .run(
+            InvocationCtx::bounded(25_000_000, INVOCATION_DEADLINE),
+            "index",
+        )
         .await?;
     let backup = tasks
-        .run(InvocationCtx::bounded(25_000_000), "backup")
+        .run(
+            InvocationCtx::bounded(25_000_000, INVOCATION_DEADLINE),
+            "backup",
+        )
         .await?;
     println!("plugin calls returned: {index}; {backup}");
 

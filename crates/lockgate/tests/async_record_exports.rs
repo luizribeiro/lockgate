@@ -26,7 +26,7 @@ async fn async_export_with_params_and_rich_result_round_trips() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -35,7 +35,7 @@ async fn async_export_with_params_and_rich_result_round_trips() {
 
     let reply = guest
         .run(
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             guest::Request {
                 prompt: "hello".into(),
                 limit: 7,
@@ -52,7 +52,7 @@ async fn async_export_with_params_and_rich_result_round_trips() {
 
     let error = guest
         .run(
-            InvocationCtx::bounded(common::INVOCATION_FUEL),
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
             guest::Request {
                 prompt: String::new(),
                 limit: 0,

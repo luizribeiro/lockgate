@@ -48,7 +48,11 @@ impl SettingsClient<'_, ()> {
     async fn observed_settings(&self) -> Result<String, CallError> {
         let values = self
             .0
-            .invoke("observed-settings", &[], InvocationCtx::bounded(1_000_000))
+            .invoke(
+                "observed-settings",
+                &[],
+                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+            )
             .await?;
         match values.as_slice() {
             [Value::String(value)] => Ok(value.clone()),
@@ -59,7 +63,11 @@ impl SettingsClient<'_, ()> {
     async fn typed_observed_settings(&self) -> Result<String, CallError> {
         let values = self
             .0
-            .invoke("observed-settings", &[], InvocationCtx::bounded(1_000_000))
+            .invoke(
+                "observed-settings",
+                &[],
+                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+            )
             .await?;
         match values.as_slice() {
             [Value::String(value)] => Ok(value.clone()),
@@ -92,7 +100,7 @@ async fn guest_observes_exactly_the_validated_settings_json() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -122,7 +130,7 @@ async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();

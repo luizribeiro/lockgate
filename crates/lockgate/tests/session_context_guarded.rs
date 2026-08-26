@@ -281,7 +281,7 @@ fn call(session: Option<&str>) -> InvocationCtx<SageCall> {
         },
         BudgetClass::Bounded {
             fuel: 5_000_000,
-            deadline: None,
+            deadline: common::INVOCATION_DEADLINE,
         },
     )
 }
