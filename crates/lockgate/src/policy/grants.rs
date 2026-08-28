@@ -56,12 +56,14 @@ impl EffectiveGrants {
     }
 }
 
-/// Digest of the exact concrete request represented by one `Prepared` value.
+/// Digest of the exact concrete permission needs represented by one `Prepared` value.
 ///
 /// This domain-separated hash includes the frozen symbolic manifest digest and
 /// both resolved requirement groups. It therefore changes when a setting or
 /// symbolic root changes a concrete canonical scope, even if the component's
-/// static manifest bytes are unchanged.
+/// static manifest bytes are unchanged. Exported interfaces are not hashed;
+/// consent records bind them as data alongside this digest so interface drift
+/// can retain the names and versions that changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PreparedNeedsDigest([u8; 32]);
 

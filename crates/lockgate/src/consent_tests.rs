@@ -4,8 +4,8 @@ use lockgate_policy::{Need, Needs, Scope, ScopeError, ScopeRef, ScopeRepr, env};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
-use crate::policy::diff_grants;
-use crate::test_support::{settings_schema_component, with_section};
+use crate::policy::{ExportDrift, ExportDriftKind, diff_exports, diff_grants};
+use crate::test_support::{component_from_wit, settings_schema_component, with_section};
 use crate::{
     ConsentRecord, ConsentRequired, DriftKind, GrantReview, HostBuilder, InvocationCtx,
     PluginConfig, RuntimeLimits,
@@ -110,6 +110,74 @@ fn fixture(needs: &NeedsManifest) -> Vec<u8> {
         &needs.to_section_bytes().unwrap(),
     )
 }
+
+fn empty_needs_fixture(wit: &str) -> Vec<u8> {
+    with_section(
+        with_section(
+            component_from_wit(wit),
+            PLUGIN_METADATA_SECTION,
+            &PluginMetadata::new("author.exports", "Export helper", "1.0")
+                .unwrap()
+                .to_section_bytes()
+                .unwrap(),
+        ),
+        PLUGIN_NEEDS_SECTION,
+        &NeedsManifest::empty().to_section_bytes().unwrap(),
+    )
+}
+
+const ONE_EXPORT: &str = r#"
+    package test:consent@1.0.0;
+
+    interface existing {
+        ping: func();
+    }
+
+    world fixture {
+        export existing;
+    }
+"#;
+
+const TWO_EXPORTS: &str = r#"
+    package test:consent@1.0.0;
+
+    interface existing {
+        ping: func();
+    }
+
+    interface added {
+        ping: func();
+    }
+
+    world fixture {
+        export existing;
+        export added;
+    }
+"#;
+
+const VERSION_ONE_EXPORT: &str = r#"
+    package test:versioned@1.0.0;
+
+    interface role {
+        ping: func();
+    }
+
+    world fixture {
+        export role;
+    }
+"#;
+
+const VERSION_TWO_EXPORT: &str = r#"
+    package test:versioned@2.0.0;
+
+    interface role {
+        ping: func();
+    }
+
+    world fixture {
+        export role;
+    }
+"#;
 
 fn env_read_manifest() -> NeedsManifest {
     use lockgate_policy::__private::{
@@ -434,6 +502,168 @@ async fn approval_for_another_instance_does_not_authorize_matching_manifest() {
         required,
         ConsentRequired::FirstRun { ref manifest } if manifest.instance_id == INSTANCE_ID
     ));
+}
+
+#[tokio::test]
+async fn same_digest_and_same_exports_are_accepted() {
+    let bytes = empty_needs_fixture(ONE_EXPORT);
+    let mut prior_builder = HostBuilder::new(()).unwrap();
+    let prior = prior_builder
+        .prepare(INSTANCE_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let record = prior.approve("2026-08-20T10:00:00Z".to_owned());
+    let mut current_builder = HostBuilder::new(()).unwrap();
+    let current = current_builder
+        .prepare(INSTANCE_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+
+    assert_eq!(record.request_digest, current.review().request_digest);
+    assert_eq!(
+        record.exported_interfaces,
+        current.review().exported_interfaces
+    );
+    current.accept_reviewed(Some(&record)).unwrap();
+}
+
+#[tokio::test]
+async fn no_needs_approval_does_not_cover_a_new_exported_interface() {
+    let mut prior_builder = HostBuilder::new(()).unwrap();
+    let prior = prior_builder
+        .prepare(
+            INSTANCE_ID,
+            &empty_needs_fixture(ONE_EXPORT),
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+    let record = prior.approve("2026-08-20T10:00:00Z".to_owned());
+    let mut current_builder = HostBuilder::new(()).unwrap();
+    let current = current_builder
+        .prepare(
+            INSTANCE_ID,
+            &empty_needs_fixture(TWO_EXPORTS),
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(record.request_digest, current.review().request_digest);
+    let required = current.accept_reviewed(Some(&record)).unwrap_err();
+    assert_eq!(
+        required.to_string(),
+        "instance `sessions-prod` has expanded its requested access and requires approval"
+    );
+    let ConsentRequired::Drift { drift, .. } = required else {
+        panic!("a gained export must be reported as drift")
+    };
+
+    assert!(drift.blocks_admission);
+    assert_eq!(drift.changes, []);
+    assert!(drift.export_changes.iter().any(|change| {
+        change.name == "test:consent/added" && change.kind == ExportDriftKind::Gained
+    }));
+}
+
+#[tokio::test]
+async fn removing_an_exported_interface_is_accepted() {
+    let mut prior_builder = HostBuilder::new(()).unwrap();
+    let prior = prior_builder
+        .prepare(
+            INSTANCE_ID,
+            &empty_needs_fixture(TWO_EXPORTS),
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+    let record = prior.approve("2026-08-20T10:00:00Z".to_owned());
+    let mut current_builder = HostBuilder::new(()).unwrap();
+    let current = current_builder
+        .prepare(
+            INSTANCE_ID,
+            &empty_needs_fixture(ONE_EXPORT),
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+    let manifest = current.review();
+    let export_changes = diff_exports(&record.exported_interfaces, &manifest.exported_interfaces);
+
+    assert_eq!(
+        export_changes,
+        [ExportDrift {
+            name: "test:consent/added".to_owned(),
+            kind: ExportDriftKind::Lost,
+            before: vec!["test:consent/added@1.0.0".to_owned()],
+            after: Vec::new(),
+        }]
+    );
+    current.accept_reviewed(Some(&record)).unwrap();
+}
+
+#[tokio::test]
+async fn changing_only_an_exported_interface_version_is_accepted() {
+    let mut prior_builder = HostBuilder::new(()).unwrap();
+    let prior = prior_builder
+        .prepare(
+            INSTANCE_ID,
+            &empty_needs_fixture(VERSION_ONE_EXPORT),
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+    let record = prior.approve("2026-08-20T10:00:00Z".to_owned());
+    let mut current_builder = HostBuilder::new(()).unwrap();
+    let current = current_builder
+        .prepare(
+            INSTANCE_ID,
+            &empty_needs_fixture(VERSION_TWO_EXPORT),
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
+    let manifest = current.review();
+    let export_changes = diff_exports(&record.exported_interfaces, &manifest.exported_interfaces);
+
+    assert_eq!(
+        export_changes,
+        [ExportDrift {
+            name: "test:versioned/role".to_owned(),
+            kind: ExportDriftKind::VersionChanged,
+            before: vec!["test:versioned/role@1.0.0".to_owned()],
+            after: vec!["test:versioned/role@2.0.0".to_owned()],
+        }]
+    );
+    current.accept_reviewed(Some(&record)).unwrap();
+}
+
+#[tokio::test]
+async fn legacy_record_requires_approval_for_current_exports() {
+    let bytes = empty_needs_fixture(ONE_EXPORT);
+    let mut builder = HostBuilder::new(()).unwrap();
+    let current = builder
+        .prepare(INSTANCE_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let mut stored =
+        serde_json::to_value(current.approve("2026-08-20T10:00:00Z".to_owned())).unwrap();
+    stored
+        .as_object_mut()
+        .unwrap()
+        .remove("exported_interfaces");
+    let legacy: ConsentRecord = serde_json::from_value(stored).unwrap();
+
+    assert!(legacy.exported_interfaces.is_empty());
+    let required = current.accept_reviewed(Some(&legacy)).unwrap_err();
+    let ConsentRequired::Drift { drift, .. } = required else {
+        panic!("legacy exports must be reported as drift")
+    };
+
+    assert!(drift.blocks_admission);
+    assert_eq!(drift.export_changes.len(), 1);
+    assert_eq!(drift.export_changes[0].kind, ExportDriftKind::Gained);
+    assert_eq!(drift.export_changes[0].name, "test:consent/existing");
 }
 
 #[tokio::test]

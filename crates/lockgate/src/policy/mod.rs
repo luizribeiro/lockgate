@@ -9,8 +9,10 @@ mod resolution;
 mod resources;
 
 pub use consent::{ConsentManifest, ConsentRecord, ConsentRequired, GrantReview};
-pub(crate) use drift::diff_grants;
 pub use drift::{DriftChange, DriftKind, DriftReport};
+#[cfg(test)]
+pub(crate) use drift::{ExportDrift, ExportDriftKind};
+pub(crate) use drift::{diff_exports, diff_grants};
 pub use grants::{EffectiveGrants, PreparedNeedsDigest};
 #[doc(hidden)]
 pub use metadata::{

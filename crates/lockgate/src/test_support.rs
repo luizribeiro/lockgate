@@ -1,4 +1,19 @@
 use wasm_encoder::{ComponentSection, CustomSection};
+use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
+use wit_parser::{ManglingAndAbi, Resolve};
+
+pub(crate) fn component_from_wit(wit: &str) -> Vec<u8> {
+    let mut resolve = Resolve::new();
+    let package = resolve.push_str("fixture.wit", wit).unwrap();
+    let world = resolve.select_world(&[package], None).unwrap();
+    let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+    embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8).unwrap();
+    ComponentEncoder::default()
+        .module(&module)
+        .unwrap()
+        .encode()
+        .unwrap()
+}
 
 pub(crate) fn settings_schema_component(schema: &str) -> Vec<u8> {
     let encoded = schema

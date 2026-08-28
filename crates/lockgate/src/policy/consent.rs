@@ -6,10 +6,10 @@ use std::{error::Error, fmt};
 use lockgate_schema::{GrantSet, GrantValue, NeedEntry};
 use serde::{Deserialize, Serialize};
 
-use super::{DriftReport, PreparedNeedsDigest, ResolvedNeeds, diff_grants};
+use super::{DriftReport, PreparedNeedsDigest, ResolvedNeeds, diff_exports, diff_grants};
 use crate::{Acceptance, Prepared};
 
-/// The complete resolved permission request presented for operator approval.
+/// The complete resolved permission and export surface presented for operator approval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsentManifest {
     pub instance_id: String,
@@ -30,7 +30,11 @@ pub struct GrantReview {
     pub reason: Option<String>,
 }
 
-/// A host-persisted approval of one complete resolved permission request.
+/// A host-persisted approval of one resolved permission request and export surface.
+///
+/// Legacy records deserialize with an empty export list. A component that currently
+/// exports any interfaces therefore requires one-time re-approval because the old
+/// record could not vouch for those extension points.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsentRecord {
     pub instance_id: String,
@@ -66,7 +70,7 @@ impl fmt::Display for ConsentRequired {
             ),
             Self::Drift { manifest, .. } => write!(
                 formatter,
-                "instance `{}` has expanded its permission request and requires approval",
+                "instance `{}` has expanded its requested access and requires approval",
                 manifest.instance_id
             ),
         }
@@ -104,7 +108,8 @@ impl Prepared {
         }
     }
 
-    /// Returns a provenance-bound acceptance only when this exact request was approved.
+    /// Returns a provenance-bound acceptance only when the permission request and exported
+    /// interfaces are covered by the prior approval.
     #[allow(
         clippy::result_large_err,
         reason = "the public error intentionally carries the complete manifest and drift report for operator review"
@@ -118,12 +123,20 @@ impl Prepared {
                 manifest: self.review(),
             });
         };
-        if prior.request_digest == self.prepared_digest {
+        let manifest = self.review();
+        if prior.request_digest == manifest.request_digest
+            && prior.exported_interfaces == manifest.exported_interfaces
+        {
             return Ok(self.accept_all());
         }
 
-        let manifest = self.review();
-        let drift = diff_grants(&prior.grants, &manifest.grants);
+        let mut drift = diff_grants(&prior.grants, &manifest.grants);
+        drift.export_changes =
+            diff_exports(&prior.exported_interfaces, &manifest.exported_interfaces);
+        drift.blocks_admission |= drift
+            .export_changes
+            .iter()
+            .any(|change| change.kind.blocks_admission());
         if drift.blocks_admission {
             Err(ConsentRequired::Drift { manifest, drift })
         } else {
