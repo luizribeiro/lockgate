@@ -79,6 +79,17 @@ impl fmt::Display for ConsentRequired {
 
 impl Error for ConsentRequired {}
 
+/// Reports permission and exported-interface drift from a prior approval.
+pub fn consent_drift(prior: &ConsentRecord, manifest: &ConsentManifest) -> DriftReport {
+    let mut drift = diff_grants(&prior.grants, &manifest.grants);
+    drift.export_changes = diff_exports(&prior.exported_interfaces, &manifest.exported_interfaces);
+    drift.blocks_admission |= drift
+        .export_changes
+        .iter()
+        .any(|change| change.kind.blocks_admission());
+    drift
+}
+
 impl Prepared {
     /// Projects this prepared request into the complete operator review surface.
     pub fn review(&self) -> ConsentManifest {
@@ -130,13 +141,7 @@ impl Prepared {
             return Ok(self.accept_all());
         }
 
-        let mut drift = diff_grants(&prior.grants, &manifest.grants);
-        drift.export_changes =
-            diff_exports(&prior.exported_interfaces, &manifest.exported_interfaces);
-        drift.blocks_admission |= drift
-            .export_changes
-            .iter()
-            .any(|change| change.kind.blocks_admission());
+        let drift = consent_drift(prior, &manifest);
         if drift.blocks_admission {
             Err(ConsentRequired::Drift { manifest, drift })
         } else {

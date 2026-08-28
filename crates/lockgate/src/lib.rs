@@ -40,10 +40,11 @@ pub use lockgate_policy::{
 };
 pub use policy::{
     CapabilityRegistrationError, ConsentManifest, ConsentRecord, ConsentRequired, DriftChange,
-    DriftKind, DriftReport, EffectiveGrants, GrantReview, HostImportPolicyError, InvalidScopeValue,
-    JsonValueKind, NeedValueKind, PermissionDenied, PluginSubject, PreparedNeedsDigest, ResolveCtx,
-    ResolveScopedResource, ResolveScopedResourceHandle, ResourceLookupError, ScopeReference,
-    ScopeResolutionError, ScopedResource,
+    DriftKind, DriftReport, EffectiveGrants, ExportDrift, ExportDriftKind, GrantReview,
+    HostImportPolicyError, InvalidScopeValue, JsonValueKind, NeedValueKind, PermissionDenied,
+    PluginSubject, PreparedNeedsDigest, ResolveCtx, ResolveScopedResource,
+    ResolveScopedResourceHandle, ResourceLookupError, ScopeReference, ScopeResolutionError,
+    ScopedResource, consent_drift,
 };
 /// Typed handle used by generated host bindings for a WIT resource.
 pub use wasmtime::component::Resource;

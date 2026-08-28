@@ -4,11 +4,11 @@ use lockgate_policy::{Need, Needs, Scope, ScopeError, ScopeRef, ScopeRepr, env};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
-use crate::policy::{ExportDrift, ExportDriftKind, diff_exports, diff_grants};
+use crate::policy::diff_grants;
 use crate::test_support::{component_from_wit, settings_schema_component, with_section};
 use crate::{
-    ConsentRecord, ConsentRequired, DriftKind, GrantReview, HostBuilder, InvocationCtx,
-    PluginConfig, RuntimeLimits,
+    ConsentRecord, ConsentRequired, DriftKind, ExportDrift, ExportDriftKind, GrantReview,
+    HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits, consent_drift,
 };
 
 const INSTANCE_ID: &str = "sessions-prod";
@@ -588,17 +588,18 @@ async fn removing_an_exported_interface_is_accepted() {
         .await
         .unwrap();
     let manifest = current.review();
-    let export_changes = diff_exports(&record.exported_interfaces, &manifest.exported_interfaces);
+    let drift = consent_drift(&record, &manifest);
 
     assert_eq!(
-        export_changes,
-        [ExportDrift {
+        drift.export_changes,
+        vec![ExportDrift {
             name: "test:consent/added".to_owned(),
             kind: ExportDriftKind::Lost,
             before: vec!["test:consent/added@1.0.0".to_owned()],
             after: Vec::new(),
         }]
     );
+    assert!(!drift.blocks_admission);
     current.accept_reviewed(Some(&record)).unwrap();
 }
 
@@ -624,17 +625,18 @@ async fn changing_only_an_exported_interface_version_is_accepted() {
         .await
         .unwrap();
     let manifest = current.review();
-    let export_changes = diff_exports(&record.exported_interfaces, &manifest.exported_interfaces);
+    let drift = consent_drift(&record, &manifest);
 
     assert_eq!(
-        export_changes,
-        [ExportDrift {
+        drift.export_changes,
+        vec![ExportDrift {
             name: "test:versioned/role".to_owned(),
             kind: ExportDriftKind::VersionChanged,
             before: vec!["test:versioned/role@1.0.0".to_owned()],
             after: vec!["test:versioned/role@2.0.0".to_owned()],
         }]
     );
+    assert!(!drift.blocks_admission);
     current.accept_reviewed(Some(&record)).unwrap();
 }
 
@@ -846,7 +848,7 @@ async fn scope_and_requirement_narrowing_rebinds_to_the_current_manifest() {
         .await
         .unwrap();
     let current_review = current.review();
-    let drift = diff_grants(&record.grants, &current_review.grants);
+    let drift = consent_drift(&record, &current_review);
 
     assert!(!drift.blocks_admission);
     assert_eq!(

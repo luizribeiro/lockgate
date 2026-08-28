@@ -8,10 +8,8 @@ mod registry;
 mod resolution;
 mod resources;
 
-pub use consent::{ConsentManifest, ConsentRecord, ConsentRequired, GrantReview};
-pub use drift::{DriftChange, DriftKind, DriftReport};
-#[cfg(test)]
-pub(crate) use drift::{ExportDrift, ExportDriftKind};
+pub use consent::{ConsentManifest, ConsentRecord, ConsentRequired, GrantReview, consent_drift};
+pub use drift::{DriftChange, DriftKind, DriftReport, ExportDrift, ExportDriftKind};
 pub(crate) use drift::{diff_exports, diff_grants};
 pub use grants::{EffectiveGrants, PreparedNeedsDigest};
 #[doc(hidden)]
