@@ -196,6 +196,7 @@ async fn review_projects_resolved_grants_and_author_reasons() {
     assert_eq!(review.plugin_label, "Session helper");
     assert_eq!(review.request_digest, prepared.review().request_digest);
     assert_eq!(review.component_digest, prepared.review().component_digest);
+    assert_eq!(review.exported_interfaces, ["lockgate:config/schema"]);
     assert_eq!(review.grants.len(), 2);
     assert_eq!(review.grants[0].capability, "notify");
     assert_eq!(review.grants[0].permission, "send");
@@ -245,6 +246,7 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
         record.component_digest.as_deref(),
         Some(review.component_digest.as_str())
     );
+    assert_eq!(record.exported_interfaces, review.exported_interfaces);
     assert_eq!(record.grants, review.grants);
     assert_eq!(decoded, record);
     assert_eq!(decoded.approved_at, "2026-08-19T14:30:00Z");
@@ -252,6 +254,10 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
     let encoded: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(encoded["request_digest"], record.request_digest.to_string());
     assert_eq!(encoded["component_digest"], review.component_digest);
+    assert_eq!(
+        encoded["exported_interfaces"],
+        serde_json::json!(["lockgate:config/schema"])
+    );
     assert!(encoded.get("fingerprint").is_none());
 }
 
@@ -269,6 +275,7 @@ async fn approval_record_accepts_the_legacy_fingerprint_key() {
         "instance_id": record.instance_id,
         "fingerprint": record.request_digest.to_string(),
         "component_digest": record.component_digest,
+        "exported_interfaces": record.exported_interfaces,
         "grants": record.grants,
         "approved_at": record.approved_at,
     });
@@ -292,6 +299,7 @@ async fn approval_record_without_a_component_digest_deserializes() {
     let stored_json = serde_json::json!({
         "instance_id": record.instance_id,
         "request_digest": record.request_digest.to_string(),
+        "exported_interfaces": record.exported_interfaces,
         "grants": record.grants,
         "approved_at": record.approved_at,
     });
@@ -306,6 +314,29 @@ async fn approval_record_without_a_component_digest_deserializes() {
         }
     );
     assert_eq!(decoded.component_digest, None);
+}
+
+#[tokio::test]
+async fn approval_record_without_exported_interfaces_deserializes() {
+    let needs =
+        NeedsManifest::new(vec![NeedEntry::flag(atom("sessions.send"))], Vec::new()).unwrap();
+    let mut builder = builder();
+    let prepared = builder
+        .prepare(INSTANCE_ID, &fixture(&needs), PluginConfig::default())
+        .await
+        .unwrap();
+    let record = prepared.approve("2026-08-19T14:30:00Z".to_owned());
+    let stored_json = serde_json::json!({
+        "instance_id": record.instance_id,
+        "request_digest": record.request_digest.to_string(),
+        "component_digest": record.component_digest,
+        "grants": record.grants,
+        "approved_at": record.approved_at,
+    });
+
+    let decoded: ConsentRecord = serde_json::from_value(stored_json).unwrap();
+
+    assert!(decoded.exported_interfaces.is_empty());
 }
 
 #[tokio::test]

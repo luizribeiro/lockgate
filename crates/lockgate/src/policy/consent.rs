@@ -1,4 +1,5 @@
-//! Storage-agnostic consent records over resolved permission declarations.
+//! Storage-agnostic consent records over resolved permission declarations
+//! and exported interfaces.
 
 use std::{error::Error, fmt};
 
@@ -15,6 +16,7 @@ pub struct ConsentManifest {
     pub plugin_label: String,
     pub request_digest: PreparedNeedsDigest,
     pub component_digest: String,
+    pub exported_interfaces: Vec<String>,
     pub grants: Vec<GrantReview>,
 }
 
@@ -36,6 +38,8 @@ pub struct ConsentRecord {
     pub request_digest: PreparedNeedsDigest,
     #[serde(default)]
     pub component_digest: Option<String>,
+    #[serde(default)]
+    pub exported_interfaces: Vec<String>,
     pub grants: Vec<GrantReview>,
     pub approved_at: String,
 }
@@ -74,11 +78,15 @@ impl Error for ConsentRequired {}
 impl Prepared {
     /// Projects this prepared request into the complete operator review surface.
     pub fn review(&self) -> ConsentManifest {
+        let mut exported_interfaces = self.inspection.exported_interfaces().to_vec();
+        exported_interfaces.sort();
+        exported_interfaces.dedup();
         ConsentManifest {
             instance_id: self.instance_id.clone(),
             plugin_label: self.inspection.metadata().name().to_owned(),
             request_digest: self.prepared_digest,
             component_digest: self.component_digest.clone(),
+            exported_interfaces,
             grants: grant_reviews(&self.resolved, self.inspection.needs()),
         }
     }
@@ -90,6 +98,7 @@ impl Prepared {
             instance_id: manifest.instance_id,
             request_digest: manifest.request_digest,
             component_digest: Some(manifest.component_digest),
+            exported_interfaces: manifest.exported_interfaces,
             grants: manifest.grants,
             approved_at,
         }
