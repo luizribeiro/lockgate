@@ -11,9 +11,11 @@ runtime = ["dep:dlmalloc"]
 lockgate-policy = { path = "../lockgate-policy" }
 lockgate-plugin-macros = { path = "../lockgate-plugin-macros" }
 schemars.workspace = true
-serde = { workspace = true, default-features = false, features = ["alloc", "derive"] }
-serde_json = { workspace = true, default-features = false, features = ["alloc"] }
-wit-bindgen = { workspace = true, default-features = false, features = ["async", "macros"] }
+# Declared directly: stable cargo forbids disabling default features on
+# workspace-inherited dependencies, and these guest builds must stay no-default.
+serde = { version = "1.0.229", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
+wit-bindgen = { version = "0.57", default-features = false, features = ["async", "macros"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dlmalloc = { version = "0.2", features = ["global"], optional = true }
