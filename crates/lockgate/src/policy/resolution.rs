@@ -78,33 +78,39 @@ fn resolve_scope(
     roots: &SymbolicRoots,
     permission: lockgate_policy::__private::ErasedPermission,
     optional: bool,
-) -> Result<Option<String>, ScopeResolutionError> {
+) -> Result<Vec<String>, ScopeResolutionError> {
     let diagnostic = ScopeReference::from(reference);
     let concrete = match resolve_reference(atom, reference, settings, roots) {
         Ok(concrete) => concrete,
-        Err(ScopeResolutionError::MissingSetting { .. }) if optional => return Ok(None),
+        Err(
+            ScopeResolutionError::MissingSetting { .. }
+            | ScopeResolutionError::EmptySettingList { .. },
+        ) if optional => return Ok(Vec::new()),
         Err(error) => return Err(error),
     };
-    let parsed = permission
-        .parse_scope(&concrete)
-        .expect("a scoped permission must retain its parse hook")
-        .map_err(|source| {
-            ScopeResolutionError::InvalidScope(Box::new(InvalidScopeValue {
-                atom: atom.clone(),
-                reference: diagnostic,
-                value: concrete.clone(),
-                scope_type: permission
-                    .scope_type_name()
-                    .expect("a scoped permission must retain its type name"),
-                source,
-            }))
-        })?;
-    Ok(Some(
-        permission
-            .canonicalize_scope(&parsed)
-            .expect("a scoped permission must retain its canonicalization hook")
-            .expect("a descriptor must canonicalize values from its own parse hook"),
-    ))
+    concrete
+        .into_iter()
+        .map(|concrete| {
+            let parsed = permission
+                .parse_scope(&concrete)
+                .expect("a scoped permission must retain its parse hook")
+                .map_err(|source| {
+                    ScopeResolutionError::InvalidScope(Box::new(InvalidScopeValue {
+                        atom: atom.clone(),
+                        reference: diagnostic.clone(),
+                        value: concrete.clone(),
+                        scope_type: permission
+                            .scope_type_name()
+                            .expect("a scoped permission must retain its type name"),
+                        source,
+                    }))
+                })?;
+            Ok(permission
+                .canonicalize_scope(&parsed)
+                .expect("a scoped permission must retain its canonicalization hook")
+                .expect("a descriptor must canonicalize values from its own parse hook"))
+        })
+        .collect()
 }
 
 fn resolve_reference(
@@ -112,9 +118,9 @@ fn resolve_reference(
     reference: &ScopeRefEntry,
     settings: &Value,
     roots: &SymbolicRoots,
-) -> Result<String, ScopeResolutionError> {
+) -> Result<Vec<String>, ScopeResolutionError> {
     match reference {
-        ScopeRefEntry::Literal(value) => Ok(value.clone()),
+        ScopeRefEntry::Literal(value) => Ok(vec![value.clone()]),
         ScopeRefEntry::Setting(pointer) => {
             let value =
                 settings
@@ -123,14 +129,33 @@ fn resolve_reference(
                         atom: atom.clone(),
                         pointer: pointer.clone(),
                     })?;
-            let Value::String(value) = value else {
-                return Err(ScopeResolutionError::SettingNotString {
+            match value {
+                Value::String(value) => Ok(vec![value.clone()]),
+                Value::Array(values) if values.is_empty() => {
+                    Err(ScopeResolutionError::EmptySettingList {
+                        atom: atom.clone(),
+                        pointer: pointer.clone(),
+                    })
+                }
+                Value::Array(values) => values
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| match value {
+                        Value::String(value) => Ok(value.clone()),
+                        _ => Err(ScopeResolutionError::SettingElementNotString {
+                            atom: atom.clone(),
+                            pointer: pointer.clone(),
+                            index,
+                            found: JsonValueKind::of(value),
+                        }),
+                    })
+                    .collect(),
+                _ => Err(ScopeResolutionError::SettingNotString {
                     atom: atom.clone(),
                     pointer: pointer.clone(),
                     found: JsonValueKind::of(value),
-                });
-            };
-            Ok(value.clone())
+                }),
+            }
         }
         ScopeRefEntry::Root { name, subpath } => {
             let root = roots
@@ -145,13 +170,13 @@ fn resolve_reference(
                     atom: atom.clone(),
                     symbol: name.clone(),
                 })?;
-            Ok(match subpath {
+            Ok(vec![match subpath {
                 None => root.to_owned(),
                 Some(subpath) if root.is_empty() || root.ends_with('/') => {
                     format!("{root}{subpath}")
                 }
                 Some(subpath) => format!("{root}/{subpath}"),
-            })
+            }])
         }
     }
 }
@@ -267,6 +292,16 @@ pub enum ScopeResolutionError {
         pointer: String,
         found: JsonValueKind,
     },
+    SettingElementNotString {
+        atom: AtomKey,
+        pointer: String,
+        index: usize,
+        found: JsonValueKind,
+    },
+    EmptySettingList {
+        atom: AtomKey,
+        pointer: String,
+    },
     UnmappedRoot {
         atom: AtomKey,
         symbol: String,
@@ -295,7 +330,7 @@ impl fmt::Display for ScopeResolutionError {
             ),
             Self::MissingSetting { atom, pointer } => write!(
                 formatter,
-                "permission atom `{atom}` has setting reference `{pointer}`, but that JSON pointer is missing from the validated settings; expected exactly one JSON string"
+                "permission atom `{atom}` has setting reference `{pointer}`, but that JSON pointer is missing from the validated settings; expected one JSON string or an array of JSON strings"
             ),
             Self::SettingNotString {
                 atom,
@@ -303,7 +338,20 @@ impl fmt::Display for ScopeResolutionError {
                 found,
             } => write!(
                 formatter,
-                "permission atom `{atom}` has setting reference `{pointer}`, but it resolved to {found}; expected exactly one JSON string"
+                "permission atom `{atom}` has setting reference `{pointer}`, but it resolved to {found}; expected one JSON string or an array of JSON strings"
+            ),
+            Self::SettingElementNotString {
+                atom,
+                pointer,
+                index,
+                found,
+            } => write!(
+                formatter,
+                "permission atom `{atom}` has setting reference `{pointer}`, but array element at index {index} resolved to {found}; expected every array element to be a JSON string"
+            ),
+            Self::EmptySettingList { atom, pointer } => write!(
+                formatter,
+                "permission atom `{atom}` has setting reference `{pointer}`, but it resolved to an empty array; a required setting reference must supply at least one JSON string"
             ),
             Self::UnmappedRoot { atom, symbol } => write!(
                 formatter,
@@ -444,6 +492,34 @@ mod tests {
     }
 
     #[test]
+    fn setting_array_fans_out_and_collapses_canonical_duplicates() {
+        let needs = manifest(
+            vec![scoped(vec![
+                ScopeRefEntry::literal("all").unwrap(),
+                ScopeRefEntry::setting("/scopes").unwrap(),
+            ])],
+            vec![],
+        );
+
+        let resolved = resolve_needs(
+            &needs,
+            &json!({ "scopes": ["everything", "current", "pool:build"] }),
+            &SymbolicRoots::default(),
+            &registry(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.required.get(&atom("sessions.read")),
+            Some(&GrantValue::Scopes(vec![
+                "all".to_owned(),
+                "current".to_owned(),
+                "pool:build".to_owned(),
+            ]))
+        );
+    }
+
+    #[test]
     fn optional_need_with_only_an_absent_setting_is_omitted() {
         let needs = manifest(
             vec![],
@@ -481,6 +557,48 @@ mod tests {
     }
 
     #[test]
+    fn optional_need_with_an_empty_setting_array_is_omitted() {
+        let needs = manifest(
+            vec![],
+            vec![scoped(vec![ScopeRefEntry::setting("/scopes").unwrap()])],
+        );
+
+        let resolved = resolve_needs(
+            &needs,
+            &json!({ "scopes": [] }),
+            &SymbolicRoots::default(),
+            &registry(),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.optional.get(&atom("sessions.read")), None);
+    }
+
+    #[test]
+    fn optional_need_with_a_present_setting_array_resolves() {
+        let needs = manifest(
+            vec![],
+            vec![scoped(vec![ScopeRefEntry::setting("/scopes").unwrap()])],
+        );
+
+        let resolved = resolve_needs(
+            &needs,
+            &json!({ "scopes": ["current", "everything"] }),
+            &SymbolicRoots::default(),
+            &registry(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.optional.get(&atom("sessions.read")),
+            Some(&GrantValue::Scopes(vec![
+                "all".to_owned(),
+                "current".to_owned(),
+            ]))
+        );
+    }
+
+    #[test]
     fn required_need_with_an_absent_setting_still_fails() {
         let needs = manifest(
             vec![scoped(vec![ScopeRefEntry::setting("/scope").unwrap()])],
@@ -497,6 +615,33 @@ mod tests {
             Err(ScopeResolutionError::MissingSetting { ref atom, ref pointer })
                 if atom == &super::tests::atom("sessions.read") && pointer == "/scope"
         ));
+    }
+
+    #[test]
+    fn required_need_with_an_empty_setting_array_fails() {
+        let needs = manifest(
+            vec![scoped(vec![ScopeRefEntry::setting("/scopes").unwrap()])],
+            vec![],
+        );
+
+        let error = resolve_needs(
+            &needs,
+            &json!({ "scopes": [] }),
+            &SymbolicRoots::default(),
+            &registry(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ScopeResolutionError::EmptySettingList { ref atom, ref pointer }
+                if atom == &super::tests::atom("sessions.read") && pointer == "/scopes"
+        ));
+        let message = error.to_string();
+        assert!(message.contains("sessions.read"));
+        assert!(message.contains("setting reference `/scopes`"));
+        assert!(message.contains("empty array"));
+        assert!(message.contains("at least one JSON string"));
     }
 
     #[test]
@@ -534,7 +679,6 @@ mod tests {
             (json!({ "scope": null }), Some(JsonValueKind::Null)),
             (json!({ "scope": true }), Some(JsonValueKind::Boolean)),
             (json!({ "scope": 7 }), Some(JsonValueKind::Number)),
-            (json!({ "scope": ["all"] }), Some(JsonValueKind::Array)),
             (json!({ "scope": {} }), Some(JsonValueKind::Object)),
         ];
 
@@ -563,8 +707,40 @@ mod tests {
             let message = error.to_string();
             assert!(message.contains("sessions.read"));
             assert!(message.contains("setting reference `/scope`"));
-            assert!(message.contains("exactly one JSON string"));
+            assert!(message.contains("one JSON string or an array of JSON strings"));
         }
+    }
+
+    #[test]
+    fn non_string_setting_array_element_names_its_index_and_kind() {
+        let needs = manifest(
+            vec![scoped(vec![ScopeRefEntry::setting("/scopes").unwrap()])],
+            vec![],
+        );
+
+        let error = resolve_needs(
+            &needs,
+            &json!({ "scopes": ["all", 7] }),
+            &SymbolicRoots::default(),
+            &registry(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ScopeResolutionError::SettingElementNotString {
+                ref atom,
+                ref pointer,
+                index: 1,
+                found: JsonValueKind::Number,
+            } if atom == &super::tests::atom("sessions.read") && pointer == "/scopes"
+        ));
+        let message = error.to_string();
+        assert!(message.contains("sessions.read"));
+        assert!(message.contains("setting reference `/scopes`"));
+        assert!(message.contains("index 1"));
+        assert!(message.contains("number"));
+        assert!(message.contains("every array element to be a JSON string"));
     }
 
     #[test]

@@ -212,15 +212,20 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
             .await
             .unwrap_err();
         assert!(matches!(
-            error,
+            &error,
             AdmissionError::ScopeResolution(
                 lockgate::ScopeResolutionError::SettingNotString {
                     found,
-                    ref pointer,
+                    pointer,
                     ..
                 }
-            ) if found == expected_kind && pointer == "/scope"
+            ) if *found == expected_kind && pointer == "/scope"
         ));
+        assert!(
+            error
+                .to_string()
+                .contains("expected one JSON string or an array of JSON strings")
+        );
     }
 
     let mut builder = host_builder();

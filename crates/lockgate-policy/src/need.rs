@@ -51,7 +51,7 @@ impl ScopeRef {
         }
     }
 
-    /// Declares an RFC 6901 JSON Pointer whose string value supplies a scope.
+    /// Declares an RFC 6901 JSON Pointer whose string or string-array value supplies scopes.
     pub const fn setting(pointer: &'static str) -> Self {
         validate_bounded_scope_value(pointer, ScopeValueKind::SettingPointer);
         if !pointer.is_empty() && pointer.as_bytes()[0] != b'/' {
