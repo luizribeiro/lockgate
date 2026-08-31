@@ -11,7 +11,7 @@ use std::{any::Any, marker::PhantomData, time::Duration};
 use wasmtime::component::{
     Component, ComponentExportIndex, InstancePre, Linker, ResourceTable, Val, types::ComponentItem,
 };
-use wasmtime::{Config, Engine, ResourceLimiter, Store};
+use wasmtime::{CallHook, Config, Engine, ResourceLimiter, Store};
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
@@ -27,7 +27,10 @@ mod errors;
 pub(crate) mod wasi_http;
 
 pub(crate) use errors::{EnvironmentError, ExecError, LoadError};
-use errors::{MemoryLimitExceeded, map_call_error, map_dispatch_error, map_instantiate_error};
+use errors::{
+    MemoryLimitExceeded, host_import_call_limit_error, map_call_error, map_dispatch_error,
+    map_instantiate_error,
+};
 #[allow(
     unused_imports,
     reason = "later host adapters consume the marker helper and trap detail"
@@ -309,6 +312,14 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 limits,
             ),
         );
+        if limits.max_host_import_calls != 0 {
+            store.call_hook(move |mut store, hook| match hook {
+                CallHook::CallingHost => store
+                    .data_mut()
+                    .record_host_import_call(limits.max_host_import_calls),
+                _ => Ok(()),
+            });
+        }
         store.limiter(|ctx| &mut ctx.limiter);
         store.set_epoch_deadline(u64::MAX);
         Ok(store)
@@ -357,6 +368,7 @@ pub(crate) struct ExportRef {
 pub(crate) struct ExecLimits {
     pub(crate) instantiation_fuel: u64,
     pub(crate) max_memory_bytes: usize,
+    pub(crate) max_host_import_calls: u64,
     pub(crate) http_request_timeout_ceiling: Option<Duration>,
 }
 
@@ -375,6 +387,7 @@ pub struct StoreCtx<S> {
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     jobs: Option<DetachedJobContext>,
     resources: ResourceStore,
+    host_import_calls: u64,
     settings: SettingsState,
     wasi: WasiCtx,
     wasi_http: WasiHttpCtx,
@@ -404,6 +417,7 @@ impl<S> StoreCtx<S> {
             plugin,
             jobs,
             resources: ResourceStore::__new(),
+            host_import_calls: 0,
             settings,
             // The context retains its deny-by-default network policy and no
             // filesystem preopens. Raw WASI sockets and paths therefore cannot
@@ -427,6 +441,15 @@ impl<S> StoreCtx<S> {
 
     pub(crate) fn settings(&self) -> &SettingsState {
         &self.settings
+    }
+
+    fn record_host_import_call(&mut self, limit: u64) -> WasmtimeResult<()> {
+        self.host_import_calls += 1;
+        if self.host_import_calls > limit {
+            Err(host_import_call_limit_error(limit))
+        } else {
+            Ok(())
+        }
     }
 
     #[doc(hidden)]

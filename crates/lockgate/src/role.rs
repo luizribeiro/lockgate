@@ -103,6 +103,8 @@ pub enum CallError {
     OutOfBudget { fuel: u64 },
     /// The invocation exceeded its bounded wall-clock allowance.
     DeadlineExceeded { deadline: Duration },
+    /// The invocation exceeded its per-invocation host-import call limit.
+    HostImportCallLimitExceeded { limit: u64 },
     /// Dynamic function lookup, argument lowering, or result lifting failed.
     Dispatch { message: String },
 }
@@ -128,6 +130,9 @@ impl CallError {
             },
             ExecError::OutOfBudget => Self::OutOfBudget { fuel },
             ExecError::DeadlineExceeded(deadline) => Self::DeadlineExceeded { deadline },
+            ExecError::HostImportCallLimitExceeded { limit } => {
+                Self::HostImportCallLimitExceeded { limit }
+            }
             // Generated application imports have no outer failure channel yet:
             // WIT `result` values are guest data, while only future fallible
             // capability adapters can create the internal HostImport marker.
@@ -154,6 +159,10 @@ impl fmt::Display for CallError {
             Self::DeadlineExceeded { deadline } => write!(
                 formatter,
                 "plugin exceeded its bounded call deadline of {deadline:?}"
+            ),
+            Self::HostImportCallLimitExceeded { limit } => write!(
+                formatter,
+                "plugin exceeded its per-invocation host-import call limit of {limit}"
             ),
             Self::Dispatch { message } => {
                 write!(formatter, "plugin call could not be dispatched: {message}")
