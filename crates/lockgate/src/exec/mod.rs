@@ -38,6 +38,10 @@ use errors::{
 pub(crate) use errors::{TrapDetail, host_import_error};
 use wasi_http::HttpHooks;
 
+// Compute-bound guests yield at this fuel granularity so wall-clock deadlines can preempt
+// them; smaller values tighten deadline adherence at the cost of slightly more overhead.
+const DEADLINE_YIELD_FUEL: u64 = 10_000;
+
 pub(crate) struct ExecEngine {
     engine: Engine,
 }
@@ -51,8 +55,7 @@ impl ExecEngine {
             .wasm_component_model_fixed_length_lists(true)
             .wasm_component_model_map(true)
             .concurrency_support(true)
-            .consume_fuel(true)
-            .epoch_interruption(true);
+            .consume_fuel(true);
 
         Ok(Self {
             engine: Engine::new(&config)?,
@@ -250,6 +253,9 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         store
             .set_fuel(invocation_fuel)
             .map_err(map_dispatch_error)?;
+        store
+            .fuel_async_yield_interval(Some(DEADLINE_YIELD_FUEL))
+            .map_err(map_dispatch_error)?;
         let Some(func) = instance.get_func(&mut store, export.func) else {
             return Err(ExecError::Dispatch(anyhow::anyhow!(
                 "resolved component export was not a function"
@@ -321,7 +327,6 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
             });
         }
         store.limiter(|ctx| &mut ctx.limiter);
-        store.set_epoch_deadline(u64::MAX);
         Ok(store)
     }
 
@@ -332,6 +337,9 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         deadline: Duration,
     ) -> Result<(), ExecError> {
         store.set_fuel(fuel).map_err(map_instantiate_error)?;
+        store
+            .fuel_async_yield_interval(Some(DEADLINE_YIELD_FUEL))
+            .map_err(map_instantiate_error)?;
         let instantiate = self.instance_pre.instantiate_async(&mut store);
         tokio::time::timeout(deadline, instantiate)
             .await

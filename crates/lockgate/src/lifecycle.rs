@@ -54,11 +54,8 @@ impl HostId {
 pub enum BudgetClass {
     /// A deterministic fuel ceiling and wall-clock deadline for one invocation.
     ///
-    /// The two bounds answer different questions and neither substitutes for the other.
-    /// `fuel` bounds guest instructions, so it is what stops a guest spinning on the CPU.
-    /// `deadline` is enforced with [`tokio::time::timeout`], which fires only while the
-    /// invocation future is pending — so it bounds a guest *parked on an async host import*,
-    /// such as an unanswered HTTP request, and cannot interrupt a busy loop.
+    /// `fuel` caps guest instructions, while `deadline` bounds elapsed wall-clock time for
+    /// both compute-bound guest execution and asynchronous host work.
     Bounded { fuel: u64, deadline: Duration },
 }
 

@@ -11,6 +11,7 @@ use lockgate::{
 use lockgate_schema::PluginMetadata;
 
 const CALL_FUEL: u64 = 1_000_000;
+const COMPUTE_FUEL: u64 = 1_000_000_000;
 
 #[derive(Clone, Copy)]
 struct BlockingImports;
@@ -69,6 +70,10 @@ impl<S: Send + Sync + 'static> GuestClient<'_, S> {
         self.call_u32("suspend", ctx).await
     }
 
+    async fn spin(&self, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
+        self.call_u32("spin", ctx).await
+    }
+
     async fn call_u32(&self, function: &str, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
         let results = self.0.invoke(function, &[], ctx).await?;
         match results.as_slice() {
@@ -93,7 +98,10 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
         .admit(
             prepared,
             acceptance,
-            RuntimeLimits::default(),
+            RuntimeLimits {
+                max_host_import_calls: 0,
+                ..RuntimeLimits::default()
+            },
             InvocationCtx::bounded(CALL_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
@@ -172,6 +180,26 @@ async fn blocking_guest_returns_deadline_exceeded() {
         error,
         CallError::DeadlineExceeded { deadline: expired } if expired == deadline
     ));
+}
+
+#[tokio::test]
+async fn compute_bound_guest_returns_deadline_exceeded() {
+    let (host, plugin) = admitted_fixture().await;
+    let guest = host.client::<GuestRole>(&plugin).unwrap();
+    let deadline = Duration::from_millis(50);
+
+    let error = guest
+        .spin(InvocationCtx::bounded(COMPUTE_FUEL, deadline))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            CallError::DeadlineExceeded { deadline: expired } if expired == deadline
+        ),
+        "unexpected call error: {error:?}"
+    );
 }
 
 #[tokio::test]

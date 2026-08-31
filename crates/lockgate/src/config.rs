@@ -49,7 +49,6 @@ impl ExecEngine {
             },
         );
         store.limiter(|store| &mut store.limiter);
-        store.set_epoch_deadline(u64::MAX);
         store.set_fuel(limits.instantiation_fuel)?;
 
         let bindings = Plugin::instantiate_async(&mut store, component, &linker).await?;

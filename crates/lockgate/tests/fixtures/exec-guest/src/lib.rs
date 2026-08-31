@@ -31,6 +31,12 @@ impl exports::test::exec::guest::Guest for Fixture {
         }
     }
 
+    fn spin() -> u32 {
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+
     async fn suspend() -> u32 {
         test::exec::host::wait().await;
         7
