@@ -223,6 +223,21 @@ impl ValidationError {
         }
     }
 
+    /// Returns developer-facing guidance for resolving this error, when available.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            Self::UnsupportedExport { offending_type, .. } => Some(match offending_type.as_str() {
+                "future" | "stream" | "error-context" => {
+                    "return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature. Async WIT functions are supported; this restriction applies to `future`, `stream`, and `error-context` value types and resource handles crossing the invocation boundary, not to the function's async declaration."
+                }
+                _ => {
+                    "return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
+                }
+            }),
+            Self::Decode { .. } | Self::NotComponent => None,
+        }
+    }
+
     fn unsupported(
         interface: impl Into<String>,
         function: impl Into<String>,
@@ -247,18 +262,10 @@ impl fmt::Display for ValidationError {
                 interface,
                 function,
                 offending_type,
-            } => {
-                write!(
-                    formatter,
-                    "[admission.unsupported-export] unsupported export `{interface}#{function}`: offending type `{offending_type}` cannot cross an invocation boundary; return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature"
-                )?;
-                if matches!(offending_type.as_str(), "future" | "stream") {
-                    formatter.write_str(
-                        ". Async WIT functions are supported; this restriction applies to `future`, `stream`, and `error-context` value types and resource handles crossing the invocation boundary, not to the function's async declaration.",
-                    )?;
-                }
-                Ok(())
-            }
+            } => write!(
+                formatter,
+                "unsupported export `{interface}#{function}`: offending type `{offending_type}` cannot cross an invocation boundary"
+            ),
         }
     }
 }

@@ -110,10 +110,17 @@ fn generated_contract_registers_and_duplicate_capabilities_are_rejected() {
         .register::<sessions::Contract>()
         .unwrap();
     let error = builder.register::<sessions::Contract>().err().unwrap();
+    assert!(matches!(
+        error,
+        lockgate::CapabilityRegistrationError::DuplicateCapability {
+            capability: "sessions"
+        }
+    ));
     assert_eq!(
         error.to_string(),
-        "capability `sessions` is registered more than once; register each capability contract once"
+        "capability `sessions` is registered more than once"
     );
+    assert_eq!(error.hint(), Some("register each capability contract once"));
 }
 
 #[test]

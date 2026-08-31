@@ -564,11 +564,14 @@ async fn all_guarded_import_without_a_mapped_need_is_a_manifest_mismatch() {
             && permissions.iter().map(ToString::to_string).collect::<Vec<_>>()
                 == ["admin.restart", "admin.status"]
     ));
-    let message = error.to_string();
-    assert!(message.contains("test:guarded/admin@1.2.3"));
-    assert!(message.contains("admin.restart"));
-    assert!(message.contains("admin.status"));
-    assert!(message.contains("required or optional need"));
+    assert_eq!(
+        error.to_string(),
+        "plugin imports host interface `test:guarded/admin@1.2.3` but declares none of its permissions"
+    );
+    assert_eq!(
+        error.hint(),
+        Some("add at least one as a required or optional need, or remove the interface import")
+    );
 }
 
 #[tokio::test]

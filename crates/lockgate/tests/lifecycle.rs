@@ -736,12 +736,16 @@ async fn forbidden_exports_keep_the_stable_teaching_error() {
 
     assert!(matches!(error, AdmissionError::UnsupportedExport(_)));
     assert_eq!(error.code(), Some("admission.unsupported-export"));
-    assert!(
-        error
-            .to_string()
-            .starts_with("[admission.unsupported-export] ")
+    assert_eq!(
+        error.to_string(),
+        "unsupported export `test:engine-rejected/guest#run`: offending type `error-context` cannot cross an invocation boundary"
     );
-    assert!(error.to_string().contains("offending type `error-context`"));
+    assert_eq!(
+        error.hint(),
+        Some(
+            "return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature. Async WIT functions are supported; this restriction applies to `future`, `stream`, and `error-context` value types and resource handles crossing the invocation boundary, not to the function's async declaration."
+        )
+    );
 }
 
 #[tokio::test]

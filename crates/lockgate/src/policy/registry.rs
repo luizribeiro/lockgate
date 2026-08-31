@@ -36,6 +36,16 @@ pub enum CapabilityRegistrationError {
     },
 }
 
+impl CapabilityRegistrationError {
+    /// Returns developer-facing guidance for resolving this error, when available.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            Self::DuplicateCapability { .. } => Some("register each capability contract once"),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for CapabilityRegistrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -45,7 +55,7 @@ impl fmt::Display for CapabilityRegistrationError {
             ),
             Self::DuplicateCapability { capability } => write!(
                 formatter,
-                "capability `{capability}` is registered more than once; register each capability contract once"
+                "capability `{capability}` is registered more than once"
             ),
             Self::MalformedPermissionId {
                 capability,

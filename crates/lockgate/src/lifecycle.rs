@@ -923,6 +923,19 @@ impl AdmissionError {
         }
     }
 
+    /// Returns developer-facing guidance for resolving this error, when available.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            Self::UnsupportedExport(error) => error.hint(),
+            Self::HostImportManifestMismatch { .. } => Some(
+                "add at least one as a required or optional need, or remove the interface import",
+            ),
+            Self::PreparedHostMismatch { .. } => Some("prepare it with this builder"),
+            Self::AcceptanceDigestMismatch { .. } => Some("accept this prepared request again"),
+            _ => None,
+        }
+    }
+
     fn from_inspection(error: InspectError) -> Self {
         Self::Inspection(error)
     }
@@ -1027,17 +1040,9 @@ impl fmt::Display for AdmissionError {
                 formatter,
                 "host import `{interface}.{method}` requires permission `{atom}`, but the application never registered that permission"
             ),
-            Self::HostImportManifestMismatch {
-                interface,
-                permissions,
-            } => write!(
+            Self::HostImportManifestMismatch { interface, .. } => write!(
                 formatter,
-                "plugin imports host interface `{interface}` but declares none of its permissions [{}]; add at least one as a required or optional need, or remove the interface import",
-                permissions
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                "plugin imports host interface `{interface}` but declares none of its permissions"
             ),
             Self::HttpEgressUnavailable { plugin } => write!(
                 formatter,
@@ -1106,7 +1111,7 @@ impl fmt::Display for AdmissionError {
             Self::ScopeResolution(error) => error.fmt(formatter),
             Self::PreparedHostMismatch { plugin } => write!(
                 formatter,
-                "prepared plugin `{plugin}` belongs to another HostBuilder and cannot be admitted here; prepare it with this builder"
+                "prepared plugin `{plugin}` belongs to another HostBuilder and cannot be admitted here"
             ),
             Self::DuplicateInstanceId { instance_id } => write!(
                 formatter,
@@ -1125,7 +1130,7 @@ impl fmt::Display for AdmissionError {
                 acceptance,
             } => write!(
                 formatter,
-                "prepared plugin `{plugin}` has needs digest `{prepared}`, but the acceptance is bound to needs digest `{acceptance}`; accept this prepared request again"
+                "prepared plugin `{plugin}` has needs digest `{prepared}`, but the acceptance is bound to needs digest `{acceptance}`"
             ),
         }
     }
@@ -1604,6 +1609,7 @@ mod grant_tests {
         let message = error.to_string();
         assert!(message.contains("host-bound"));
         assert!(message.contains("another HostBuilder"));
+        assert_eq!(error.hint(), Some("prepare it with this builder"));
     }
 
     #[tokio::test]

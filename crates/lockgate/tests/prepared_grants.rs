@@ -346,6 +346,7 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
     let message = error.to_string();
     assert!(message.contains(prepared));
     assert!(message.contains(acceptance));
+    assert_eq!(error.hint(), Some("accept this prepared request again"));
 }
 
 #[tokio::test]
