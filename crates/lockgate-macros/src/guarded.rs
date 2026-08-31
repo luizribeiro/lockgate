@@ -48,7 +48,11 @@ pub(super) fn expand(
         let classification = take_classification(&mut method.attrs, &method.sig.ident)?;
         let method_identity = super::method_identity_const_name(&method.sig.ident);
         let (entry, guard) = match classification {
-            Classification::Requires { permission, target } => match target {
+            Classification::Requires {
+                permission,
+                target,
+                wire_type,
+            } => match target {
                 Some(target) => {
                     let target_kind = validate_target(&target, &method.sig.inputs)?;
                     let context = context_parameter(&method.sig.inputs, &method.sig.ident)?;
@@ -57,31 +61,82 @@ pub(super) fn expand(
                     let resolve_context = &identifiers.resolve_context;
                     let target_binding = &identifiers.target;
                     let resource = &identifiers.resource;
-                    let resolution = match target_kind {
-                        TargetKind::Argument => quote! {
-                            let #subject = #context.subject();
-                            let #target_binding = &(#target);
-                            let #resource =
-                                #lockgate::__private::resolve_scoped_resource(
-                                    &*self,
-                                    &#subject,
-                                    #target_binding,
-                                    #permission,
-                                )
-                                .await?;
-                        },
-                        TargetKind::ResourceHandle => quote! {
-                            let #resolve_context = #context.resolve_context();
-                            let #target_binding = &(#target);
-                            let #resource =
-                                #lockgate::__private::resolve_scoped_resource_handle(
-                                    &*self,
-                                    &#resolve_context,
-                                    #target_binding,
-                                    #permission,
-                                )
-                                .await?;
-                        },
+                    let wire = &identifiers.wire;
+                    let (resolution, checked_resource) = match (target_kind, wire_type) {
+                        (TargetKind::Argument, Some(wire_type))
+                            if is_resource_handle(&wire_type) =>
+                        {
+                            return Err(syn::Error::new_spanned(
+                                wire_type,
+                                "`wire_type` on resource-handle targets is not yet supported",
+                            ));
+                        }
+                        (TargetKind::Argument, Some(wire_type)) => {
+                            let (resource_pattern, resource_ident, resource_type) =
+                                rewrite_argument_target(
+                                    &target,
+                                    &mut method.sig.inputs,
+                                    wire,
+                                    *wire_type,
+                                )?;
+                            (
+                                quote! {
+                                    let #subject = #context.subject();
+                                    let #target_binding = &(#wire);
+                                    let #resource_pattern: #resource_type =
+                                        #lockgate::__private::resolve_scoped_resource(
+                                            &*self,
+                                            &#subject,
+                                            #target_binding,
+                                            #permission,
+                                        )
+                                        .await?;
+                                },
+                                quote!(#resource_ident),
+                            )
+                        }
+                        (TargetKind::ContextData, Some(wire_type)) => {
+                            return Err(syn::Error::new_spanned(
+                                wire_type,
+                                "`wire_type` is not valid on a `.data()` target",
+                            ));
+                        }
+                        (TargetKind::ResourceHandle, Some(wire_type)) => {
+                            return Err(syn::Error::new_spanned(
+                                wire_type,
+                                "`wire_type` on resource-handle targets is not yet supported",
+                            ));
+                        }
+                        (TargetKind::Argument | TargetKind::ContextData, None) => (
+                            quote! {
+                                let #subject = #context.subject();
+                                let #target_binding = &(#target);
+                                let #resource =
+                                    #lockgate::__private::resolve_scoped_resource(
+                                        &*self,
+                                        &#subject,
+                                        #target_binding,
+                                        #permission,
+                                    )
+                                    .await?;
+                            },
+                            quote!(#resource),
+                        ),
+                        (TargetKind::ResourceHandle, None) => (
+                            quote! {
+                                let #resolve_context = #context.resolve_context();
+                                let #target_binding = &(#target);
+                                let #resource =
+                                    #lockgate::__private::resolve_scoped_resource_handle(
+                                        &*self,
+                                        &#resolve_context,
+                                        #target_binding,
+                                        #permission,
+                                    )
+                                    .await?;
+                            },
+                            quote!(#resource),
+                        ),
                     };
                     (
                         quote! {
@@ -94,11 +149,17 @@ pub(super) fn expand(
                         },
                         Some(quote! {
                             #resolution
-                            #context.require_scoped(#permission, &#resource)?;
+                            #context.require_scoped(#permission, &#checked_resource)?;
                         }),
                     )
                 }
                 None => {
+                    if let Some(wire_type) = wire_type {
+                        return Err(syn::Error::new_spanned(
+                            wire_type,
+                            "`wire_type` requires an argument `target`",
+                        ));
+                    }
                     let context = context_parameter(&method.sig.inputs, &method.sig.ident)?;
                     (
                         quote! {
@@ -148,6 +209,7 @@ struct GuardIdentifiers {
     resolve_context: Ident,
     target: Ident,
     resource: Ident,
+    wire: Ident,
 }
 
 impl GuardIdentifiers {
@@ -162,11 +224,13 @@ impl GuardIdentifiers {
         let resolve_context = fresh_identifier("__lockgate_resolve_context", &mut bindings.names);
         let target = fresh_identifier("__lockgate_target", &mut bindings.names);
         let resource = fresh_identifier("__lockgate_resource", &mut bindings.names);
+        let wire = fresh_identifier("__lockgate_wire", &mut bindings.names);
         Self {
             subject,
             resolve_context,
             target,
             resource,
+            wire,
         }
     }
 }
@@ -223,6 +287,7 @@ enum Classification {
     Requires {
         permission: Path,
         target: Option<Box<Expr>>,
+        wire_type: Option<Box<Type>>,
     },
     NoCapabilityRequired {
         reason: LitStr,
@@ -276,18 +341,21 @@ fn parse_requires(attribute: &Attribute) -> syn::Result<Classification> {
     Ok(Classification::Requires {
         permission: arguments.permission,
         target: arguments.target,
+        wire_type: arguments.wire_type,
     })
 }
 
 struct RequiresArguments {
     permission: Path,
     target: Option<Box<Expr>>,
+    wire_type: Option<Box<Type>>,
 }
 
 impl Parse for RequiresArguments {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut permission = None;
         let mut target = None;
+        let mut wire_type = None;
         while !input.is_empty() {
             let key = input.parse::<Ident>()?;
             input.parse::<Token![=]>()?;
@@ -303,10 +371,19 @@ impl Parse for RequiresArguments {
                 "target" => {
                     return Err(syn::Error::new_spanned(key, "duplicate `target` argument"));
                 }
+                "wire_type" if wire_type.is_none() => {
+                    wire_type = Some(Box::new(input.parse()?));
+                }
+                "wire_type" => {
+                    return Err(syn::Error::new_spanned(
+                        key,
+                        "duplicate `wire_type` argument",
+                    ));
+                }
                 _ => {
                     return Err(syn::Error::new_spanned(
                         key,
-                        "unknown `requires` argument; expected `permission` or `target`",
+                        "unknown `requires` argument; expected `permission`, `target`, or `wire_type`",
                     ));
                 }
             }
@@ -319,6 +396,7 @@ impl Parse for RequiresArguments {
             permission: permission
                 .ok_or_else(|| input.error("`requires` needs `permission = <path>`"))?,
             target,
+            wire_type,
         })
     }
 }
@@ -382,6 +460,7 @@ impl Parse for ReasonArgument {
 #[derive(Clone, Copy)]
 enum TargetKind {
     Argument,
+    ContextData,
     ResourceHandle,
 }
 
@@ -470,9 +549,59 @@ fn validate_target(
     }
     Ok(if resource_handle {
         TargetKind::ResourceHandle
+    } else if matches!(root, TargetRoot::ContextData(_)) {
+        TargetKind::ContextData
     } else {
         TargetKind::Argument
     })
+}
+
+fn rewrite_argument_target(
+    target: &Expr,
+    inputs: &mut Punctuated<FnArg, Token![,]>,
+    wire: &Ident,
+    wire_type: Type,
+) -> syn::Result<(Pat, Ident, Type)> {
+    let Expr::Path(path) = target else {
+        return Err(syn::Error::new_spanned(
+            target,
+            "`wire_type` requires `target` to be the argument parameter itself",
+        ));
+    };
+    if path.qself.is_some() || path.path.leading_colon.is_some() || path.path.segments.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            target,
+            "`wire_type` requires `target` to be the argument parameter itself",
+        ));
+    }
+    let target = &path.path.segments[0].ident;
+    for input in inputs {
+        let FnArg::Typed(input) = input else {
+            continue;
+        };
+        let Pat::Ident(pattern) = input.pat.as_ref() else {
+            continue;
+        };
+        if pattern.ident != *target || pattern.subpat.is_some() {
+            continue;
+        }
+        if is_host_context(&input.ty) {
+            return Err(syn::Error::new_spanned(
+                target,
+                "`wire_type` target must not be the `HostCtx` parameter",
+            ));
+        }
+        let resource_pattern = input.pat.as_ref().clone();
+        let resource_ident = pattern.ident.clone();
+        let resource_type = input.ty.as_ref().clone();
+        *input.pat = syn::parse_quote!(#wire);
+        *input.ty = wire_type;
+        return Ok((resource_pattern, resource_ident, resource_type));
+    }
+    Err(syn::Error::new_spanned(
+        target,
+        "`wire_type` target must be a named method parameter",
+    ))
 }
 
 fn is_resource_handle(ty: &Type) -> bool {
@@ -631,6 +760,34 @@ mod tests {
     }
 
     #[test]
+    fn argument_resource_guard_matches_the_expansion_snapshot() {
+        let implementation = syn::parse_quote! {
+            impl vm::Host for Imports {
+                #[lockgate::requires(
+                    permission = permissions::EXEC,
+                    target = command,
+                    wire_type = Request
+                )]
+                async fn run(
+                    &mut self,
+                    cx: lockgate::HostCtx<'_, Data>,
+                    command: CheckedRequest,
+                    timeout_ms: Option<u64>,
+                ) -> Result<(), Error> {
+                    self.execute(&command, timeout_ms).await
+                }
+            }
+        };
+        let expansion = super::expand(implementation, &quote!(::lockgate)).unwrap();
+        let expansion = prettyplease::unparse(&syn::parse2(expansion).unwrap());
+
+        assert_eq!(
+            expansion,
+            include_str!("snapshots/argument_resource_guarded_expansion.snap")
+        );
+    }
+
+    #[test]
     fn call_context_guard_matches_the_expansion_snapshot() {
         let implementation = syn::parse_quote! {
             impl sessions::Host for Imports {
@@ -676,6 +833,59 @@ mod tests {
         assert_eq!(
             expansion,
             include_str!("snapshots/resource_guarded_expansion.snap")
+        );
+    }
+
+    #[test]
+    fn wire_type_is_rejected_on_call_context_targets() {
+        let implementation = syn::parse_quote! {
+            impl sessions::Host for Imports {
+                #[lockgate::requires(
+                    permission = permissions::READ,
+                    target = cx.data().session,
+                    wire_type = SessionId
+                )]
+                async fn read(
+                    &mut self,
+                    cx: lockgate::HostCtx<'_, SageCall>,
+                ) -> Result<(), Error> {
+                    self.read_session(cx).await
+                }
+            }
+        };
+
+        let error = super::expand(implementation, &quote!(::lockgate)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "`wire_type` is not valid on a `.data()` target"
+        );
+    }
+
+    #[test]
+    fn wire_type_is_rejected_on_resource_handle_targets() {
+        let implementation = syn::parse_quote! {
+            impl sessions::HostSession for Imports {
+                #[lockgate::requires(
+                    permission = permissions::SEND,
+                    target = session,
+                    wire_type = lockgate::Resource<Session>
+                )]
+                async fn send(
+                    &mut self,
+                    cx: lockgate::HostCtx<'_, Data>,
+                    session: CheckedSession,
+                ) -> Result<(), Error> {
+                    self.send_message(cx, session).await
+                }
+            }
+        };
+
+        let error = super::expand(implementation, &quote!(::lockgate)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "`wire_type` on resource-handle targets is not yet supported"
         );
     }
 }

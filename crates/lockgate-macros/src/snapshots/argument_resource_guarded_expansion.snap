@@ -1,0 +1,28 @@
+impl vm::Host for Imports {
+    async fn run(
+        &mut self,
+        cx: lockgate::HostCtx<'_, Data>,
+        __lockgate_wire: Request,
+        timeout_ms: Option<u64>,
+    ) -> Result<(), Error> {
+        let __lockgate_subject = cx.subject();
+        let __lockgate_target = &(__lockgate_wire);
+        let command: CheckedRequest = ::lockgate::__private::resolve_scoped_resource(
+                &*self,
+                &__lockgate_subject,
+                __lockgate_target,
+                permissions::EXEC,
+            )
+            .await?;
+        cx.require_scoped(permissions::EXEC, &command)?;
+        { self.execute(&command, timeout_ms).await }
+    }
+    const __LOCKGATE_POLICY_METHODS: &'static [::lockgate::__private::PolicyMethod] = &[
+        ::lockgate::__private::PolicyMethod::__requires_scoped(
+            vm::__LockgateBinding::INTERFACE,
+            vm::__LockgateBinding::__LOCKGATE_METHOD_RUN,
+            permissions::EXEC,
+            ::core::stringify!(command),
+        ),
+    ];
+}

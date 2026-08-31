@@ -37,6 +37,7 @@ mod admin_permissions {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MockVm {
+    id: String,
     pool: String,
     created_by: Option<String>,
 }
@@ -95,6 +96,7 @@ impl Default for Imports {
             (
                 "gpu-a",
                 MockVm {
+                    id: "gpu-a".to_owned(),
                     pool: "gpu".to_owned(),
                     created_by: Some("plugin-a".to_owned()),
                 },
@@ -102,6 +104,7 @@ impl Default for Imports {
             (
                 "gpu-b",
                 MockVm {
+                    id: "gpu-b".to_owned(),
                     pool: "gpu".to_owned(),
                     created_by: Some("plugin-b".to_owned()),
                 },
@@ -109,6 +112,7 @@ impl Default for Imports {
             (
                 "cpu-b",
                 MockVm {
+                    id: "cpu-b".to_owned(),
                     pool: "cpu".to_owned(),
                     created_by: Some("plugin-b".to_owned()),
                 },
@@ -158,11 +162,12 @@ impl ResolveScopedResource<InstanceScope, String> for Imports {
         vm: &'a String,
     ) -> Result<Self::Resource, Self::Error> {
         self.state.vm_resolutions.fetch_add(1, Ordering::SeqCst);
+        let normalized = vm.trim().to_ascii_lowercase();
         self.state
             .vms
             .lock()
             .unwrap()
-            .get(vm)
+            .get(&normalized)
             .cloned()
             .ok_or(ResolveError)
     }
@@ -211,6 +216,7 @@ impl vm::Host for Imports {
         self.state.vms.lock().unwrap().insert(
             id.clone(),
             MockVm {
+                id: id.clone(),
                 pool,
                 created_by: Some(cx.subject().plugin_id().to_owned()),
             },
@@ -218,15 +224,19 @@ impl vm::Host for Imports {
         Ok(id)
     }
 
-    #[lockgate::requires(permission = permissions::EXEC, target = vm)]
+    #[lockgate::requires(
+        permission = permissions::EXEC,
+        target = vm,
+        wire_type = String
+    )]
     async fn exec(
         &mut self,
         _cx: HostCtx<'_, ()>,
-        vm: String,
+        vm: MockVm,
         command: String,
     ) -> Result<String, vm::VmError> {
         self.state.body_calls.exec.fetch_add(1, Ordering::SeqCst);
-        Ok(format!("{vm}:{command}"))
+        Ok(format!("{}:{command}", vm.id))
     }
 
     #[lockgate::requires(permission = permissions::DESTROY, target = vm)]
@@ -704,6 +714,25 @@ async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
     assert_eq!(imports.state.body_calls.create.load(Ordering::SeqCst), 1);
     assert_eq!(
         guest.exec(call(), "cpu-b", "hostname").await.unwrap(),
+        "denied"
+    );
+    assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 2);
+    assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn argument_resource_guard_executes_the_normalized_checked_resource() {
+    let imports = Imports::default();
+    let needs = NeedsManifest::new(vec![scoped_need("vm.exec", "pool:gpu")], vec![]).unwrap();
+    let (host, plugin) = runtime_host(imports.clone(), "normalized-plugin", &needs).await;
+    let guest = host.guest(&plugin).unwrap();
+
+    assert_eq!(
+        guest.exec(call(), "  GPU-A  ", "uptime").await.unwrap(),
+        "ok:gpu-a:uptime"
+    );
+    assert_eq!(
+        guest.exec(call(), "  CPU-B  ", "hostname").await.unwrap(),
         "denied"
     );
     assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 2);
