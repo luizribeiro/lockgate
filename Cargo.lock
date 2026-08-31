@@ -1304,6 +1304,7 @@ name = "lockgate-macros"
 version = "0.1.0"
 dependencies = [
  "heck",
+ "lockgate-schema",
  "prettyplease",
  "proc-macro-crate",
  "proc-macro2",

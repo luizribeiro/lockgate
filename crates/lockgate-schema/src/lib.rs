@@ -1,5 +1,9 @@
 //! Shared no-wasmtime domain types and custom-section wire formats.
 
+/// The `config` capability WIT contract, owned here so no consumer reaches
+/// across a crate boundary to include it.
+pub const CONFIG_WIT: &str = include_str!("../wit/config.wit");
+
 mod grants;
 pub mod metadata;
 pub mod needs;

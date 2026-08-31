@@ -10,12 +10,7 @@ use super::exec::{ExecEngine, ExecLimits, StoreCtx};
 const MAX_SCHEMA_BYTES: usize = 256 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 64;
 
-wasmtime::component::bindgen!({
-    path: "wit",
-    world: "plugin",
-    imports: { default: async },
-    exports: { default: async },
-});
+lockgate_macros::config_bindings!();
 
 pub(crate) const SCHEMA_INTERFACE: &str = "lockgate:config/schema";
 
@@ -230,13 +225,13 @@ mod tests {
     #[test]
     fn owned_config_package_has_the_framework_contract() {
         assert_eq!(
-            include_str!("../wit/config.wit"),
+            lockgate_schema::CONFIG_WIT,
             include_str!("../tests/fixtures/config-guest/wit/deps/lockgate-config/config.wit"),
             "the raw guest fixture must vendor the owned config contract exactly"
         );
         let mut resolve = Resolve::new();
-        let (package, _) = resolve
-            .push_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/wit"))
+        let package = resolve
+            .push_str("lockgate-config.wit", lockgate_schema::CONFIG_WIT)
             .unwrap();
         let world = resolve.select_world(&[package], Some("plugin")).unwrap();
         let world = &resolve.worlds[world];

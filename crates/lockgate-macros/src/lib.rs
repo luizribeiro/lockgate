@@ -21,6 +21,28 @@ mod capability;
 mod guarded;
 mod scope_repr;
 
+/// Generates Lockgate's framework-owned configuration bindings.
+#[doc(hidden)]
+#[proc_macro]
+pub fn config_bindings(input: TokenStream) -> TokenStream {
+    let input = TokenStream2::from(input);
+    if !input.is_empty() {
+        return syn::Error::new_spanned(input, "`config_bindings` takes no arguments")
+            .into_compile_error()
+            .into();
+    }
+    let config_wit = lockgate_schema::CONFIG_WIT;
+    quote! {
+        wasmtime::component::bindgen!({
+            inline: #config_wit,
+            world: "plugin",
+            imports: { default: async },
+            exports: { default: async },
+        });
+    }
+    .into()
+}
+
 /// Declares one stable capability vocabulary from an inline Rust module.
 ///
 /// The capability ID must match `[a-z0-9]+(-[a-z0-9]+)*`: lowercase ASCII

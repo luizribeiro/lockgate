@@ -15,8 +15,6 @@ use wit_bindgen_core::wit_parser::{
 use wit_bindgen_core::{Files, WorldGenerator};
 use wit_bindgen_rust::{Opts, WithOption};
 
-const CONFIG_WIT: &str = include_str!("../../lockgate/wit/config.wit");
-
 #[proc_macro]
 pub fn generate(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as GenerateInput);
@@ -170,7 +168,7 @@ fn generate_bindings(input: GenerateInput) -> syn::Result<TokenStream2> {
 
     resolve
         .push_group(
-            UnresolvedPackageGroup::parse("lockgate-config.wit", CONFIG_WIT)
+            UnresolvedPackageGroup::parse("lockgate-config.wit", lockgate_schema::CONFIG_WIT)
                 .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?,
         )
         .map_err(|error| syn::Error::new(Span::call_site(), format!("{error:#}")))?;
