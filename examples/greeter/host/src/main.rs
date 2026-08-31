@@ -54,6 +54,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let ctx = InvocationCtx::bounded(25_000_000, INVOCATION_DEADLINE);
     let greeting = host.greeter(&plugin)?.greet(ctx, "world").await?;
     println!("{greeting}");
+    host.shutdown().await;
     Ok(())
 }
 

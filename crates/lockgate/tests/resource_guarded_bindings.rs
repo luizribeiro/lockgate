@@ -264,6 +264,7 @@ async fn session_send_authorizes_the_live_host_representation() {
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 1);
     assert_eq!(imports.calls.sends.load(Ordering::SeqCst), 1);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -281,6 +282,7 @@ async fn one_handle_reevaluates_membership_on_the_second_guarded_call() {
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 2);
     assert_eq!(imports.calls.sends.load(Ordering::SeqCst), 1);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -298,6 +300,7 @@ async fn invalidated_handle_uses_the_method_error_path_and_drops_without_trappin
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 0);
     assert_eq!(imports.calls.sends.load(Ordering::SeqCst), 0);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -315,6 +318,7 @@ async fn acquiring_a_handle_grants_no_authority_to_later_methods() {
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 1);
     assert_eq!(imports.calls.sends.load(Ordering::SeqCst), 0);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -333,4 +337,5 @@ async fn resource_wire_guard_executes_the_checked_live_resource() {
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 2);
     assert_eq!(imports.calls.checked_sends.load(Ordering::SeqCst), 1);
     assert_eq!(imports.calls.sends.load(Ordering::SeqCst), 0);
+    host.shutdown().await;
 }

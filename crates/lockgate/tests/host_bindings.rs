@@ -175,6 +175,7 @@ async fn concurrent_invocations_observe_their_own_data() {
     .expect("invocations did not overlap at the host-import barrier");
     assert_eq!(left.unwrap(), "left");
     assert_eq!(right.unwrap(), "right");
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -182,6 +183,7 @@ async fn host_context_identifies_the_calling_plugin() {
     let (host, plugin, _, _) = host().await;
     let guest = host.guest(&plugin).unwrap();
     assert_eq!(guest.caller(context("call")).await.unwrap(), "host-caller");
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -193,6 +195,7 @@ async fn generated_host_imports_preserve_overlapping_calls() {
         .expect("serialized generated host imports deadlocked at the barrier");
     assert_eq!(result.unwrap(), 2);
     assert_eq!(entries.load(Ordering::SeqCst), 2);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -267,6 +270,7 @@ async fn rich_import_types_keep_wit_results_in_the_guest_data_channel() {
         guest.rich(context("call"), 7, true).await.unwrap(),
         "guest-visible"
     );
+    host.shutdown().await;
 }
 
 fn payload(outcome: Result<u64, String>) -> guest::Payload {
@@ -334,6 +338,7 @@ async fn generated_clients_round_trip_value_shapes_through_both_casts() {
         .await
         .unwrap();
     assert_eq!(no_optional.maybe, None);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -370,6 +375,7 @@ async fn generated_role_fails_at_the_cast_when_not_exported() {
             interface: "test:host-bindings/guest",
         }
     );
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -419,6 +425,8 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
     assert_eq!(plugin, &implementing);
     assert!(guests.next().is_none());
     assert_eq!(guest.caller(context("call")).await.unwrap(), "host-caller");
+    drop(guests);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -477,4 +485,5 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         second_guest.caller(context("call")).await.unwrap(),
         "other-caller"
     );
+    host.shutdown().await;
 }

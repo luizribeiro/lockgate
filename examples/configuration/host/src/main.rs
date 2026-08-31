@@ -66,6 +66,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         )
         .await?;
     println!("{output}");
+    host.shutdown().await;
     Ok(())
 }
 

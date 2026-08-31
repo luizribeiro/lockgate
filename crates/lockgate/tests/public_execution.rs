@@ -137,6 +137,8 @@ async fn role_clients_skip_non_exporters_and_yield_invokable_clients() {
             .unwrap(),
         42
     );
+    drop(clients);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -146,6 +148,7 @@ async fn role_clients_are_empty_when_no_plugin_exports_the_role() {
     let host = builder.finish();
 
     assert_eq!(host.clients::<DiagnosticsRole>().count(), 0);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -160,6 +163,7 @@ async fn role_clients_follow_admission_order() {
         .map(|(plugin, _)| plugin)
         .collect::<Vec<_>>();
     assert_eq!(plugins, [&first, &second]);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -182,6 +186,7 @@ async fn concurrently_submitted_calls_complete_without_a_busy_error() {
     );
 
     assert_eq!(first.unwrap(), second.unwrap());
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -207,6 +212,7 @@ async fn a_guest_trap_does_not_poison_the_next_call() {
             .unwrap(),
         42
     );
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -226,6 +232,7 @@ async fn every_call_gets_fresh_guest_globals() {
             1
         );
     }
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -250,6 +257,7 @@ async fn equal_fuel_exhausts_at_the_same_iteration_boundary() {
         CallError::OutOfBudget { fuel } if *fuel == LOW_FUEL
     ));
     assert!(error.to_string().contains(&LOW_FUEL.to_string()));
+    host.shutdown().await;
 }
 
 async fn first_exhausted_iteration(diagnostics: &DiagnosticsClient<'_, ()>, fuel: u64) -> u32 {

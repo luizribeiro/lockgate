@@ -11,8 +11,7 @@ The `wit/` directory holds the shared contract: a dispatch interface plugins may
 and a tasks interface they may implement. The `plugin/` directory asks the host to
 deliver reports and returns immediately; the `host/` directory detaches the slow
 delivery futures with unit call context, reports one failure through its error sink,
-and drops the host through `spawn_blocking` so shutdown remains safe in an async
-embedder.
+and awaits `Host::shutdown` so teardown remains non-blocking in an async embedder.
 
 From the repository root, build the plugin:
 

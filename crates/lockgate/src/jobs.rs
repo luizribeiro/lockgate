@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::{Id as TaskId, JoinError, JoinSet};
 
 type JobFuture = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>;
@@ -139,7 +139,7 @@ impl Drop for JobPermit {
 
 pub(crate) struct JobTracker {
     sender: mpsc::UnboundedSender<JobCommand>,
-    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    completion: Mutex<Option<oneshot::Receiver<()>>>,
     sink: Arc<RwLock<ErrorSink>>,
     next_id: AtomicU64,
     shutting_down: AtomicBool,
@@ -155,13 +155,18 @@ impl JobTracker {
         // deliberately observes and drops failures without another side effect.
         let sink: Arc<RwLock<ErrorSink>> = Arc::new(RwLock::new(Arc::new(|_| {})));
         let worker_sink = Arc::clone(&sink);
+        let (completion_sender, completion) = oneshot::channel();
         let worker = std::thread::Builder::new()
             .name("lockgate-detached-jobs".into())
-            .spawn(move || runtime.block_on(supervise(receiver, worker_sink)))?;
+            .spawn(move || {
+                runtime.block_on(supervise(receiver, worker_sink));
+                let _ = completion_sender.send(());
+            })?;
+        drop(worker);
 
         Ok(Arc::new(Self {
             sender,
-            worker: Mutex::new(Some(worker)),
+            completion: Mutex::new(Some(completion)),
             sink,
             next_id: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
@@ -192,25 +197,33 @@ impl JobTracker {
         Ok(job_id)
     }
 
-    pub(crate) fn shutdown(&self) {
+    pub(crate) async fn shutdown(&self) {
+        self.begin_shutdown();
+        let completion = self
+            .completion
+            .lock()
+            .expect("detached-job completion lock poisoned")
+            .take();
+        if let Some(completion) = completion {
+            let _ = completion.await;
+        }
+    }
+
+    pub(crate) fn begin_shutdown(&self) {
         if self.shutting_down.swap(true, Ordering::AcqRel) {
             return;
         }
         let _ = self.sender.send(JobCommand::Shutdown);
-        if let Some(worker) = self
-            .worker
-            .lock()
-            .expect("detached-job worker lock poisoned")
-            .take()
-        {
-            let _ = worker.join();
-        }
+    }
+
+    pub(crate) fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Acquire)
     }
 }
 
 impl Drop for JobTracker {
     fn drop(&mut self) {
-        self.shutdown();
+        self.begin_shutdown();
     }
 }
 

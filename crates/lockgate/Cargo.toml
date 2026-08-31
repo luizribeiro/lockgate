@@ -23,7 +23,7 @@ wit-parser.workspace = true
 [dev-dependencies]
 bytes = "1"
 http-body-util = "0.1"
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 trybuild = "1"
 wasm-encoder.workspace = true
 wit-component = { workspace = true, features = ["dummy-module"] }

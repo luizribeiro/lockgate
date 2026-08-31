@@ -125,6 +125,7 @@ async fn guest_http_client_reaches_only_its_granted_origin() {
         .unwrap_err();
     assert!(error.contains("HTTP request failed"), "{error}");
     assert_no_connection(blocked);
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -146,6 +147,7 @@ async fn base_url_setting_resolves_to_its_origin() {
     assert_eq!(response.status, 201);
     assert_eq!(response.body, RESPONSE_BODY);
     server.join().unwrap();
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -167,6 +169,7 @@ async fn first_byte_timeout_fails_a_stalled_request() {
     assert!(error.contains("HTTP request failed"), "{error}");
     assert!(error.to_ascii_lowercase().contains("timeout"), "{error}");
     server.join().unwrap();
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -188,4 +191,5 @@ async fn normal_request_succeeds_with_generous_timeouts() {
     assert_eq!(response.status, 201);
     assert_eq!(response.body, RESPONSE_BODY);
     server.join().unwrap();
+    host.shutdown().await;
 }

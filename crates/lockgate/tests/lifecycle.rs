@@ -280,6 +280,8 @@ async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
     assert_eq!(plugins, [&admitted]);
     assert_eq!(plugins[0].id(), PLUGIN_ID);
     assert_eq!(plugins[0].metadata(), &metadata());
+    drop(plugins);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -316,6 +318,8 @@ async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
     let error = other_host.client::<GuestRole>(&handle).unwrap_err();
     assert!(matches!(error, RoleError::WrongHost));
     assert!(error.to_string().contains("different Lockgate Host"));
+    other_host.shutdown().await;
+    host.shutdown().await;
 }
 
 #[tokio::test]

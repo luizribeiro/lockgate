@@ -66,4 +66,5 @@ async fn reexport_only_guest_builds_admits_and_invokes() {
 
     let guest = host.client::<ReexportedPluginRole>(&plugin).unwrap();
     assert_eq!(guest.value().await.unwrap(), 73);
+    host.shutdown().await;
 }

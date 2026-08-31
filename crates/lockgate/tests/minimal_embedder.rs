@@ -77,4 +77,5 @@ async fn minimal_embedder_calls_a_greeter() {
         .await
         .unwrap();
     assert_eq!(output, "Hello, world!");
+    host.shutdown().await;
 }

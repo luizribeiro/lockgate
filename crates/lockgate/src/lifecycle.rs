@@ -595,9 +595,9 @@ impl<S: CallContext> HostBuilder<S> {
 
     /// Finishes configuration and transfers admitted plugins into a steady-state Host.
     ///
-    /// Dropping the returned Host blocks the calling thread until its detached
-    /// jobs have been aborted and awaited. On an async runtime, perform that
-    /// drop in a blocking-safe context such as [`tokio::task::spawn_blocking`].
+    /// Call [`Host::shutdown`] to abort and await detached jobs without blocking
+    /// the calling thread. Dropping the returned Host only initiates best-effort
+    /// shutdown and does not wait for detached jobs to finish.
     pub fn finish(self) -> Host<S> {
         Host {
             id: self.id,
@@ -673,9 +673,9 @@ fn validate_http_egress_grant(
 
 /// Steady-state owner of the execution engine and admitted plugins.
 ///
-/// Dropping a Host blocks the calling thread until all detached jobs have been
-/// aborted and awaited. On an async runtime, drop it in a blocking-safe context
-/// such as [`tokio::task::spawn_blocking`].
+/// Call [`Host::shutdown`] to abort and await all detached jobs without blocking
+/// the calling thread. Dropping a Host only initiates best-effort shutdown and
+/// lets the detached-job supervisor finish in the background.
 pub struct Host<S: CallContext> {
     id: HostId,
     #[allow(
@@ -694,11 +694,21 @@ pub struct Host<S: CallContext> {
 
 impl<S: CallContext> Drop for Host<S> {
     fn drop(&mut self) {
-        self.jobs.shutdown();
+        let shutdown_started = self.jobs.is_shutting_down();
+        self.jobs.begin_shutdown();
+        debug_assert!(
+            shutdown_started || std::thread::panicking(),
+            "Host dropped without calling shutdown(); call Host::shutdown().await to tear down detached jobs"
+        );
     }
 }
 
 impl<S: CallContext> Host<S> {
+    /// Aborts and awaits all detached jobs without blocking the calling thread.
+    pub async fn shutdown(self) {
+        self.jobs.shutdown().await;
+    }
+
     /// Iterates over admitted plugins in admission order.
     pub fn plugins(&self) -> impl Iterator<Item = &PluginHandle> {
         self.plugins.iter().map(|plugin| &plugin.handle)

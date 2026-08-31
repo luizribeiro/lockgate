@@ -113,6 +113,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             .await?;
         println!("stats fan-out: {} -> {result}", plugin.id());
     }
+    host.shutdown().await;
     Ok(())
 }
 

@@ -70,4 +70,5 @@ async fn mapped_shared_type_builds_admits_and_round_trips() {
 
     let guest = host.client::<WithReuseRole>(&plugin).unwrap();
     assert_eq!(guest.round_trip(42).await.unwrap(), 42);
+    host.shutdown().await;
 }

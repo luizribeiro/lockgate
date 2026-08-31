@@ -623,6 +623,7 @@ async fn cross_capability_mixed_methods_deny_independently_after_interface_wirin
             imports.state.body_calls.mixed_admin.load(Ordering::SeqCst),
             usize::from(admin_result != "denied")
         );
+        host.shutdown().await;
     }
 }
 
@@ -721,6 +722,7 @@ async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
     );
     assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 2);
     assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -740,6 +742,7 @@ async fn argument_resource_guard_executes_the_normalized_checked_resource() {
     );
     assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 2);
     assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -769,6 +772,7 @@ async fn created_by_caller_guards_cover_only_the_callers_own_vms() {
     assert_eq!(guest.destroy(call(), "gpu-a").await.unwrap(), "ok");
     assert_eq!(guest.destroy(call(), "gpu-b").await.unwrap(), "denied");
     assert_eq!(imports.state.body_calls.destroy.load(Ordering::SeqCst), 1);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -795,6 +799,7 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
             .load(Ordering::SeqCst),
         1
     );
+    host.shutdown().await;
 
     let allowed_imports = Imports::default();
     let needs = NeedsManifest::new(
@@ -813,6 +818,7 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
             .load(Ordering::SeqCst),
         1
     );
+    host.shutdown().await;
 }
 
 mod mismatched_slot {

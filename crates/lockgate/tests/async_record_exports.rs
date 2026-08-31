@@ -62,4 +62,5 @@ async fn async_export_with_params_and_rich_result_round_trips() {
         .unwrap()
         .unwrap_err();
     assert_eq!(error, "prompt must not be empty");
+    host.shutdown().await;
 }

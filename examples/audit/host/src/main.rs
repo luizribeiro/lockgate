@@ -85,6 +85,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     for line in lines.lock().unwrap().iter() {
         println!("{line}");
     }
+    host.shutdown().await;
     Ok(())
 }
 

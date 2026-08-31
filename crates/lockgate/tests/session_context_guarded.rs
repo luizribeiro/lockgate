@@ -350,6 +350,7 @@ async fn session_golden_table_and_grant_matrix_use_the_generated_guard_path() {
                 .filter(|row| row.allowed[decision_column])
                 .count()
         );
+        host.shutdown().await;
     }
 }
 
@@ -364,4 +365,5 @@ async fn absent_call_context_session_uses_the_async_resolution_error_path() {
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 1);
     assert_eq!(imports.calls.reads.load(Ordering::SeqCst), 0);
+    host.shutdown().await;
 }

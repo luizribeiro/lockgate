@@ -109,7 +109,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!("plugin calls returned: {index}; {backup}");
 
     tokio::time::sleep(DELIVERY_WINDOW).await;
-    tokio::task::spawn_blocking(move || drop(host)).await?;
+    host.shutdown().await;
     Ok(())
 }
 

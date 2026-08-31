@@ -105,6 +105,7 @@ async fn exotic_values_and_shared_records_round_trip_through_both_clients() {
             .unwrap(),
         none,
     );
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -127,6 +128,7 @@ async fn top_level_result_keeps_its_wit_data_channel() {
             .await,
         Ok(Err(error)) if error == "rejected",
     ));
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -154,4 +156,5 @@ async fn rust_keyword_interfaces_use_their_sanitized_modules() {
             .unwrap(),
         17,
     );
+    host.shutdown().await;
 }

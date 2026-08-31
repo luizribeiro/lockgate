@@ -226,6 +226,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     for line in lines {
         println!("{line}");
     }
+    host.shutdown().await;
     Ok(())
 }
 

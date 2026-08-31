@@ -196,6 +196,7 @@ async fn handwritten_imports_receive_data_and_clone_per_call() {
     assert_eq!(guest.call(42).await.unwrap(), 42);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(clones.load(Ordering::SeqCst), 2);
+    host.shutdown().await;
 }
 
 async fn host_with_call_limit(
@@ -242,6 +243,7 @@ async fn host_import_call_limit_stops_before_the_over_limit_call() {
         CallError::HostImportCallLimitExceeded { limit } if limit == LIMIT
     ));
     assert_eq!(calls.load(Ordering::SeqCst), LIMIT as usize);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -253,6 +255,7 @@ async fn host_import_call_counter_resets_for_each_under_limit_invocation() {
     assert_eq!(guest.call_many(41, LIMIT as u32 - 1).await.unwrap(), 41);
     assert_eq!(guest.call_many(42, LIMIT as u32 - 1).await.unwrap(), 42);
     assert_eq!(calls.load(Ordering::SeqCst), (LIMIT as usize - 1) * 2);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -263,4 +266,5 @@ async fn zero_host_import_call_limit_allows_many_calls() {
 
     assert_eq!(guest.call_many(42, CALLS).await.unwrap(), 42);
     assert_eq!(calls.load(Ordering::SeqCst), CALLS as usize);
+    host.shutdown().await;
 }

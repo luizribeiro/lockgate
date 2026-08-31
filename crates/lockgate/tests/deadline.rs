@@ -180,6 +180,7 @@ async fn blocking_guest_returns_deadline_exceeded() {
         error,
         CallError::DeadlineExceeded { deadline: expired } if expired == deadline
     ));
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -200,6 +201,7 @@ async fn compute_bound_guest_returns_deadline_exceeded() {
         ),
         "unexpected call error: {error:?}"
     );
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -213,4 +215,5 @@ async fn fast_guest_succeeds_with_a_generous_deadline() {
         .unwrap();
 
     assert_eq!(value, 42);
+    host.shutdown().await;
 }

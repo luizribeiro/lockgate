@@ -282,6 +282,7 @@ async fn detached_job_quota_recovers_after_success() {
     assert!(!recovered.starts_with("error:"));
     control.wait_started().await;
     assert!(control.quota_errors.load(Ordering::SeqCst) >= 1);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -307,6 +308,7 @@ async fn failed_job_reports_attribution_and_releases_capacity() {
 
     assert!(!client.start(NEVER).await.unwrap().starts_with("error:"));
     control.wait_started().await;
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -320,14 +322,17 @@ async fn panicking_job_is_reported_to_the_error_sink() {
     control.wait_started().await;
     wait_for_failure(&failures).await;
 
-    let reports = failures.lock().unwrap();
-    assert_eq!(reports[0].plugin_id(), "detached-jobs");
-    assert_eq!(reports[0].job_id().to_string(), job_id);
-    assert!(reports[0].error().to_string().contains("panicked"));
+    {
+        let reports = failures.lock().unwrap();
+        assert_eq!(reports[0].plugin_id(), "detached-jobs");
+        assert_eq!(reports[0].job_id().to_string(), job_id);
+        assert!(reports[0].error().to_string().contains("panicked"));
+    }
+    host.shutdown().await;
 }
 
-#[tokio::test]
-async fn host_drop_aborts_and_awaits_detached_jobs() {
+#[tokio::test(flavor = "multi_thread")]
+async fn host_shutdown_aborts_and_awaits_detached_jobs() {
     let control = Control::new();
     let failures = Arc::new(Mutex::new(Vec::new()));
     let (host, plugin) = host(control.clone(), Arc::clone(&failures)).await;
@@ -337,14 +342,33 @@ async fn host_drop_aborts_and_awaits_detached_jobs() {
         control.wait_started().await;
     }
 
-    tokio::time::timeout(
-        TEST_TIMEOUT,
-        tokio::task::spawn_blocking(move || drop(host)),
-    )
-    .await
-    .expect("Host drop hung while awaiting an aborted detached job")
-    .unwrap();
+    tokio::time::timeout(TEST_TIMEOUT, host.shutdown())
+        .await
+        .expect("Host shutdown hung while awaiting an aborted detached job");
     assert!(control.aborted.load(Ordering::SeqCst));
+    assert!(failures.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn host_drop_with_a_live_detached_job_does_not_hang() {
+    let control = Control::new();
+    let failures = Arc::new(Mutex::new(Vec::new()));
+    let (host, plugin) = host(control.clone(), Arc::clone(&failures)).await;
+    {
+        let client = host.client::<DetachedRole>(&plugin).unwrap();
+        assert!(!client.start(NEVER).await.unwrap().starts_with("error:"));
+        control.wait_started().await;
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(host)));
+    assert_eq!(result.is_err(), cfg!(debug_assertions));
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        while !control.aborted.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Host drop did not initiate detached-job abortion");
     assert!(failures.lock().unwrap().is_empty());
 }
 
@@ -377,6 +401,7 @@ async fn dropping_a_call_cancels_its_import_but_not_its_detached_job() {
     control.release_one();
     control.wait_completed().await;
     assert!(!control.import_completed.load(Ordering::SeqCst));
+    host.shutdown().await;
 }
 
 async fn wait_for(semaphore: &Semaphore, message: &str) {

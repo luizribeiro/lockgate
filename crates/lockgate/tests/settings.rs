@@ -108,6 +108,7 @@ async fn guest_observes_exactly_the_validated_settings_json() {
 
     let guest = host.client::<SettingsRole>(&plugin).unwrap();
     assert_eq!(guest.observed_settings().await.unwrap(), expected);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -141,6 +142,7 @@ async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
         guest.typed_observed_settings().await.unwrap(),
         "from-host:guest-default"
     );
+    host.shutdown().await;
 }
 
 #[tokio::test]

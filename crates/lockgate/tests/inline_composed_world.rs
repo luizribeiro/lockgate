@@ -66,4 +66,5 @@ async fn inline_composed_world_builds_admits_and_invokes() {
 
     let guest = host.client::<InlineComposedRole>(&plugin).unwrap();
     assert_eq!(guest.run().await.unwrap(), 42);
+    host.shutdown().await;
 }

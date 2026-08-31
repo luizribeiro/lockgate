@@ -200,6 +200,7 @@ fn env_read_grant_exposes_only_the_named_host_variable() {
         );
         assert!(guest.variable_absent(UNGRANTED_NAME).await.unwrap());
         assert_eq!(guest.environment_count().await.unwrap(), 1);
+        host.shutdown().await;
     });
 }
 
@@ -218,6 +219,7 @@ fn optional_unset_env_read_grant_is_absent() {
 
         assert!(guest.variable_absent(OPTIONAL_NAME).await.unwrap());
         assert_eq!(guest.environment_count().await.unwrap(), 0);
+        host.shutdown().await;
     });
 }
 
@@ -239,6 +241,7 @@ fn optional_env_read_setting_may_be_absent() {
 
         assert!(guest.variable_absent(HOST_NAME).await.unwrap());
         assert_eq!(guest.environment_count().await.unwrap(), 0);
+        host.shutdown().await;
     });
 }
 
@@ -305,6 +308,7 @@ fn component_without_env_grants_has_an_empty_environment() {
 
         assert!(guest.variable_absent(HOST_ONLY_NAME).await.unwrap());
         assert_eq!(guest.environment_count().await.unwrap(), 0);
+        host.shutdown().await;
     });
 }
 
