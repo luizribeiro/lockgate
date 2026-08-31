@@ -63,15 +63,8 @@ pub(super) fn expand(
                     let resource = &identifiers.resource;
                     let wire = &identifiers.wire;
                     let (resolution, checked_resource) = match (target_kind, wire_type) {
-                        (TargetKind::Argument, Some(wire_type))
-                            if is_resource_handle(&wire_type) =>
-                        {
-                            return Err(syn::Error::new_spanned(
-                                wire_type,
-                                "`wire_type` on resource-handle targets is not yet supported",
-                            ));
-                        }
-                        (TargetKind::Argument, Some(wire_type)) => {
+                        (TargetKind::Argument | TargetKind::ResourceHandle, Some(wire_type)) => {
+                            let resource_handle = is_resource_handle(&wire_type);
                             let (resource_pattern, resource_ident, resource_type) =
                                 rewrite_argument_target(
                                     &target,
@@ -79,7 +72,20 @@ pub(super) fn expand(
                                     wire,
                                     *wire_type,
                                 )?;
-                            (
+                            let resolution = if resource_handle {
+                                quote! {
+                                    let #resolve_context = #context.resolve_context();
+                                    let #target_binding = &(#wire);
+                                    let #resource_pattern: #resource_type =
+                                        #lockgate::__private::resolve_scoped_resource_handle(
+                                            &*self,
+                                            &#resolve_context,
+                                            #target_binding,
+                                            #permission,
+                                        )
+                                        .await?;
+                                }
+                            } else {
                                 quote! {
                                     let #subject = #context.subject();
                                     let #target_binding = &(#wire);
@@ -91,20 +97,14 @@ pub(super) fn expand(
                                             #permission,
                                         )
                                         .await?;
-                                },
-                                quote!(#resource_ident),
-                            )
+                                }
+                            };
+                            (resolution, quote!(#resource_ident))
                         }
                         (TargetKind::ContextData, Some(wire_type)) => {
                             return Err(syn::Error::new_spanned(
                                 wire_type,
                                 "`wire_type` is not valid on a `.data()` target",
-                            ));
-                        }
-                        (TargetKind::ResourceHandle, Some(wire_type)) => {
-                            return Err(syn::Error::new_spanned(
-                                wire_type,
-                                "`wire_type` on resource-handle targets is not yet supported",
                             ));
                         }
                         (TargetKind::Argument | TargetKind::ContextData, None) => (
@@ -863,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn wire_type_is_rejected_on_resource_handle_targets() {
+    fn resource_wire_guard_matches_the_expansion_snapshot() {
         let implementation = syn::parse_quote! {
             impl sessions::HostSession for Imports {
                 #[lockgate::requires(
@@ -874,18 +874,19 @@ mod tests {
                 async fn send(
                     &mut self,
                     cx: lockgate::HostCtx<'_, Data>,
-                    session: CheckedSession,
+                    session: Arc<LiveSession>,
+                    message: String,
                 ) -> Result<(), Error> {
-                    self.send_message(cx, session).await
+                    self.deliver(&session, message).await
                 }
             }
         };
-
-        let error = super::expand(implementation, &quote!(::lockgate)).unwrap_err();
+        let expansion = super::expand(implementation, &quote!(::lockgate)).unwrap();
+        let expansion = prettyplease::unparse(&syn::parse2(expansion).unwrap());
 
         assert_eq!(
-            error.to_string(),
-            "`wire_type` on resource-handle targets is not yet supported"
+            expansion,
+            include_str!("snapshots/resource_wire_guarded_expansion.snap")
         );
     }
 }

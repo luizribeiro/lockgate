@@ -53,6 +53,14 @@ impl exports::test::resource_guarded::guest::Guest for Fixture {
         let session = test::resource_guarded::sessions::Session::new(true);
         render(session.send("ungranted"))
     }
+
+    fn checked_resource() -> String {
+        let allowed = test::resource_guarded::sessions::Session::new(true);
+        let denied = test::resource_guarded::sessions::Session::new(false);
+        let allowed = render(allowed.checked_send("hello"));
+        let denied = render(denied.checked_send("secret"));
+        alloc::format!("{allowed},{denied}")
+    }
 }
 
 fn render(result: Result<String, test::resource_guarded::sessions::SessionError>) -> String {

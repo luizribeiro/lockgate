@@ -33,6 +33,7 @@ mod permissions {
 }
 
 struct LiveSession {
+    identity: String,
     current: AtomicBool,
 }
 
@@ -59,8 +60,10 @@ impl From<ResourceLookupError> for ResolveError {
 
 #[derive(Default)]
 struct Calls {
+    next_session: AtomicUsize,
     resolutions: AtomicUsize,
     sends: AtomicUsize,
+    checked_sends: AtomicUsize,
 }
 
 #[derive(Clone, Default)]
@@ -121,8 +124,10 @@ impl ResolveScopedResourceHandle<SessionScope, sessions::Session, ()> for Import
 impl sessions::HostSession for Imports {
     #[lockgate::no_capability_required(reason = "resource acquisition carries no authority")]
     async fn new(&mut self, cx: HostCtx<'_, ()>, current: bool) -> Resource<sessions::Session> {
+        let identity = self.calls.next_session.fetch_add(1, Ordering::SeqCst);
         cx.resolve_context()
             .insert_resource(LiveSession {
+                identity: format!("live-session-{identity}"),
                 current: AtomicBool::new(current),
             })
             .expect("fixture resource table has capacity")
@@ -137,6 +142,21 @@ impl sessions::HostSession for Imports {
     ) -> Result<String, sessions::SessionError> {
         self.calls.sends.fetch_add(1, Ordering::SeqCst);
         Ok(message)
+    }
+
+    #[lockgate::requires(
+        permission = permissions::SEND,
+        target = session,
+        wire_type = Resource<sessions::Session>
+    )]
+    async fn checked_send(
+        &mut self,
+        _cx: HostCtx<'_, ()>,
+        session: Arc<LiveSession>,
+        message: String,
+    ) -> Result<String, sessions::SessionError> {
+        self.calls.checked_sends.fetch_add(1, Ordering::SeqCst);
+        Ok(format!("{}:{message}", session.identity))
     }
 
     #[lockgate::no_capability_required(reason = "test-only live membership mutation")]
@@ -165,11 +185,17 @@ impl sessions::HostSession for Imports {
 #[test]
 fn generated_resource_policy_uses_resource_companion_identity() {
     let methods = <Imports as sessions::HostSession>::__LOCKGATE_POLICY_METHODS;
-    assert_eq!(methods.len(), 4);
-    assert_eq!(sessions::__LockgateBinding::METHODS.len(), 4);
+    assert_eq!(methods.len(), 5);
+    assert_eq!(sessions::__LockgateBinding::METHODS.len(), 5);
     assert_eq!(methods[1].method().rust_name(), "send");
     assert_eq!(methods[1].method().wit_name(), "[method]session.send");
     assert_eq!(methods[1].classification().target(), Some("session"));
+    assert_eq!(methods[2].method().rust_name(), "checked_send");
+    assert_eq!(
+        methods[2].method().wit_name(),
+        "[method]session.checked-send"
+    );
+    assert_eq!(methods[2].classification().target(), Some("session"));
 
     lockgate::HostBuilder::new(Imports::default())
         .unwrap()
@@ -288,5 +314,23 @@ async fn acquiring_a_handle_grants_no_authority_to_later_methods() {
         "denied"
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 1);
+    assert_eq!(imports.calls.sends.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn resource_wire_guard_executes_the_checked_live_resource() {
+    let imports = Imports::default();
+    let (host, plugin) = runtime_host(imports.clone(), &needs_current()).await;
+
+    assert_eq!(
+        host.guest(&plugin)
+            .unwrap()
+            .checked_resource(call())
+            .await
+            .unwrap(),
+        "ok:live-session-0:hello,denied"
+    );
+    assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 2);
+    assert_eq!(imports.calls.checked_sends.load(Ordering::SeqCst), 1);
     assert_eq!(imports.calls.sends.load(Ordering::SeqCst), 0);
 }

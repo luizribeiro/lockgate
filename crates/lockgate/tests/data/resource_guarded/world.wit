@@ -9,6 +9,7 @@ interface sessions {
   resource session {
     constructor(current: bool);
     send: func(message: string) -> result<string, session-error>;
+    checked-send: func(message: string) -> result<string, session-error>;
     set-current: func(current: bool) -> result<_, session-error>;
     invalidate: func() -> result<_, session-error>;
   }
@@ -19,6 +20,7 @@ interface guest {
   repeated-call: func() -> string;
   stale-handle: func() -> string;
   acquire-without-authority: func() -> string;
+  checked-resource: func() -> string;
 }
 
 world fixture {
