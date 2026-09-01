@@ -204,6 +204,33 @@ impl<'a, S> HostCtx<'a, S> {
         }
     }
 
+    /// Requires one scoped permission to cover **every** resource in `resources`.
+    ///
+    /// Each element is authorized independently by the same relation as
+    /// [`require_scoped`] (some grant covers the element). Authorization holds only
+    /// when every element passes; the first uncovered element's denial is returned.
+    /// An empty slice is vacuously authorized — the method requested nothing.
+    ///
+    /// Use this for a host method whose argument is a list of independently
+    /// authorized elements (mounts, egress rules, file paths). It does NOT change
+    /// single-resource semantics: within one element, alternative witnesses remain
+    /// existential (see `require_scoped`).
+    pub fn require_scoped_each<T, R>(
+        &self,
+        permission: ScopedPermission<T>,
+        resources: &[R],
+    ) -> Result<(), PermissionDenied>
+    where
+        T: Scope,
+        <T as core::str::FromStr>::Err: Into<ScopeError>,
+        R: ScopedResource<T>,
+    {
+        for resource in resources {
+            self.require_scoped(permission, resource)?;
+        }
+        Ok(())
+    }
+
     /// Detaches a host-owned future so it may outlive this invocation.
     ///
     /// Detached jobs have no Lockgate wall-clock deadline: the host capability
@@ -322,6 +349,25 @@ mod tests {
             cx.require(vm::LIST_POOLS).unwrap_err().permission(),
             "list-pools"
         );
+    }
+
+    #[test]
+    fn host_context_enforces_scoped_grants_for_every_resource() {
+        let (plugin, jobs) = context(grants(false, &[InstanceScope::Pool("gpu".to_owned())]));
+        let cx = HostCtx::new(&(), &plugin, jobs, ResourceStore::__new());
+
+        let empty: [Vm; 0] = [];
+        assert_eq!(cx.require_scoped_each(vm::EXEC, &empty), Ok(()));
+
+        let granted = [Vm { pool: "gpu" }, Vm { pool: "gpu" }];
+        assert_eq!(cx.require_scoped_each(vm::EXEC, &granted), Ok(()));
+
+        let mixed = [Vm { pool: "gpu" }, Vm { pool: "cpu" }];
+        let denial = cx.require_scoped_each(vm::EXEC, &mixed).unwrap_err();
+        assert_eq!((denial.capability(), denial.permission()), ("vm", "exec"));
+
+        let ungranted = [Vm { pool: "cpu" }];
+        assert!(cx.require_scoped_each(vm::EXEC, &ungranted).is_err());
     }
 
     #[tokio::test]
