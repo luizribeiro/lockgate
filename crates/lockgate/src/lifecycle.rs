@@ -694,12 +694,7 @@ pub struct Host<S: CallContext> {
 
 impl<S: CallContext> Drop for Host<S> {
     fn drop(&mut self) {
-        let shutdown_started = self.jobs.is_shutting_down();
         self.jobs.begin_shutdown();
-        debug_assert!(
-            shutdown_started || std::thread::panicking(),
-            "Host dropped without calling shutdown(); call Host::shutdown().await to tear down detached jobs"
-        );
     }
 }
 

@@ -360,8 +360,7 @@ async fn host_drop_with_a_live_detached_job_does_not_hang() {
         control.wait_started().await;
     }
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(host)));
-    assert_eq!(result.is_err(), cfg!(debug_assertions));
+    drop(host);
     tokio::time::timeout(TEST_TIMEOUT, async {
         while !control.aborted.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;

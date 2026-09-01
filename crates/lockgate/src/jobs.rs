@@ -215,10 +215,6 @@ impl JobTracker {
         }
         let _ = self.sender.send(JobCommand::Shutdown);
     }
-
-    pub(crate) fn is_shutting_down(&self) -> bool {
-        self.shutting_down.load(Ordering::Acquire)
-    }
 }
 
 impl Drop for JobTracker {
