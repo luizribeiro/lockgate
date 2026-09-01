@@ -1,0 +1,22 @@
+package test:synthesized-host;
+
+interface exec {
+  run: func() -> u32;
+}
+
+interface state {
+  get: func() -> u32;
+}
+
+interface guest {
+  call: func() -> u32;
+}
+
+world host {
+  include base-imports;
+  export guest;
+}
+
+world base-imports {
+  import incoming: exec;
+}

@@ -7,7 +7,7 @@ struct Imports;
 lg::host_bindings!({
     path: "../../data/host_bindings",
     world: "fixture",
-    imports: Imports,
+    imports_type: Imports,
     data: CallData,
 });
 

@@ -21,7 +21,7 @@ struct Imports;
 lockgate::host_bindings!({
     path: "../wit",
     world: "plugin",
-    imports: Imports,
+    imports_type: Imports,
     data: (),
 });
 

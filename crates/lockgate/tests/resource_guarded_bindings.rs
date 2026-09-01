@@ -74,7 +74,7 @@ struct Imports {
 lockgate::host_bindings!({
     path: "tests/data/resource_guarded",
     world: "fixture",
-    imports: Imports,
+    imports_type: Imports,
     data: (),
 });
 

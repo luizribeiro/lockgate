@@ -176,7 +176,7 @@ impl ResolveScopedResource<InstanceScope, String> for Imports {
 lockgate::host_bindings!({
     path: "tests/data/guarded_bindings",
     world: "fixture",
-    imports: Imports,
+    imports_type: Imports,
     data: (),
 });
 
@@ -833,7 +833,7 @@ mod mismatched_slot {
     lockgate::host_bindings!({
         path: "tests/data/guarded_bindings",
         world: "vm-only",
-        imports: Imports,
+        imports_type: Imports,
         data: Data,
     });
 
@@ -892,7 +892,7 @@ mod unguarded {
     lockgate::host_bindings!({
         path: "tests/data/guarded_bindings",
         world: "vm-only",
-        imports: Imports,
+        imports_type: Imports,
         data: Data,
     });
 
@@ -941,7 +941,7 @@ mod reserved_namespace {
     lockgate::host_bindings!({
         path: "tests/data/reserved_host_import",
         world: "fixture",
-        imports: Imports,
+        imports_type: Imports,
         data: (),
     });
 

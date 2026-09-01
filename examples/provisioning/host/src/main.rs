@@ -126,7 +126,7 @@ impl ResolveScopedResource<InstanceScope, String> for Imports {
 lockgate::host_bindings!({
     path: "../wit",
     world: "plugin",
-    imports: Imports,
+    imports_type: Imports,
     data: (),
 });
 

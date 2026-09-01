@@ -10,11 +10,13 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
     FnArg, GenericArgument, Ident, Item, ItemTrait, LitStr, PathArguments, ReturnType, Token,
-    Type as SynType, TypeImplTrait, braced, parse::Parse, parse::ParseStream,
+    Type as SynType, TypeImplTrait, braced, bracketed, parse::Parse, parse::ParseStream,
+    punctuated::Punctuated,
 };
 use wasmtime_wit_bindgen::{FunctionConfig, FunctionFilter, FunctionFlags, Opts};
 use wit_parser::{
-    FunctionKind, InterfaceId, Resolve, Type, TypeDefKind, TypeId, TypeOwner, WorldItem,
+    FunctionKind, InterfaceId, PackageId, Resolve, Stability, Type, TypeDefKind, TypeId, TypeOwner,
+    WorldId, WorldItem, WorldKey,
 };
 
 mod capability;
@@ -117,9 +119,11 @@ pub fn derive_scope_repr(input: TokenStream) -> TokenStream {
 
 /// Generates typed application bindings for a WIT world.
 ///
-/// The macro takes `path` and `world` options. Worlds with imported interfaces
-/// also provide `imports` and `data` as a pair; `data` names the call-context
-/// type, and export-only worlds omit both.
+/// The macro takes required `path` and `world` options. The selected world is
+/// kept whole, including its imports, exports, and includes. An optional
+/// `imports` list adds same-package interfaces by name. When the resulting
+/// world imports any interfaces, `imports_type` names their implementation and
+/// `data` names the call-context type; worlds without imports omit both.
 /// Each imported WIT interface becomes a top-level Rust module with a `Host`
 /// trait; an implementation may use `async fn` methods whose second parameter
 /// is `HostCtx<'_, data>`.
@@ -135,9 +139,9 @@ pub fn derive_scope_repr(input: TokenStream) -> TokenStream {
 /// interface is also exported by the selected world; other cross-interface
 /// type references are rejected during macro expansion.
 ///
-/// The `imports` type is cloned once for each fresh plugin Store and once more
-/// for each overlapping host call. Shared application state should therefore
-/// live in explicitly shared fields such as `Arc<T>`.
+/// The `imports_type` value is cloned once for each fresh plugin Store and once
+/// more for each overlapping host call. Shared application state should
+/// therefore live in explicitly shared fields such as `Arc<T>`.
 #[proc_macro]
 pub fn host_bindings(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as HostBindingsInput);
@@ -149,6 +153,7 @@ pub fn host_bindings(input: TokenStream) -> TokenStream {
 struct HostBindingsInput {
     path: LitStr,
     world: LitStr,
+    added_imports: Vec<LitStr>,
     imports: Option<HostImportsConfig>,
 }
 
@@ -193,6 +198,7 @@ impl HostBindingsInput {
         let mut path = None;
         let mut world = None;
         let mut imports = None;
+        let mut imports_type = None;
         let mut data = None;
         while !input.is_empty() {
             let option: Ident = input.parse()?;
@@ -202,6 +208,14 @@ impl HostBindingsInput {
                 "world" => set_once(&mut world, input.parse()?, &option)?,
                 "imports" => set_once(
                     &mut imports,
+                    ParsedOption {
+                        value: parse_bracketed_imports(input)?,
+                        option: option.clone(),
+                    },
+                    &option,
+                )?,
+                "imports_type" => set_once(
+                    &mut imports_type,
                     ParsedOption {
                         value: input.parse()?,
                         option: option.clone(),
@@ -228,33 +242,63 @@ impl HostBindingsInput {
             }
         }
 
-        let imports = match (imports, data) {
-            (Some(imports), Some(data)) => Some(HostImportsConfig {
-                imports: imports.value,
-                data: data.value,
-                imports_option: imports.option,
-                data_option: data.option,
-            }),
-            (None, None) => None,
-            (Some(imports), None) => {
-                return Err(syn::Error::new(
-                    imports.option.span(),
-                    "lockgate::host_bindings! options `imports` and `data` must be specified together",
-                ));
-            }
-            (None, Some(data)) => {
-                return Err(syn::Error::new(
-                    data.option.span(),
-                    "lockgate::host_bindings! options `imports` and `data` must be specified together",
-                ));
-            }
-        };
+        let added_imports = imports.map(|imports| imports.value).unwrap_or_default();
+        validate_added_imports(&added_imports)?;
 
         Ok(Self {
             path: required(path, input, "path")?,
             world: required(world, input, "world")?,
-            imports,
+            added_imports,
+            imports: paired_import_config(imports_type, data, "imports_type")?,
         })
+    }
+}
+
+fn parse_bracketed_imports(input: ParseStream<'_>) -> syn::Result<Vec<LitStr>> {
+    let content;
+    bracketed!(content in input);
+    Punctuated::<LitStr, Token![,]>::parse_terminated(&content)
+        .map(|imports| imports.into_iter().collect())
+}
+
+fn validate_added_imports(imports: &[LitStr]) -> syn::Result<()> {
+    let mut names = BTreeSet::new();
+    for import in imports {
+        if !names.insert(import.value()) {
+            return Err(syn::Error::new_spanned(
+                import,
+                format!("duplicate added host import interface `{}`", import.value()),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn paired_import_config(
+    imports: Option<ParsedOption<SynType>>,
+    data: Option<ParsedOption<SynType>>,
+    imports_name: &str,
+) -> syn::Result<Option<HostImportsConfig>> {
+    match (imports, data) {
+        (Some(imports), Some(data)) => Ok(Some(HostImportsConfig {
+            imports: imports.value,
+            data: data.value,
+            imports_option: imports.option,
+            data_option: data.option,
+        })),
+        (None, None) => Ok(None),
+        (Some(imports), None) => Err(syn::Error::new(
+            imports.option.span(),
+            format!(
+                "lockgate::host_bindings! options `{imports_name}` and `data` must be specified together"
+            ),
+        )),
+        (None, Some(data)) => Err(syn::Error::new(
+            data.option.span(),
+            format!(
+                "lockgate::host_bindings! options `{imports_name}` and `data` must be specified together"
+            ),
+        )),
     }
 }
 
@@ -1215,6 +1259,78 @@ struct ExportedInterface {
     interface_name: String,
 }
 
+fn select_host_world(
+    resolve: &mut Resolve,
+    package: PackageId,
+    world: &LitStr,
+    imports: &[LitStr],
+) -> syn::Result<WorldId> {
+    let base = resolve
+        .select_world(&[package], Some(&world.value()))
+        .map_err(|error| syn::Error::new_spanned(world, error.to_string()))?;
+    if imports.is_empty() {
+        Ok(base)
+    } else {
+        add_host_imports(resolve, package, base, imports)
+    }
+}
+
+fn add_host_imports(
+    resolve: &mut Resolve,
+    package: PackageId,
+    base: WorldId,
+    imports: &[LitStr],
+) -> syn::Result<WorldId> {
+    let mut world = resolve.worlds[base].clone();
+    for import in imports {
+        let interface_name = import.value();
+        let Some(interface) = resolve.packages[package]
+            .interfaces
+            .get(&interface_name)
+            .copied()
+        else {
+            return Err(syn::Error::new_spanned(
+                import,
+                format!(
+                    "package `{}` has no interface named `{interface_name}`",
+                    resolve.packages[package].name
+                ),
+            ));
+        };
+        if world
+            .imports
+            .values()
+            .any(|item| matches!(item, WorldItem::Interface { id, .. } if *id == interface))
+        {
+            return Err(syn::Error::new_spanned(
+                import,
+                format!(
+                    "world `{}` already imports interface `{interface_name}`",
+                    world.name
+                ),
+            ));
+        }
+        world.imports.insert(
+            WorldKey::Interface(interface),
+            WorldItem::Interface {
+                id: interface,
+                stability: Stability::Unknown,
+                external_id: None,
+                docs: Default::default(),
+                span: Default::default(),
+            },
+        );
+    }
+    let mut name = "__lockgate-host".to_owned();
+    while resolve.packages[package].worlds.contains_key(&name) {
+        name.push('_');
+    }
+    world.name = name.clone();
+    let world = resolve.worlds.alloc(world);
+    resolve.packages[package].worlds.insert(name, world);
+    Ok(world)
+}
+
 fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
     let lockgate = lockgate_path(&input.path)?;
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_err(|error| {
@@ -1223,7 +1339,15 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
             format!("failed to locate package root: {error}"),
         )
     })?;
-    let source = Path::new(&manifest_dir).join(input.path.value());
+    expand_with(input, &lockgate, Path::new(&manifest_dir))
+}
+
+fn expand_with(
+    input: HostBindingsInput,
+    lockgate: &TokenStream2,
+    manifest_dir: &Path,
+) -> syn::Result<TokenStream2> {
+    let source = manifest_dir.join(input.path.value());
     let mut resolve = Resolve::new();
     resolve.all_features = true;
     let (package, wit_sources) = resolve.push_path(&source).map_err(|error| {
@@ -1233,30 +1357,29 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         )
     })?;
     let wit_source_guards = wit_source_guards(wit_sources.paths());
-    let world = resolve
-        .select_world(&[package], Some(&input.world.value()))
-        .map_err(|error| syn::Error::new_spanned(&input.world, error.to_string()))?;
+    let world = select_host_world(&mut resolve, package, &input.world, &input.added_imports)?;
+    let world_name = &input.world;
 
     let mut module_names = BTreeSet::new();
     let mut interfaces = Vec::new();
     for item in resolve.worlds[world].imports.values() {
         let WorldItem::Interface { id, .. } = item else {
             return Err(syn::Error::new_spanned(
-                &input.world,
+                world_name,
                 "host bindings require imports to be named WIT interfaces",
             ));
         };
         let interface = &resolve.interfaces[*id];
         let Some(name) = interface.name.as_deref() else {
             return Err(syn::Error::new_spanned(
-                &input.world,
+                world_name,
                 "host bindings do not support unnamed imported interfaces",
             ));
         };
         let public_module = format_ident!("{}", rust_ident(name));
         if !module_names.insert(public_module.to_string()) {
             return Err(syn::Error::new_spanned(
-                &input.world,
+                world_name,
                 format!("two imported interfaces map to module `{public_module}`"),
             ));
         }
@@ -1330,7 +1453,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         let public_module = format_ident!("{}", rust_ident(name));
         if !module_names.insert(public_module.to_string()) {
             return Err(syn::Error::new_spanned(
-                &input.world,
+                world_name,
                 format!("two WIT interfaces map to module `{public_module}`"),
             ));
         }
@@ -1357,10 +1480,10 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
     let generated = options.generate(&mut resolve, world);
     resolve.worlds[world].exports = world_exports;
     let generated =
-        generated.map_err(|error| syn::Error::new_spanned(&input.world, error.to_string()))?;
+        generated.map_err(|error| syn::Error::new_spanned(world_name, error.to_string()))?;
     let mut generated = syn::parse_file(&generated).map_err(|error| {
         syn::Error::new_spanned(
-            &input.world,
+            world_name,
             format!("failed to read generated Wasmtime bindings: {error}"),
         )
     })?;
@@ -1370,7 +1493,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
             let items = nested_module_items_mut(&mut generated.items, &interface.path).ok_or_else(
                 || {
                     syn::Error::new_spanned(
-                        &input.world,
+                        world_name,
                         format!(
                             "could not locate generated host interface `{}`",
                             interface.public_module
@@ -1386,14 +1509,14 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                 })
                 .ok_or_else(|| {
                     syn::Error::new_spanned(
-                        &input.world,
+                        world_name,
                         format!(
                             "generated interface `{}` has no host function trait",
                             interface.public_module
                         ),
                     )
                 })?;
-            let mut adapters = adapter_items(&host, interface, &lockgate)?;
+            let mut adapters = adapter_items(&host, interface, lockgate)?;
             for resource in &interface.resources {
                 let with_store = format_ident!("{}WithStore", resource.host_trait);
                 let host = items
@@ -1404,7 +1527,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                     })
                     .ok_or_else(|| {
                         syn::Error::new_spanned(
-                            &input.world,
+                            world_name,
                             format!(
                                 "generated interface `{}` has no `{with_store}` resource trait",
                                 interface.public_module
@@ -1412,7 +1535,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
                         )
                     })?;
                 adapters.extend(resource_adapter_items(
-                    &host, interface, resource, &lockgate,
+                    &host, interface, resource, lockgate,
                 )?);
             }
             items.extend(adapters);
@@ -1471,7 +1594,7 @@ fn expand(input: HostBindingsInput) -> syn::Result<TokenStream2> {
         .collect::<BTreeMap<_, _>>();
     let export_modules = exported_interfaces
         .iter()
-        .map(|interface| export_module(&resolve, interface, &exported_modules, &lockgate))
+        .map(|interface| export_module(&resolve, interface, &exported_modules, lockgate))
         .collect::<syn::Result<Vec<_>>>()?;
     let host_imports_impl = input.imports.as_ref().map(|config| {
         let imports = &config.imports;
@@ -1581,16 +1704,17 @@ fn validate_import_options(
     input: &HostBindingsInput,
     has_imported_interfaces: bool,
 ) -> syn::Result<()> {
+    let world = &input.world;
     match (&input.imports, has_imported_interfaces) {
         (None, true) => Err(syn::Error::new_spanned(
-            &input.world,
-            "lockgate::host_bindings! requires `imports` and `data` for a world that imports interfaces",
+            world,
+            "lockgate::host_bindings! requires `imports_type` and `data` for a world that imports interfaces",
         )),
         (Some(config), false) => Err(syn::Error::new(
             config.option_span(),
             format!(
-                "lockgate::host_bindings! world `{}` imports no interfaces; remove the `imports` and `data` options",
-                input.world.value()
+                "lockgate::host_bindings! world `{}` imports no interfaces; remove the `imports_type` and `data` options",
+                world.value()
             ),
         )),
         _ => Ok(()),
@@ -2161,7 +2285,12 @@ fn lockgate_policy_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2>
 mod tests {
     use std::path::Path;
 
-    use super::{HostBindingsInput, Resolve, validate_import_options, wit_source_guards};
+    use quote::quote;
+
+    use super::{
+        HostBindingsInput, Resolve, add_host_imports, expand_with, validate_import_options,
+        wit_source_guards,
+    };
 
     #[test]
     fn guards_every_wit_source_so_edits_invalidate_the_crate() {
@@ -2203,21 +2332,74 @@ mod tests {
     }
 
     #[test]
-    fn accepts_import_options_as_a_pair_or_not_at_all() {
-        let imports: HostBindingsInput =
-            syn::parse_str(r#"{ path: "wit", world: "plugin", imports: Imports, data: Data }"#)
-                .unwrap();
-        assert!(imports.imports.is_some());
+    fn parses_a_world_with_optional_added_imports() {
+        let input: HostBindingsInput = syn::parse_str(
+            r#"{
+                path: "wit",
+                world: "host",
+                imports: ["exec", "state"],
+                imports_type: Imports,
+                data: Data,
+            }"#,
+        )
+        .unwrap();
 
-        let exports: HostBindingsInput =
+        assert_eq!(input.world.value(), "host");
+        assert_eq!(input.added_imports.len(), 2);
+        assert_eq!(input.added_imports[0].value(), "exec");
+        assert_eq!(input.added_imports[1].value(), "state");
+        assert!(input.imports.is_some());
+
+        let plain: HostBindingsInput =
             syn::parse_str(r#"{ path: "wit", world: "plugin" }"#).unwrap();
-        assert!(exports.imports.is_none());
+        assert!(plain.added_imports.is_empty());
+        assert!(plain.imports.is_none());
     }
 
     #[test]
-    fn rejects_half_of_the_import_option_pair() {
+    fn rejects_exports_as_an_unknown_option_and_requires_world() {
+        let exports = syn::parse_str::<HostBindingsInput>(r#"{ path: "wit", exports: "host" }"#)
+            .err()
+            .unwrap();
+        assert_eq!(
+            exports.to_string(),
+            "unsupported lockgate::host_bindings! option `exports`"
+        );
+
+        let neither = syn::parse_str::<HostBindingsInput>(r#"{ path: "wit" }"#)
+            .err()
+            .unwrap();
+        assert!(
+            neither
+                .to_string()
+                .ends_with("lockgate::host_bindings! requires a `world` option")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_added_imports() {
+        let error = syn::parse_str::<HostBindingsInput>(
+            r#"{
+                path: "wit",
+                world: "host",
+                imports: ["exec", "exec"],
+                imports_type: Imports,
+                data: Data,
+            }"#,
+        )
+        .err()
+        .unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "duplicate added host import interface `exec`"
+        );
+    }
+
+    #[test]
+    fn rejects_half_of_the_import_implementation_pair() {
         for options in [
-            r#"{ path: "wit", world: "plugin", imports: Imports }"#,
+            r#"{ path: "wit", world: "plugin", imports_type: Imports }"#,
             r#"{ path: "wit", world: "plugin", data: Data }"#,
         ] {
             let error = match syn::parse_str::<HostBindingsInput>(options) {
@@ -2225,22 +2407,148 @@ mod tests {
                 Err(error) => error,
             };
             assert!(error.to_string().ends_with(
-                "lockgate::host_bindings! options `imports` and `data` must be specified together"
+                "lockgate::host_bindings! options `imports_type` and `data` must be specified together"
             ));
         }
     }
 
     #[test]
-    fn rejects_import_options_for_a_world_without_imported_interfaces() {
+    fn requires_import_implementation_exactly_when_the_world_has_imports() {
+        let without_implementation: HostBindingsInput =
+            syn::parse_str(r#"{ path: "wit", world: "host", imports: ["state"] }"#).unwrap();
+        let error = validate_import_options(&without_implementation, true).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "lockgate::host_bindings! requires `imports_type` and `data` for a world that imports interfaces"
+        );
+
         let input: HostBindingsInput = syn::parse_str(
-            r#"{ path: "wit", world: "exports-only", imports: Imports, data: Data }"#,
+            r#"{ path: "wit", world: "exports-only", imports_type: Imports, data: Data }"#,
         )
         .unwrap();
         let error = validate_import_options(&input, false).unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "lockgate::host_bindings! world `exports-only` imports no interfaces; remove the `imports` and `data` options"
+            "lockgate::host_bindings! world `exports-only` imports no interfaces; remove the `imports_type` and `data` options"
         );
+    }
+
+    #[test]
+    fn added_imports_preserve_the_base_world() {
+        let wit = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthesized-host/wit");
+        let mut resolve = Resolve::new();
+        let (package, _) = resolve.push_path(&wit).unwrap();
+        let base = resolve.select_world(&[package], Some("host")).unwrap();
+        // Resolution flattens includes, so seed this metadata to exercise cloning it.
+        resolve.worlds[base]
+            .includes
+            .push(wit_parser::WorldInclude {
+                stability: super::Stability::Unknown,
+                id: base,
+                names: Vec::new(),
+                span: Default::default(),
+            });
+        let base_imports = resolve.worlds[base]
+            .imports
+            .iter()
+            .map(|(key, item)| (resolve.name_world_key(key), interface_id(item)))
+            .collect::<Vec<_>>();
+        let base_exports = resolve.worlds[base]
+            .exports
+            .iter()
+            .map(|(key, item)| (resolve.name_world_key(key), interface_id(item)))
+            .collect::<Vec<_>>();
+        let base_includes = resolve.worlds[base].includes.clone();
+        assert!(!base_imports.is_empty());
+        assert!(!base_exports.is_empty());
+        assert!(!base_includes.is_empty());
+        let imports = [syn::parse_str(r#""state""#).unwrap()];
+        let extended = add_host_imports(&mut resolve, package, base, &imports).unwrap();
+
+        let extended_imports = resolve.worlds[extended]
+            .imports
+            .iter()
+            .map(|(key, item)| (resolve.name_world_key(key), interface_id(item)))
+            .collect::<Vec<_>>();
+        let extended_exports = resolve.worlds[extended]
+            .exports
+            .iter()
+            .map(|(key, item)| (resolve.name_world_key(key), interface_id(item)))
+            .collect::<Vec<_>>();
+
+        assert!(
+            base_imports
+                .iter()
+                .all(|import| extended_imports.contains(import))
+        );
+        assert_eq!(extended_imports.len(), base_imports.len() + 1);
+        assert!(
+            extended_imports
+                .iter()
+                .any(|(name, _)| name.ends_with("/state"))
+        );
+        assert_eq!(extended_exports, base_exports);
+        assert_eq!(resolve.worlds[extended].includes, base_includes);
+    }
+
+    fn interface_id(item: &super::WorldItem) -> super::InterfaceId {
+        let super::WorldItem::Interface { id, .. } = item else {
+            panic!("test world item is not an interface");
+        };
+        *id
+    }
+
+    #[test]
+    fn rejects_unknown_and_already_imported_additions() {
+        let wit = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthesized-host/wit");
+        let mut resolve = Resolve::new();
+        let (package, _) = resolve.push_path(&wit).unwrap();
+        let base = resolve.select_world(&[package], Some("host")).unwrap();
+
+        let unknown = [syn::parse_str(r#""missing""#).unwrap()];
+        let error = add_host_imports(&mut resolve, package, base, &unknown).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package `test:synthesized-host` has no interface named `missing`"
+        );
+
+        let existing = [syn::parse_str(r#""exec""#).unwrap()];
+        let error = add_host_imports(&mut resolve, package, base, &existing).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "world `host` already imports interface `exec`"
+        );
+    }
+
+    #[test]
+    fn base_and_added_imports_are_both_expanded() {
+        let added: HostBindingsInput = syn::parse_str(
+            r#"{
+                path: "tests/fixtures/synthesized-host/wit",
+                world: "host",
+                imports: ["state"],
+                imports_type: Imports,
+                data: Data,
+            }"#,
+        )
+        .unwrap();
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let expansion = syn::parse2::<syn::File>(
+            expand_with(added, &quote!(::lockgate), manifest_dir).unwrap(),
+        )
+        .unwrap();
+        let public_modules = expansion
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Mod(module) => Some(module.ident.to_string()),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert!(public_modules.contains("exec"));
+        assert!(public_modules.contains("state"));
+        assert!(public_modules.contains("guest"));
     }
 }

@@ -81,7 +81,7 @@ impl Control {
 lockgate::host_bindings!({
     path: "tests/data/detached_jobs",
     world: "fixture",
-    imports: Imports,
+    imports_type: Imports,
     data: (),
 });
 

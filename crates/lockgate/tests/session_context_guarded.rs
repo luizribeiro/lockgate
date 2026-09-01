@@ -174,7 +174,7 @@ impl ResolveScopedResource<SessionScope, Option<SessionId>> for Imports {
 lockgate::host_bindings!({
     path: "tests/data/session_context",
     world: "fixture",
-    imports: Imports,
+    imports_type: Imports,
     data: SageCall,
 });
 
