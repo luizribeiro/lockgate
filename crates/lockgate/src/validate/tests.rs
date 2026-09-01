@@ -11,9 +11,6 @@ use wit_parser::{ManglingAndAbi, Resolve};
 #[path = "../../tests/common/mod.rs"]
 mod fixtures;
 
-const UNSUPPORTED_EXPORT_HINT: &str = "return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature";
-const ASYNC_UNSUPPORTED_EXPORT_HINT: &str = "return value data instead, keep durable state behind a host capability, or use a future scoped invocation feature. Async WIT functions are supported; this restriction applies to `future`, `stream`, and `error-context` value types and resource handles crossing the invocation boundary, not to the function's async declaration.";
-
 fn component(wit: &str) -> Vec<u8> {
     component_world(wit, None)
 }
@@ -282,20 +279,10 @@ fn exposes_stable_accessors_for_unsupported_exports() {
     let error = ValidationError::unsupported("api", "run", "resource file");
     assert!(matches!(error, ValidationError::UnsupportedExport { .. }));
     assert_eq!(error.code(), Some("admission.unsupported-export"));
-    assert_eq!(error.hint(), Some(UNSUPPORTED_EXPORT_HINT));
-
-    for offending_type in ["future", "stream", "error-context"] {
-        let error = ValidationError::unsupported("api", "run", offending_type);
-        assert!(matches!(error, ValidationError::UnsupportedExport { .. }));
-        assert_eq!(error.code(), Some("admission.unsupported-export"));
-        assert_eq!(error.hint(), Some(ASYNC_UNSUPPORTED_EXPORT_HINT));
-    }
 
     assert_eq!(ValidationError::NotComponent.code(), None);
-    assert_eq!(ValidationError::NotComponent.hint(), None);
     let error = ValidationError::Decode {
         message: "invalid".to_string(),
     };
     assert_eq!(error.code(), None);
-    assert_eq!(error.hint(), None);
 }

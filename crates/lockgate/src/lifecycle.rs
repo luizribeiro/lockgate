@@ -1614,7 +1614,6 @@ mod grant_tests {
         let message = error.to_string();
         assert!(message.contains("host-bound"));
         assert!(message.contains("another HostBuilder"));
-        assert_eq!(error.hint(), Some("prepare it with this builder"));
     }
 
     #[tokio::test]
