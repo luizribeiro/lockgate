@@ -121,9 +121,22 @@ pub fn derive_scope_repr(input: TokenStream) -> TokenStream {
 ///
 /// The macro takes required `path` and `world` options. The selected world is
 /// kept whole, including its imports, exports, and includes. An optional
-/// `imports` list adds same-package interfaces by name. When the resulting
-/// world imports any interfaces, `imports_type` names their implementation and
-/// `data` names the call-context type; worlds without imports omit both.
+/// `imports` list adds same-package interfaces by name. An added import may be
+/// bare or carry a consumer crate feature gate:
+///
+/// ```text
+/// imports: [
+///     "always-on",
+///     { interface: "exec", feature: "exec" },
+/// ]
+/// ```
+///
+/// Proc macros cannot observe the consumer crate's active Cargo features, so
+/// an annotated entry emits `#[cfg(feature = "...")]` on that interface's
+/// generated bindings instead of evaluating the feature during expansion.
+/// Base-world imports are always generated. When the resulting world imports
+/// any interfaces, `imports_type` names their implementation and `data` names
+/// the call-context type; worlds without imports omit both.
 /// Each imported WIT interface becomes a top-level Rust module with a `Host`
 /// trait; an implementation may use `async fn` methods whose second parameter
 /// is `HostCtx<'_, data>`.
@@ -153,8 +166,13 @@ pub fn host_bindings(input: TokenStream) -> TokenStream {
 struct HostBindingsInput {
     path: LitStr,
     world: LitStr,
-    added_imports: Vec<LitStr>,
+    added_imports: Vec<AddedImport>,
     imports: Option<HostImportsConfig>,
+}
+
+struct AddedImport {
+    interface: LitStr,
+    feature: Option<LitStr>,
 }
 
 struct HostImportsConfig {
@@ -194,6 +212,13 @@ impl Parse for HostBindingsInput {
 }
 
 impl HostBindingsInput {
+    fn import_feature(&self, interface: &str) -> Option<&LitStr> {
+        self.added_imports
+            .iter()
+            .find(|entry| entry.interface.value() == interface)
+            .and_then(|entry| entry.feature.as_ref())
+    }
+
     fn parse_options(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut path = None;
         let mut world = None;
@@ -254,24 +279,65 @@ impl HostBindingsInput {
     }
 }
 
-fn parse_bracketed_imports(input: ParseStream<'_>) -> syn::Result<Vec<LitStr>> {
+fn parse_bracketed_imports(input: ParseStream<'_>) -> syn::Result<Vec<AddedImport>> {
     let content;
     bracketed!(content in input);
-    Punctuated::<LitStr, Token![,]>::parse_terminated(&content)
+    Punctuated::<AddedImport, Token![,]>::parse_terminated(&content)
         .map(|imports| imports.into_iter().collect())
 }
 
-fn validate_added_imports(imports: &[LitStr]) -> syn::Result<()> {
+fn validate_added_imports(imports: &[AddedImport]) -> syn::Result<()> {
     let mut names = BTreeSet::new();
     for import in imports {
-        if !names.insert(import.value()) {
+        if !names.insert(import.interface.value()) {
             return Err(syn::Error::new_spanned(
-                import,
-                format!("duplicate added host import interface `{}`", import.value()),
+                &import.interface,
+                format!(
+                    "duplicate added host import interface `{}`",
+                    import.interface.value()
+                ),
             ));
         }
     }
     Ok(())
+}
+
+impl Parse for AddedImport {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        if input.peek(LitStr) {
+            return Ok(Self {
+                interface: input.parse()?,
+                feature: None,
+            });
+        }
+
+        let content;
+        braced!(content in input);
+        let mut interface = None;
+        let mut feature = None;
+        while !content.is_empty() {
+            let field: Ident = content.parse()?;
+            content.parse::<Token![:]>()?;
+            match field.to_string().as_str() {
+                "interface" => set_once(&mut interface, content.parse()?, &field)?,
+                "feature" => set_once(&mut feature, content.parse()?, &field)?,
+                name => {
+                    return Err(syn::Error::new(
+                        field.span(),
+                        format!("unsupported added import field `{name}`"),
+                    ));
+                }
+            }
+            if !content.is_empty() {
+                content.parse::<Token![,]>()?;
+            }
+        }
+
+        Ok(Self {
+            interface: required(interface, &content, "interface")?,
+            feature: Some(required(feature, &content, "feature")?),
+        })
+    }
 }
 
 fn paired_import_config(
@@ -1236,6 +1302,7 @@ struct ImportedInterface {
     path: Vec<Ident>,
     public_module: Ident,
     public_types: Vec<Ident>,
+    feature: Option<LitStr>,
     identity: String,
     version: Option<String>,
     methods: Vec<ImportedMethod>,
@@ -1263,7 +1330,7 @@ fn select_host_world(
     resolve: &mut Resolve,
     package: PackageId,
     world: &LitStr,
-    imports: &[LitStr],
+    imports: &[AddedImport],
 ) -> syn::Result<WorldId> {
     let base = resolve
         .select_world(&[package], Some(&world.value()))
@@ -1271,15 +1338,20 @@ fn select_host_world(
     if imports.is_empty() {
         Ok(base)
     } else {
-        add_host_imports(resolve, package, base, imports)
+        add_host_imports(
+            resolve,
+            package,
+            base,
+            imports.iter().map(|entry| &entry.interface),
+        )
     }
 }
 
-fn add_host_imports(
+fn add_host_imports<'a>(
     resolve: &mut Resolve,
     package: PackageId,
     base: WorldId,
-    imports: &[LitStr],
+    imports: impl IntoIterator<Item = &'a LitStr>,
 ) -> syn::Result<WorldId> {
     let mut world = resolve.worlds[base].clone();
     for import in imports {
@@ -1434,6 +1506,7 @@ fn expand_with(
             path: interface_module_path(&resolve, *id),
             public_module,
             public_types,
+            feature: input.import_feature(name).cloned(),
             identity,
             version,
             methods,
@@ -1487,11 +1560,23 @@ fn expand_with(
             format!("failed to read generated Wasmtime bindings: {error}"),
         )
     })?;
+    // Wasmtime's unused aggregate linker repeats every import in generic bounds,
+    // which cannot be cfg-gated; Lockgate registers the leaf interfaces below.
+    if interfaces
+        .iter()
+        .any(|interface| interface.feature.is_some())
+        && !remove_generated_world_linker(&mut generated.items)
+    {
+        return Err(syn::Error::new_spanned(
+            world_name,
+            "could not locate generated aggregate world linker",
+        ));
+    }
 
     if input.imports.is_some() {
         for interface in &interfaces {
-            let items = nested_module_items_mut(&mut generated.items, &interface.path).ok_or_else(
-                || {
+            let module =
+                nested_module_mut(&mut generated.items, &interface.path).ok_or_else(|| {
                     syn::Error::new_spanned(
                         world_name,
                         format!(
@@ -1499,8 +1584,16 @@ fn expand_with(
                             interface.public_module
                         ),
                     )
-                },
-            )?;
+                })?;
+            if let Some(feature) = &interface.feature {
+                module
+                    .attrs
+                    .push(syn::parse_quote!(#[cfg(feature = #feature)]));
+            }
+            let (_, items) = module
+                .content
+                .as_mut()
+                .expect("generated host interface module is inline");
             let host = items
                 .iter()
                 .find_map(|item| match item {
@@ -1559,6 +1652,10 @@ fn expand_with(
                 .iter()
                 .map(|interface| {
                     let module = &interface.public_module;
+                    let cfg = interface
+                        .feature
+                        .iter()
+                        .map(|feature| quote!(#[cfg(feature = #feature)]));
                     let path = &interface.path;
                     let raw = quote!(super::__lockgate_host_bindings::#(#path)::*);
                     let type_reexports = interface
@@ -1576,6 +1673,7 @@ fn expand_with(
                         }
                     });
                     quote! {
+                        #(#cfg)*
                         pub mod #module {
                             #[doc(hidden)]
                             pub use #raw::__LockgateBinding;
@@ -1599,17 +1697,43 @@ fn expand_with(
     let host_imports_impl = input.imports.as_ref().map(|config| {
         let imports = &config.imports;
         let data = &config.data;
-        let host_bounds = interfaces.iter().map(|interface| {
+        let host_bounds = interfaces
+            .iter()
+            .filter(|interface| interface.feature.is_none())
+            .map(|interface| {
+                let module = &interface.public_module;
+                let resources = interface
+                    .resources
+                    .iter()
+                    .map(|resource| &resource.host_trait);
+                quote!(#imports: #module::Host #( + #module::#resources )*,)
+            });
+        let host_requirements = interfaces.iter().filter_map(|interface| {
+            let feature = interface.feature.as_ref()?;
             let module = &interface.public_module;
+            let helper = format_ident!("__lockgate_require_{}_host", module);
             let resources = interface
                 .resources
                 .iter()
                 .map(|resource| &resource.host_trait);
-            quote!(#imports: #module::Host #( + #module::#resources )*,)
+            Some(quote! {
+                #[cfg(feature = #feature)]
+                fn #helper<T>()
+                where
+                    T: #module::Host #( + #module::#resources )*,
+                {}
+                #[cfg(feature = #feature)]
+                #helper::<#imports>();
+            })
         });
         let registrations = interfaces.iter().map(|interface| {
+            let cfg = interface
+                .feature
+                .iter()
+                .map(|feature| quote!(#[cfg(feature = #feature)]));
             let path = &interface.path;
             quote! {
+                #(#cfg)*
                 if interfaces.iter().any(|interface| {
                     __lockgate_host_bindings::#(#path)::*::__LockgateBinding::INTERFACE
                         .matches_import(interface)
@@ -1619,6 +1743,10 @@ fn expand_with(
             }
         });
         let policy_interfaces = interfaces.iter().map(|interface| {
+            let cfg = interface
+                .feature
+                .iter()
+                .map(|feature| quote!(#[cfg(feature = #feature)]));
             let path = &interface.path;
             let resource_parts = interface.resources.iter().map(|resource| {
                 let host = &resource.host_trait;
@@ -1629,6 +1757,7 @@ fn expand_with(
                 }
             });
             quote! {
+                #(#cfg)*
                 #lockgate::__private::validate_interface_policy_parts(
                     __lockgate_host_bindings::#(#path)::*::__LockgateBinding::INTERFACE,
                     __lockgate_host_bindings::#(#path)::*::__LockgateBinding::METHODS,
@@ -1649,6 +1778,7 @@ fn expand_with(
                     #lockgate::__private::HostImportPolicyMetadata,
                     #lockgate::__private::HostImportPolicyError,
                 > {
+                    #(#host_requirements)*
                     ::core::result::Result::Ok(
                         #lockgate::__private::HostImportPolicyMetadata::__new(
                             ::std::vec![#(#policy_interfaces),*],
@@ -2133,19 +2263,38 @@ fn future_output(output: &ReturnType) -> syn::Result<SynType> {
     ))
 }
 
-fn nested_module_items_mut<'a>(
-    items: &'a mut Vec<Item>,
-    path: &[Ident],
-) -> Option<&'a mut Vec<Item>> {
-    let Some((segment, rest)) = path.split_first() else {
-        return Some(items);
-    };
+fn nested_module_mut<'a>(items: &'a mut [Item], path: &[Ident]) -> Option<&'a mut syn::ItemMod> {
+    let (segment, rest) = path.split_first()?;
     let module = items.iter_mut().find_map(|item| match item {
         Item::Mod(module) if module.ident == *segment => Some(module),
         _ => None,
     })?;
+    if rest.is_empty() {
+        return Some(module);
+    }
     let (_, items) = module.content.as_mut()?;
-    nested_module_items_mut(items, rest)
+    nested_module_mut(items, rest)
+}
+
+fn remove_generated_world_linker(items: &mut [Item]) -> bool {
+    items.iter_mut().any(|item| {
+        let Item::Const(constant) = item else {
+            return false;
+        };
+        let syn::Expr::Block(block) = constant.expr.as_mut() else {
+            return false;
+        };
+        block.block.stmts.iter_mut().any(|statement| {
+            let syn::Stmt::Item(Item::Impl(implementation)) = statement else {
+                return false;
+            };
+            let original_len = implementation.items.len();
+            implementation.items.retain(|item| {
+                !matches!(item, syn::ImplItem::Fn(function) if function.sig.ident == "add_to_linker")
+            });
+            implementation.items.len() != original_len
+        })
+    })
 }
 
 fn interface_module_path(resolve: &Resolve, id: InterfaceId) -> Vec<Ident> {
@@ -2285,11 +2434,12 @@ fn lockgate_policy_path(span: impl quote::ToTokens) -> syn::Result<TokenStream2>
 mod tests {
     use std::path::Path;
 
-    use quote::quote;
+    use quote::{ToTokens, quote};
+    use syn::visit::Visit;
 
     use super::{
-        HostBindingsInput, Resolve, add_host_imports, expand_with, validate_import_options,
-        wit_source_guards,
+        HostBindingsInput, Resolve, add_host_imports, expand_with, nested_module_mut,
+        validate_import_options, wit_source_guards,
     };
 
     #[test]
@@ -2346,14 +2496,71 @@ mod tests {
 
         assert_eq!(input.world.value(), "host");
         assert_eq!(input.added_imports.len(), 2);
-        assert_eq!(input.added_imports[0].value(), "exec");
-        assert_eq!(input.added_imports[1].value(), "state");
+        assert_eq!(input.added_imports[0].interface.value(), "exec");
+        assert!(input.added_imports[0].feature.is_none());
+        assert_eq!(input.added_imports[1].interface.value(), "state");
+        assert!(input.added_imports[1].feature.is_none());
         assert!(input.imports.is_some());
 
         let plain: HostBindingsInput =
             syn::parse_str(r#"{ path: "wit", world: "plugin" }"#).unwrap();
         assert!(plain.added_imports.is_empty());
         assert!(plain.imports.is_none());
+    }
+
+    #[test]
+    fn parses_mixed_added_import_entries() {
+        let input: HostBindingsInput = syn::parse_str(
+            r#"{
+                path: "wit",
+                world: "host",
+                imports: [
+                    "exec",
+                    { interface: "state", feature: "state" },
+                ],
+                imports_type: Imports,
+                data: Data,
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(input.added_imports[0].interface.value(), "exec");
+        assert!(input.added_imports[0].feature.is_none());
+        assert_eq!(input.added_imports[1].interface.value(), "state");
+        assert_eq!(
+            input.added_imports[1].feature.as_ref().unwrap().value(),
+            "state"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_added_imports_in_any_entry_form() {
+        for imports in [
+            r#"["exec", "exec"]"#,
+            r#"["exec", { interface: "exec", feature: "exec" }]"#,
+            r#"[{ interface: "exec", feature: "exec" }, "exec"]"#,
+            r#"[
+                { interface: "exec", feature: "first" },
+                { interface: "exec", feature: "second" },
+            ]"#,
+        ] {
+            let options = format!(
+                r#"{{
+                    path: "wit",
+                    world: "host",
+                    imports: {imports},
+                    imports_type: Imports,
+                    data: Data,
+                }}"#
+            );
+            let error = syn::parse_str::<HostBindingsInput>(&options)
+                .err()
+                .expect("duplicate interface was accepted");
+            assert_eq!(
+                error.to_string(),
+                "duplicate added host import interface `exec`"
+            );
+        }
     }
 
     #[test]
@@ -2550,5 +2757,242 @@ mod tests {
         assert!(public_modules.contains("exec"));
         assert!(public_modules.contains("state"));
         assert!(public_modules.contains("guest"));
+    }
+
+    #[test]
+    fn feature_annotated_addition_gates_only_its_interface_expansion() {
+        let input: HostBindingsInput = syn::parse_str(
+            r#"{
+                path: "tests/fixtures/synthesized-host/wit",
+                world: "host",
+                imports: [{ interface: "state", feature: "state-feature" }],
+                imports_type: Imports,
+                data: Data,
+            }"#,
+        )
+        .unwrap();
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut expansion = syn::parse2::<syn::File>(
+            expand_with(input, &quote!(::lockgate), manifest_dir).unwrap(),
+        )
+        .unwrap();
+
+        {
+            let hidden = expansion
+                .items
+                .iter_mut()
+                .find_map(|item| match item {
+                    syn::Item::Mod(module) if module.ident == "__lockgate_host_bindings" => {
+                        module.content.as_mut().map(|(_, items)| items)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert!(!has_generated_world_linker(hidden));
+            let exec_path = [
+                syn::parse_quote!(test),
+                syn::parse_quote!(synthesized_host),
+                syn::parse_quote!(exec),
+            ];
+            let state_path = [
+                syn::parse_quote!(test),
+                syn::parse_quote!(synthesized_host),
+                syn::parse_quote!(state),
+            ];
+            assert!(!has_any_cfg(
+                &nested_module_mut(hidden, &exec_path).unwrap().attrs
+            ));
+            assert!(has_cfg_feature(
+                &nested_module_mut(hidden, &state_path).unwrap().attrs,
+                "state-feature"
+            ));
+        }
+
+        let exec = expansion
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Mod(module) if module.ident == "exec" => Some(module),
+                _ => None,
+            })
+            .unwrap();
+        assert!(!has_any_cfg(&exec.attrs));
+        let state = expansion
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Mod(module) if module.ident == "state" => Some(module),
+                _ => None,
+            })
+            .unwrap();
+        assert!(has_cfg_feature(&state.attrs, "state-feature"));
+
+        let host_imports = expansion
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Impl(implementation)
+                    if implementation
+                        .trait_
+                        .as_ref()
+                        .and_then(|(_, path, _)| path.segments.last())
+                        .is_some_and(|segment| segment.ident == "HostImports") =>
+                {
+                    Some(implementation)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let bounds = &host_imports
+            .generics
+            .where_clause
+            .as_ref()
+            .unwrap()
+            .predicates;
+        assert_eq!(bounds.len(), 1);
+        assert_eq!(
+            bounds.first().unwrap().to_token_stream().to_string(),
+            "Imports : exec :: Host"
+        );
+
+        let policy = host_imports
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Fn(function) if function.sig.ident == "policy_metadata" => {
+                    Some(function)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let requirement = policy
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match statement {
+                syn::Stmt::Item(syn::Item::Fn(function))
+                    if function.sig.ident == "__lockgate_require_state_host" =>
+                {
+                    Some(function)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(has_cfg_feature(&requirement.attrs, "state-feature"));
+        let requirement_call = policy
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match statement {
+                syn::Stmt::Expr(syn::Expr::Call(call), _)
+                    if matches!(
+                        call.func.as_ref(),
+                        syn::Expr::Path(path)
+                            if path.path.segments.last().is_some_and(|segment| {
+                                segment.ident == "__lockgate_require_state_host"
+                            })
+                    ) =>
+                {
+                    Some(call)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(has_cfg_feature(&requirement_call.attrs, "state-feature"));
+
+        let mut policy_vec = VecMacro::default();
+        policy_vec.visit_block(&policy.block);
+        let policy_elements = policy_vec.tokens.unwrap().to_string();
+        assert_eq!(policy_elements.matches("# [cfg").count(), 1);
+        assert!(policy_elements.contains("# [cfg (feature = \"state-feature\")]"));
+
+        let add_to_linker = host_imports
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Fn(function) if function.sig.ident == "add_to_linker" => {
+                    Some(function)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let registrations = add_to_linker
+            .block
+            .stmts
+            .iter()
+            .filter_map(|statement| match statement {
+                syn::Stmt::Expr(syn::Expr::If(registration), _) => Some(registration),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(registrations.len(), 2);
+        assert!(!has_any_cfg(&registrations[0].attrs));
+        assert!(has_cfg_feature(&registrations[1].attrs, "state-feature"));
+    }
+
+    fn has_cfg_feature(attributes: &[syn::Attribute], expected: &str) -> bool {
+        attributes.iter().any(|attribute| {
+            if !attribute.path().is_ident("cfg") {
+                return false;
+            }
+            let mut found = false;
+            attribute
+                .parse_nested_meta(|meta| {
+                    if meta.path.is_ident("feature") {
+                        found = meta.value()?.parse::<syn::LitStr>()?.value() == expected;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            found
+        })
+    }
+
+    fn has_any_cfg(attributes: &[syn::Attribute]) -> bool {
+        attributes
+            .iter()
+            .any(|attribute| attribute.path().is_ident("cfg"))
+    }
+
+    fn has_generated_world_linker(items: &[syn::Item]) -> bool {
+        items.iter().any(|item| {
+            let syn::Item::Const(constant) = item else {
+                return false;
+            };
+            let syn::Expr::Block(block) = constant.expr.as_ref() else {
+                return false;
+            };
+            block.block.stmts.iter().any(|statement| {
+                let syn::Stmt::Item(syn::Item::Impl(implementation)) = statement else {
+                    return false;
+                };
+                implementation.items.iter().any(|item| {
+                    matches!(
+                        item,
+                        syn::ImplItem::Fn(function) if function.sig.ident == "add_to_linker"
+                    )
+                })
+            })
+        })
+    }
+
+    #[derive(Default)]
+    struct VecMacro {
+        tokens: Option<proc_macro2::TokenStream>,
+    }
+
+    impl<'ast> Visit<'ast> for VecMacro {
+        fn visit_expr_macro(&mut self, expression: &'ast syn::ExprMacro) {
+            if expression
+                .mac
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "vec")
+            {
+                self.tokens = Some(expression.mac.tokens.clone());
+            }
+            syn::visit::visit_expr_macro(self, expression);
+        }
     }
 }
