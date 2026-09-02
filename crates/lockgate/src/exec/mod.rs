@@ -1,7 +1,7 @@
 #[cfg(test)]
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 #[cfg(not(test))]
@@ -23,9 +23,11 @@ use super::policy::ResourceStore;
 #[cfg(test)]
 use lockgate::__private::ResourceStore;
 
+pub(crate) mod cache;
 mod errors;
 pub(crate) mod wasi_http;
 
+use cache::CompiledComponentCache;
 #[doc(hidden)]
 #[allow(
     unused_imports,
@@ -50,6 +52,10 @@ const DEADLINE_YIELD_FUEL: u64 = 10_000;
 
 pub(crate) struct ExecEngine {
     engine: Engine,
+    #[cfg(test)]
+    cache_hits: AtomicU64,
+    #[cfg(test)]
+    cache_writes: AtomicU64,
 }
 
 impl ExecEngine {
@@ -65,6 +71,10 @@ impl ExecEngine {
 
         Ok(Self {
             engine: Engine::new(&config)?,
+            #[cfg(test)]
+            cache_hits: AtomicU64::new(0),
+            #[cfg(test)]
+            cache_writes: AtomicU64::new(0),
         })
     }
 
@@ -74,6 +84,37 @@ impl ExecEngine {
 
     pub(crate) fn compile(&self, bytes: &[u8]) -> Result<Component, LoadError> {
         Component::new(&self.engine, bytes).map_err(LoadError::compile)
+    }
+
+    pub(crate) fn compile_cached(
+        &self,
+        bytes: &[u8],
+        component_digest: &[u8; 32],
+        cache: Option<&CompiledComponentCache>,
+    ) -> Result<Component, LoadError> {
+        if let Some(component) = cache.and_then(|cache| cache.load(&self.engine, component_digest))
+        {
+            #[cfg(test)]
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            return Ok(component);
+        }
+
+        let component = self.compile(bytes)?;
+        if cache.is_some_and(|cache| cache.store(&self.engine, component_digest, &component)) {
+            #[cfg(test)]
+            self.cache_writes.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(component)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_hits(&self) -> u64 {
+        self.cache_hits.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_writes(&self) -> u64 {
+        self.cache_writes.load(Ordering::Relaxed)
     }
 
     /// Compiles a component and prepares its host imports for later invocations.

@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
+use crate::exec::cache::CompiledComponentCache;
 use crate::exec::{
     EnvironmentError, EnvironmentGrants, ExecEngine, ExecError, ExecLimits, ImportsFactory,
     LoadError, LoadedComponent, TypedImports,
@@ -34,9 +35,12 @@ use crate::validate::{ValidationError, validate_and_collect_exported_interfaces}
 
 static NEXT_HOST_ID: AtomicU64 = AtomicU64::new(1);
 
-fn raw_component_digest(bytes: &[u8]) -> String {
-    let digest: [u8; 32] = Sha256::digest(bytes).into();
-    format!("sha256:{}", hex_encode(&digest))
+fn raw_component_sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+fn display_component_digest(digest: &[u8; 32]) -> String {
+    format!("sha256:{}", hex_encode(digest))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,6 +221,7 @@ pub struct HostBuilder<S: CallContext> {
     jobs: std::sync::Arc<JobTracker>,
     registry: CapabilityRegistry,
     policy_metadata: HostImportPolicyMetadata,
+    compiled_cache: Option<CompiledComponentCache>,
 }
 
 struct AdmittedPlugin<S: 'static> {
@@ -363,7 +368,30 @@ impl<S: CallContext> HostBuilder<S> {
             jobs,
             registry,
             policy_metadata,
+            compiled_cache: None,
         })
+    }
+
+    /// Enables persistent reuse of compiled Wasmtime components from `directory`.
+    ///
+    /// The directory is created on the first successful compilation. Cache reads
+    /// and writes are best-effort: missing, corrupt, or engine-incompatible entries
+    /// fall back to compilation and replacement without failing preparation.
+    ///
+    /// # Trust boundary
+    ///
+    /// A `.cwasm` entry contains executable native code and is loaded through
+    /// Wasmtime's unsafe deserialization API. `directory` must therefore be owned
+    /// by the embedder and must not be writable by plugins or other untrusted
+    /// principals. Place it under application state, not alongside plugin or
+    /// project files.
+    ///
+    /// Lockgate does not currently evict cache entries or impose a size limit.
+    /// Embedders that require a capacity bound should prune this directory; a
+    /// built-in oldest-first limit is left as a follow-up.
+    pub fn compiled_cache(mut self, directory: PathBuf) -> Self {
+        self.compiled_cache = Some(CompiledComponentCache::new(directory));
+        self
     }
 
     /// Registers one generated capability vocabulary with the host.
@@ -414,16 +442,17 @@ impl<S: CallContext> HostBuilder<S> {
         if let Some(field) = unavailable_field {
             return Err(AdmissionError::ConfigFeatureUnavailable { field });
         }
+        let component_sha256 = raw_component_sha256(bytes);
         let component = self
             .engine
-            .compile(bytes)
+            .compile_cached(bytes, &component_sha256, self.compiled_cache.as_ref())
             .map_err(AdmissionError::from_load)?;
         let empty_settings = serde_json::json!({});
         let settings = config.settings.as_ref().unwrap_or(&empty_settings);
         let resolved = resolve_needs(&needs, settings, &config.roots, &self.registry)
             .map_err(AdmissionError::ScopeResolution)?;
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
-        let component_digest = raw_component_digest(bytes);
+        let component_digest = display_component_digest(&component_sha256);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             host: self.id,
@@ -1272,11 +1301,18 @@ impl Error for AdmissionError {
 
 #[cfg(test)]
 mod grant_tests {
-    use std::str::FromStr;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        str::FromStr,
+        time::Instant,
+    };
 
     use lockgate_policy::{Scope, ScopeError, ScopeRepr};
     use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
     use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
+    use tempfile::tempdir;
+    use wasmtime::{Config, Engine, OptLevel, Precompiled};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
@@ -1384,6 +1420,33 @@ mod grant_tests {
             .unwrap()
     }
 
+    fn cache_fixture(id: &str) -> Vec<u8> {
+        let metadata = PluginMetadata::new(id, "Compiled cache fixture", "1.0").unwrap();
+        let needs = NeedsManifest::empty();
+        with_section(
+            with_section(
+                component(),
+                PLUGIN_METADATA_SECTION,
+                &metadata.to_section_bytes().unwrap(),
+            ),
+            PLUGIN_NEEDS_SECTION,
+            &needs.to_section_bytes().unwrap(),
+        )
+    }
+
+    fn only_cache_entry(directory: &Path) -> PathBuf {
+        let entries = fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "cwasm")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 1, "expected exactly one .cwasm entry");
+        entries.into_iter().next().unwrap()
+    }
+
     #[tokio::test]
     async fn prepare_records_the_raw_component_sha256() {
         let metadata = PluginMetadata::new("digest", "Digest", "1.0").unwrap();
@@ -1409,6 +1472,111 @@ mod grant_tests {
             .unwrap();
 
         assert_eq!(prepared.component_digest, expected);
+    }
+
+    #[tokio::test]
+    async fn compiled_cache_hits_across_host_builders() {
+        let directory = tempdir().unwrap();
+        let bytes = cache_fixture("cache-hit");
+        let mut cold = HostBuilder::new(())
+            .unwrap()
+            .compiled_cache(directory.path().to_path_buf());
+
+        let started = Instant::now();
+        let prepared = cold
+            .prepare("cache-hit", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        let cold_elapsed = started.elapsed();
+        assert_eq!(cold.engine.cache_hits(), 0);
+        assert_eq!(cold.engine.cache_writes(), 1);
+        assert!(only_cache_entry(directory.path()).is_file());
+        drop(prepared);
+        drop(cold);
+
+        let mut cached = HostBuilder::new(())
+            .unwrap()
+            .compiled_cache(directory.path().to_path_buf());
+        let started = Instant::now();
+        cached
+            .prepare("cache-hit", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        let cached_elapsed = started.elapsed();
+        assert_eq!(cached.engine.cache_hits(), 1);
+        assert_eq!(cached.engine.cache_writes(), 0);
+
+        eprintln!("fixture prepare timing: cold={cold_elapsed:?}, cached={cached_elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn corrupt_compiled_cache_entry_is_recompiled_and_overwritten() {
+        let directory = tempdir().unwrap();
+        let bytes = cache_fixture("cache-corrupt");
+        let mut cold = HostBuilder::new(())
+            .unwrap()
+            .compiled_cache(directory.path().to_path_buf());
+        cold.prepare("cache-corrupt", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        drop(cold);
+
+        let entry = only_cache_entry(directory.path());
+        fs::write(&entry, b"not a compiled component").unwrap();
+
+        let mut repaired = HostBuilder::new(())
+            .unwrap()
+            .compiled_cache(directory.path().to_path_buf());
+        repaired
+            .prepare("cache-corrupt", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(repaired.engine.cache_hits(), 0);
+        assert_eq!(repaired.engine.cache_writes(), 1);
+        assert_eq!(
+            Engine::detect_precompiled_file(&entry).unwrap(),
+            Some(Precompiled::Component)
+        );
+        drop(repaired);
+
+        let mut cached = HostBuilder::new(())
+            .unwrap()
+            .compiled_cache(directory.path().to_path_buf());
+        cached
+            .prepare("cache-corrupt", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(cached.engine.cache_hits(), 1);
+    }
+
+    #[test]
+    fn compiled_cache_key_changes_with_engine_configuration() {
+        let mut speed = Config::new();
+        speed.cranelift_opt_level(OptLevel::Speed);
+        let speed = Engine::new(&speed).unwrap();
+        let mut unoptimized = Config::new();
+        unoptimized.cranelift_opt_level(OptLevel::None);
+        let unoptimized = Engine::new(&unoptimized).unwrap();
+        let digest = [0x5a; 32];
+
+        assert_ne!(
+            crate::exec::cache::cache_key(&speed, &digest),
+            crate::exec::cache::cache_key(&unoptimized, &digest)
+        );
+    }
+
+    #[tokio::test]
+    async fn no_compiled_cache_configuration_performs_no_cache_writes() {
+        let bytes = cache_fixture("cache-disabled");
+        let mut builder = HostBuilder::new(()).unwrap();
+
+        builder
+            .prepare("cache-disabled", &bytes, PluginConfig::default())
+            .await
+            .unwrap();
+
+        assert_eq!(builder.engine.cache_hits(), 0);
+        assert_eq!(builder.engine.cache_writes(), 0);
     }
 
     #[test]
@@ -1440,7 +1608,7 @@ mod grant_tests {
         .unwrap();
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
         let component_bytes = component();
-        let component_digest = raw_component_digest(&component_bytes);
+        let component_digest = display_component_digest(&raw_component_sha256(&component_bytes));
         let prepared = Prepared {
             host: HostId::next(),
             instance_id: "pure-instance".to_owned(),

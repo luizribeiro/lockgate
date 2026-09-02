@@ -1287,6 +1287,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "trybuild",
  "wasm-encoder 0.254.0",
