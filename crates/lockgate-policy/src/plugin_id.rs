@@ -1,5 +1,44 @@
 use alloc::string::String;
-use core::{convert::Infallible, fmt, str::FromStr};
+use core::{error::Error, fmt, str::FromStr};
+
+/// A malformed plugin identifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidPluginId {
+    value: String,
+    reason: InvalidPluginIdReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InvalidPluginIdReason {
+    Empty,
+    ControlCharacter,
+    PathSeparator,
+    DotSegment,
+}
+
+impl fmt::Display for InvalidPluginId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = self.value.escape_debug();
+        match self.reason {
+            InvalidPluginIdReason::Empty => {
+                write!(formatter, "plugin ID `{value}` must not be empty")
+            }
+            InvalidPluginIdReason::ControlCharacter => write!(
+                formatter,
+                "plugin ID `{value}` must not contain control characters"
+            ),
+            InvalidPluginIdReason::PathSeparator => write!(
+                formatter,
+                "plugin ID `{value}` must not contain `/` or `\\`"
+            ),
+            InvalidPluginIdReason::DotSegment => {
+                write!(formatter, "plugin ID `{value}` must not be `.` or `..`")
+            }
+        }
+    }
+}
+
+impl Error for InvalidPluginId {}
 
 /// Stable identity for a plugin.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -18,23 +57,42 @@ impl fmt::Display for PluginId {
     }
 }
 
-impl From<String> for PluginId {
-    fn from(value: String) -> Self {
-        Self(value)
+impl TryFrom<String> for PluginId {
+    type Error = InvalidPluginId;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let reason = if value.is_empty() {
+            Some(InvalidPluginIdReason::Empty)
+        } else if value.chars().any(char::is_control) {
+            Some(InvalidPluginIdReason::ControlCharacter)
+        } else if value.contains('/') || value.contains('\\') {
+            Some(InvalidPluginIdReason::PathSeparator)
+        } else if matches!(value.as_str(), "." | "..") {
+            Some(InvalidPluginIdReason::DotSegment)
+        } else {
+            None
+        };
+
+        match reason {
+            Some(reason) => Err(InvalidPluginId { value, reason }),
+            None => Ok(Self(value)),
+        }
     }
 }
 
-impl From<&str> for PluginId {
-    fn from(value: &str) -> Self {
-        Self(String::from(value))
+impl TryFrom<&str> for PluginId {
+    type Error = InvalidPluginId;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::try_from(String::from(value))
     }
 }
 
 impl FromStr for PluginId {
-    type Err = Infallible;
+    type Err = InvalidPluginId;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from(value))
+        Self::try_from(value)
     }
 }
 
@@ -54,7 +112,8 @@ impl<'de> serde::Deserialize<'de> for PluginId {
     where
         D: serde::Deserializer<'de>,
     {
-        <String as serde::Deserialize>::deserialize(deserializer).map(Self)
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -68,41 +127,66 @@ mod tests {
 
     #[test]
     fn display_round_trips_raw_id() {
-        let plugin_id = PluginId::from("openai");
+        let plugin_id: PluginId = "openai".parse().unwrap();
 
         assert_eq!(plugin_id.to_string(), "openai");
     }
 
     #[test]
-    fn constructs_from_string_and_str() {
-        let owned = PluginId::from(String::from("kagi"));
-        let borrowed = PluginId::from("sandbox");
+    fn checked_constructors_accept_realistic_ids() {
+        for accepted in ["openai", "build-plugin@grant-a", "kagi.v2", "my_plugin"] {
+            let parsed: PluginId = accepted.parse().unwrap();
+            let borrowed = PluginId::try_from(accepted).unwrap();
+            let owned = PluginId::try_from(String::from(accepted)).unwrap();
 
-        assert_eq!(owned.as_str(), "kagi");
-        assert_eq!(borrowed.as_str(), "sandbox");
+            assert_eq!(parsed.as_str(), accepted);
+            assert_eq!(borrowed, parsed);
+            assert_eq!(owned, parsed);
+        }
     }
 
     #[test]
-    fn parses_from_str() {
-        let plugin_id: PluginId = "kagi".parse().unwrap();
+    fn checked_constructors_reject_malformed_ids() {
+        for rejected in ["", "a\nb", "a\u{7f}b", "a/b", "a\\b", ".", ".."] {
+            assert!(
+                rejected.parse::<PluginId>().is_err(),
+                "accepted {rejected:?}"
+            );
+            assert!(
+                PluginId::try_from(rejected).is_err(),
+                "accepted {rejected:?}"
+            );
+            assert!(
+                PluginId::try_from(String::from(rejected)).is_err(),
+                "accepted {rejected:?}"
+            );
+        }
+    }
 
-        assert_eq!(plugin_id, PluginId::from("kagi"));
+    #[test]
+    fn invalid_plugin_id_display_names_and_quotes_the_problem() {
+        let error = PluginId::try_from("a\nb").unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "plugin ID `a\\nb` must not contain control characters"
+        );
     }
 
     #[test]
     fn works_as_a_btree_map_key() {
         let mut plugins = BTreeMap::new();
-        plugins.insert(PluginId::from("sandbox"), 3);
-        plugins.insert(PluginId::from("openai"), 1);
-        plugins.insert(PluginId::from("kagi"), 2);
+        plugins.insert(PluginId::try_from("sandbox").unwrap(), 3);
+        plugins.insert(PluginId::try_from("openai").unwrap(), 1);
+        plugins.insert(PluginId::try_from("kagi").unwrap(), 2);
 
-        assert_eq!(plugins.get(&PluginId::from("kagi")), Some(&2));
+        assert_eq!(plugins.get(&PluginId::try_from("kagi").unwrap()), Some(&2));
         assert_eq!(
             plugins.into_keys().collect::<alloc::vec::Vec<_>>(),
             [
-                PluginId::from("kagi"),
-                PluginId::from("openai"),
-                PluginId::from("sandbox"),
+                PluginId::try_from("kagi").unwrap(),
+                PluginId::try_from("openai").unwrap(),
+                PluginId::try_from("sandbox").unwrap(),
             ]
         );
     }
@@ -110,7 +194,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_json_round_trip() {
-        let plugin_id = PluginId::from("openai");
+        let plugin_id = PluginId::try_from("openai").unwrap();
 
         let json = serde_json::to_string(&plugin_id).unwrap();
 
@@ -122,8 +206,8 @@ mod tests {
     #[test]
     fn serde_json_btree_map_round_trip_uses_string_keys() {
         let plugins = BTreeMap::from([
-            (PluginId::from("openai"), 1_u32),
-            (PluginId::from("kagi"), 2_u32),
+            (PluginId::try_from("openai").unwrap(), 1_u32),
+            (PluginId::try_from("kagi").unwrap(), 2_u32),
         ]);
 
         let json = serde_json::to_string(&plugins).unwrap();
@@ -140,7 +224,19 @@ mod tests {
     fn serde_json_string_deserializes_into_plugin_id() {
         assert_eq!(
             serde_json::from_str::<PluginId>(r#""kagi""#).unwrap(),
-            PluginId::from("kagi")
+            PluginId::try_from("kagi").unwrap()
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_json_rejects_malformed_plugin_id() {
+        let error = serde_json::from_str::<PluginId>(r#""a/b""#).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("plugin ID `a/b` must not contain `/` or `\\`")
         );
     }
 }
