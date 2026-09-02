@@ -1,5 +1,5 @@
 use alloc::string::String;
-use core::fmt;
+use core::{convert::Infallible, fmt, str::FromStr};
 
 /// Stable identity for a plugin.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -27,6 +27,14 @@ impl From<String> for PluginId {
 impl From<&str> for PluginId {
     fn from(value: &str) -> Self {
         Self(String::from(value))
+    }
+}
+
+impl FromStr for PluginId {
+    type Err = Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from(value))
     }
 }
 
@@ -72,6 +80,13 @@ mod tests {
 
         assert_eq!(owned.as_str(), "kagi");
         assert_eq!(borrowed.as_str(), "sandbox");
+    }
+
+    #[test]
+    fn parses_from_str() {
+        let plugin_id: PluginId = "kagi".parse().unwrap();
+
+        assert_eq!(plugin_id, PluginId::from("kagi"));
     }
 
     #[test]
