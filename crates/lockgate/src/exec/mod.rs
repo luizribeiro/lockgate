@@ -26,7 +26,13 @@ use lockgate::__private::ResourceStore;
 mod errors;
 pub(crate) mod wasi_http;
 
-pub(crate) use errors::{EnvironmentError, ExecError, LoadError};
+#[doc(hidden)]
+#[allow(
+    unused_imports,
+    reason = "generated host bindings call this re-export from downstream crates"
+)]
+pub use errors::catch_host_panic;
+pub(crate) use errors::{EnvironmentError, ExecError, HostPanicState, LoadError};
 use errors::{
     MemoryLimitExceeded, host_import_call_limit_error, map_call_error, map_dispatch_error,
     map_instantiate_error,
@@ -244,11 +250,11 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
             .set_fuel(limits.instantiation_fuel)
             .map_err(map_instantiate_error)?;
 
-        let instance = self
-            .instance_pre
-            .instantiate_async(&mut store)
-            .await
-            .map_err(map_instantiate_error)?;
+        let instance = self.instance_pre.instantiate_async(&mut store).await;
+        if let Some(panic) = store.data().take_host_panic() {
+            return Err(panic);
+        }
+        let instance = instance.map_err(map_instantiate_error)?;
 
         store
             .set_fuel(invocation_fuel)
@@ -268,8 +274,11 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         });
         let call_result = tokio::time::timeout(deadline, call)
             .await
-            .map_err(|_| ExecError::DeadlineExceeded(deadline))?
-            .map_err(map_call_error)?;
+            .map_err(|_| ExecError::DeadlineExceeded(deadline))?;
+        if let Some(panic) = store.data().take_host_panic() {
+            return Err(panic);
+        }
+        let call_result = call_result.map_err(map_call_error)?;
         call_result.map_err(map_call_error)?;
 
         Ok(results)
@@ -333,10 +342,13 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
             .fuel_async_yield_interval(Some(DEADLINE_YIELD_FUEL))
             .map_err(map_instantiate_error)?;
         let instantiate = self.instance_pre.instantiate_async(&mut store);
-        tokio::time::timeout(deadline, instantiate)
+        let result = tokio::time::timeout(deadline, instantiate)
             .await
-            .map_err(|_| ExecError::DeadlineExceeded(deadline))?
-            .map_err(map_instantiate_error)?;
+            .map_err(|_| ExecError::DeadlineExceeded(deadline))?;
+        if let Some(panic) = store.data().take_host_panic() {
+            return Err(panic);
+        }
+        result.map_err(map_instantiate_error)?;
         Ok(())
     }
 
@@ -396,6 +408,7 @@ pub struct StoreCtx<S> {
     wasi: WasiCtx,
     wasi_http: WasiHttpCtx,
     http_hooks: HttpHooks,
+    host_panics: HostPanicState,
     wasi_resources: ResourceTable,
     #[cfg(test)]
     drop_probe: Option<StoreDropProbe>,
@@ -411,7 +424,12 @@ impl<S> StoreCtx<S> {
         wasi: WasiCtx,
         limits: ExecLimits,
     ) -> Self {
-        let http_hooks = HttpHooks::new(plugin.clone(), limits.http_request_timeout_ceiling);
+        let host_panics = HostPanicState::default();
+        let http_hooks = HttpHooks::with_host_panics(
+            plugin.clone(),
+            limits.http_request_timeout_ceiling,
+            host_panics.clone(),
+        );
         Self {
             limiter: MemoryLimiter {
                 max_memory_bytes: limits.max_memory_bytes,
@@ -430,6 +448,7 @@ impl<S> StoreCtx<S> {
             wasi,
             wasi_http: WasiHttpCtx::new(),
             http_hooks,
+            host_panics,
             wasi_resources: ResourceTable::new(),
             #[cfg(test)]
             drop_probe: None,
@@ -446,6 +465,13 @@ impl<S> StoreCtx<S> {
 
     pub(crate) fn settings(&self) -> &SettingsState {
         &self.settings
+    }
+
+    fn take_host_panic(&self) -> Option<ExecError> {
+        self.host_panics.take().map(|panic| ExecError::HostPanic {
+            import: panic.import,
+            message: panic.message,
+        })
     }
 
     #[doc(hidden)]

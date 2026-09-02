@@ -1895,6 +1895,13 @@ fn adapter_items(
         let adapter_result = future_output(&method.sig.output)?;
         let result = trappable_import_output(&adapter_result)?;
         let name = &method.sig.ident;
+        let wit_name = &interface
+            .methods
+            .iter()
+            .find(|candidate| candidate.rust_name == *name)
+            .expect("generated adapter methods must come from the imported interface")
+            .wit_name;
+        let import = imported_function_name(interface, wit_name);
         public_methods.push(quote! {
             fn #name(
                 &mut self,
@@ -1945,11 +1952,13 @@ fn adapter_items(
                         jobs,
                         resources,
                     );
-                    Ok(<#imports as __LockgateHost>::#name(
-                        &mut imports,
-                        cx,
-                        #(#arguments),*
-                    ).await)
+                    #lockgate::__private::catch_host_panic(#import, || {
+                        <#imports as __LockgateHost>::#name(
+                            &mut imports,
+                            cx,
+                            #(#arguments),*
+                        )
+                    }).await
                 }
             }
         });
@@ -2137,6 +2146,13 @@ fn resource_adapter_items(
             .collect::<syn::Result<Vec<_>>>()?;
         let adapter_result = future_output(&method.sig.output)?;
         let result = trappable_import_output(&adapter_result)?;
+        let wit_name = &resource
+            .methods
+            .iter()
+            .find(|candidate| candidate.rust_name == *name)
+            .expect("generated adapter methods must come from the imported resource")
+            .wit_name;
+        let import = imported_function_name(interface, wit_name);
         public_methods.push(quote! {
             fn #name(
                 &mut self,
@@ -2162,11 +2178,13 @@ fn resource_adapter_items(
                         jobs,
                         resources,
                     );
-                    Ok(<#imports as #generated_host>::#name(
-                        &mut imports,
-                        cx,
-                        #(#arguments),*
-                    ).await)
+                    #lockgate::__private::catch_host_panic(#import, || {
+                        <#imports as #generated_host>::#name(
+                            &mut imports,
+                            cx,
+                            #(#arguments),*
+                        )
+                    }).await
                 }
             }
         });
@@ -2223,6 +2241,13 @@ fn resource_adapter_items(
         }
     })
     .map(|file| file.items)
+}
+
+fn imported_function_name(interface: &ImportedInterface, function: &str) -> String {
+    match &interface.version {
+        Some(version) => format!("{}@{version}#{function}", interface.identity),
+        None => format!("{}#{function}", interface.identity),
+    }
 }
 
 fn future_output(output: &ReturnType) -> syn::Result<SynType> {

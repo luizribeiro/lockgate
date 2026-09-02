@@ -17,8 +17,8 @@ use wasmtime_wasi_http::{Error as WasiHttpError, RequestOptions, WasiBody, WasiH
 use crate::{
     PluginHandle,
     exec::{
-        ExecEngine, StoreCtx, add_http_to_linker,
-        wasi_http::{HttpHooks, clamp_request_options},
+        ExecEngine, HostPanicState, StoreCtx, add_http_to_linker,
+        wasi_http::{HttpHooks, catch_http_future, clamp_request_options},
     },
     net,
     policy::{CapabilityRegistry, EffectiveGrants, ResolvedNeeds},
@@ -99,6 +99,25 @@ fn no_ceiling_preserves_guest_options() {
 
     assert_eq!(clamp_request_options(Some(options), None), Some(options));
     assert_eq!(clamp_request_options(None, None), None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn panicking_wasi_http_future_records_the_import_and_message() {
+    const MESSAGE: &str = "instrumented wasi-http panic";
+    let panics = HostPanicState::default();
+    let result: Result<(), WasiHttpError> = catch_http_future(&panics, async {
+        panic!("{MESSAGE}");
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(WasiHttpError::InternalError(Some(ref message)))
+            if message.contains(MESSAGE)
+    ));
+    let panic = panics.take().expect("panic was not recorded");
+    assert_eq!(panic.import, "wasi:http/client@0.3.0#send");
+    assert_eq!(panic.message, MESSAGE);
 }
 
 fn empty_body() -> WasiBody {

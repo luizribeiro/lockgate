@@ -5,13 +5,18 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
+use std::{future::Future, process::Command};
 
 use lockgate::{
-    BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RoleError, RuntimeLimits,
+    BudgetClass, CallError, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RoleError,
+    RuntimeLimits,
 };
 use tokio::sync::Barrier;
 
 const REGRESSION_TIMEOUT: Duration = Duration::from_secs(10);
+const HOST_PANIC_CHILD: &str = "LOCKGATE_HOST_PANIC_TEST_CHILD";
+const HOST_PANIC_LABEL: &str = "panic-host-import";
+const HOST_PANIC_MESSAGE: &str = "instrumented host import panic";
 
 #[derive(Clone)]
 struct CallData {
@@ -72,6 +77,9 @@ impl application::Host for Imports {
 
     #[lockgate::no_capability_required(reason = "test-only caller-identity plumbing")]
     async fn caller(&mut self, cx: HostCtx<'_, CallData>) -> String {
+        if cx.data().label == HOST_PANIC_LABEL {
+            panic!("{HOST_PANIC_MESSAGE}");
+        }
         cx.plugin().id().to_owned()
     }
 
@@ -162,6 +170,62 @@ fn context(label: &str) -> InvocationCtx<CallData> {
             deadline: common::INVOCATION_DEADLINE,
         },
     )
+}
+
+fn run_async(future: impl Future<Output = ()>) {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(future);
+}
+
+#[test]
+fn panicking_host_import_returns_typed_error_and_preserves_the_panic_hook() {
+    const TEST_NAME: &str =
+        "panicking_host_import_returns_typed_error_and_preserves_the_panic_hook";
+    if std::env::var(HOST_PANIC_CHILD).as_deref() != Ok(TEST_NAME) {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(HOST_PANIC_CHILD, TEST_NAME)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "controlled child test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(HOST_PANIC_MESSAGE),
+            "the default panic hook did not report the caught panic\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    run_async(async {
+        let (host, plugin, _, _) = host().await;
+        let guest = host.guest(&plugin).unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            guest.caller(context(HOST_PANIC_LABEL)),
+        )
+        .await
+        .expect("host-import panic left the invocation pending")
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CallError::HostPanic {
+                ref import,
+                ref message,
+            } if import == "test:host-bindings/application#caller"
+                && message == HOST_PANIC_MESSAGE
+        ));
+        assert_eq!(guest.caller(context("call")).await.unwrap(), "host-caller");
+        host.shutdown().await;
+    });
 }
 
 #[tokio::test]

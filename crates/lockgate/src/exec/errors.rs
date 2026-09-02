@@ -1,7 +1,16 @@
-use std::{error::Error, fmt, time::Duration};
+use std::{
+    any::Any,
+    error::Error,
+    fmt,
+    future::{Future, poll_fn},
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{Arc, Mutex},
+    task::Poll,
+    time::Duration,
+};
 
 use anyhow::Error as AnyError;
-use wasmtime::{Error as WasmtimeError, Trap};
+use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult, Trap};
 
 #[derive(Debug)]
 pub(crate) enum EnvironmentError {
@@ -73,6 +82,7 @@ pub(crate) enum ExecError {
     OutOfBudget,
     DeadlineExceeded(Duration),
     HostImportCallLimitExceeded { limit: u64 },
+    HostPanic { import: String, message: String },
     HostImport(AnyError),
     Dispatch(AnyError),
 }
@@ -89,6 +99,9 @@ impl fmt::Display for ExecError {
                 f,
                 "component exceeded its per-invocation host-import call limit of {limit}"
             ),
+            Self::HostPanic { import, message } => {
+                write!(f, "host import `{import}` panicked: {message}")
+            }
             Self::HostImport(error) => write!(f, "host import failed: {error}"),
             Self::Dispatch(error) => write!(f, "component dispatch failed: {error}"),
         }
@@ -127,6 +140,55 @@ impl fmt::Display for HostImportMarker {
 
 impl Error for HostImportMarker {}
 
+#[derive(Clone, Debug)]
+pub(crate) struct HostPanic {
+    pub(crate) import: String,
+    pub(crate) message: String,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct HostPanicState(Arc<Mutex<Option<HostPanic>>>);
+
+impl HostPanicState {
+    pub(crate) fn record(&self, import: impl Into<String>, payload: Box<dyn Any + Send>) -> String {
+        let panic = HostPanic {
+            import: import.into(),
+            message: panic_payload_message(payload),
+        };
+        let message = panic.message.clone();
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if slot.is_none() {
+            *slot = Some(panic);
+        }
+        message
+    }
+
+    pub(crate) fn take(&self) -> Option<HostPanic> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+    }
+}
+
+#[derive(Debug)]
+struct HostPanicMarker(HostPanic);
+
+impl fmt::Display for HostPanicMarker {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "host import `{}` panicked: {}",
+            self.0.import, self.0.message
+        )
+    }
+}
+
+impl Error for HostPanicMarker {}
+
 #[derive(Clone, Copy, Debug)]
 struct HostImportCallLimitExceeded {
     limit: u64,
@@ -156,6 +218,58 @@ pub(crate) fn host_import_error(error: AnyError) -> WasmtimeError {
     WasmtimeError::new(HostImportMarker(error))
 }
 
+pub(super) fn host_panic_error(
+    import: impl Into<String>,
+    payload: Box<dyn Any + Send>,
+) -> WasmtimeError {
+    WasmtimeError::new(HostPanicMarker(HostPanic {
+        import: import.into(),
+        message: panic_payload_message(payload),
+    }))
+}
+
+pub(crate) async fn catch_unwind_future<F>(future: F) -> Result<F::Output, Box<dyn Any + Send>>
+where
+    F: Future,
+{
+    let mut future = Box::pin(future);
+    poll_fn(
+        move |cx| match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
+            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(payload) => Poll::Ready(Err(payload)),
+        },
+    )
+    .await
+}
+
+#[doc(hidden)]
+pub async fn catch_host_panic<M, F>(
+    import: &'static str,
+    make_future: M,
+) -> WasmtimeResult<F::Output>
+where
+    M: FnOnce() -> F,
+    F: Future,
+{
+    let future = catch_unwind(AssertUnwindSafe(make_future))
+        .map_err(|payload| host_panic_error(import, payload))?;
+    catch_unwind_future(future)
+        .await
+        .map_err(|payload| host_panic_error(import, payload))
+}
+
+fn panic_payload_message(payload: Box<dyn Any + Send>) -> String {
+    let payload = match payload.downcast::<String>() {
+        Ok(message) => return *message,
+        Err(payload) => payload,
+    };
+    match payload.downcast::<&'static str>() {
+        Ok(message) => (*message).to_owned(),
+        Err(_) => "non-string panic payload".to_owned(),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct MemoryLimitExceeded {
     pub(super) current: usize,
@@ -176,6 +290,15 @@ impl fmt::Display for MemoryLimitExceeded {
 impl Error for MemoryLimitExceeded {}
 
 pub(super) fn map_instantiate_error(error: WasmtimeError) -> ExecError {
+    if error.is::<HostPanicMarker>() {
+        let marker = error
+            .downcast::<HostPanicMarker>()
+            .expect("host-panic marker type was checked before downcast");
+        return ExecError::HostPanic {
+            import: marker.0.import,
+            message: marker.0.message,
+        };
+    }
     if let Some(exceeded) = error.downcast_ref::<HostImportCallLimitExceeded>() {
         return ExecError::HostImportCallLimitExceeded {
             limit: exceeded.limit,
@@ -195,6 +318,15 @@ pub(super) fn map_dispatch_error(error: WasmtimeError) -> ExecError {
 }
 
 pub(super) fn map_call_error(error: WasmtimeError) -> ExecError {
+    if error.is::<HostPanicMarker>() {
+        let marker = error
+            .downcast::<HostPanicMarker>()
+            .expect("host-panic marker type was checked before downcast");
+        return ExecError::HostPanic {
+            import: marker.0.import,
+            message: marker.0.message,
+        };
+    }
     if let Some(exceeded) = error.downcast_ref::<HostImportCallLimitExceeded>() {
         return ExecError::HostImportCallLimitExceeded {
             limit: exceeded.limit,

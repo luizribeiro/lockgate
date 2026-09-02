@@ -105,6 +105,8 @@ pub enum CallError {
     DeadlineExceeded { deadline: Duration },
     /// The invocation exceeded its per-invocation host-import call limit.
     HostImportCallLimitExceeded { limit: u64 },
+    /// A host import panicked while servicing the invocation.
+    HostPanic { import: String, message: String },
     /// Dynamic function lookup, argument lowering, or result lifting failed.
     Dispatch { message: String },
 }
@@ -133,9 +135,10 @@ impl CallError {
             ExecError::HostImportCallLimitExceeded { limit } => {
                 Self::HostImportCallLimitExceeded { limit }
             }
-            // Generated application imports have no outer failure channel yet:
-            // WIT `result` values are guest data, while only future fallible
-            // capability adapters can create the internal HostImport marker.
+            ExecError::HostPanic { import, message } => Self::HostPanic { import, message },
+            // Generated application imports currently use their outer failure
+            // channel only for panics: WIT `result` values are guest data, while
+            // only future fallible capability adapters can create HostImport.
             // A public host-import variant belongs here once capability adapters
             // can actually produce host-import failures.
             ExecError::HostImport(error) | ExecError::Dispatch(error) => Self::Dispatch {
@@ -164,6 +167,9 @@ impl fmt::Display for CallError {
                 formatter,
                 "plugin exceeded its per-invocation host-import call limit of {limit}"
             ),
+            Self::HostPanic { import, message } => {
+                write!(formatter, "host import `{import}` panicked: {message}")
+            }
             Self::Dispatch { message } => {
                 write!(formatter, "plugin call could not be dispatched: {message}")
             }
