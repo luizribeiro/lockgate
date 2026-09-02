@@ -233,7 +233,7 @@ impl ExecEngine {
             plugin: None,
             jobs: None,
             settings: SettingsState::NotReady,
-            environment: EnvironmentGrants::default(),
+            environment: None,
             http_pool: None,
         })
     }
@@ -260,7 +260,7 @@ impl ExecEngine {
             plugin: None,
             jobs: None,
             settings: SettingsState::NotReady,
-            environment: EnvironmentGrants::default(),
+            environment: None,
             http_pool: None,
         })
     }
@@ -272,7 +272,7 @@ pub(crate) struct LoadedComponent<S: 'static> {
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     jobs: Option<DetachedJobContext>,
     settings: SettingsState,
-    environment: EnvironmentGrants,
+    environment: Option<EnvironmentGrants>,
     http_pool: Option<Arc<HttpPool>>,
 }
 
@@ -321,16 +321,6 @@ impl EnvironmentGrants {
     }
 }
 
-impl Default for EnvironmentGrants {
-    fn default() -> Self {
-        Self {
-            plugin_id: PluginId::from(String::new()),
-            required: Vec::new(),
-            optional: Vec::new(),
-        }
-    }
-}
-
 impl<S: Send + Sync + 'static> LoadedComponent<S> {
     pub(crate) fn set_plugin<P: Clone + Send + Sync + 'static>(
         &mut self,
@@ -342,7 +332,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
     }
 
     pub(crate) fn set_environment_grants(&mut self, environment: EnvironmentGrants) {
-        self.environment = environment;
+        self.environment = Some(environment);
     }
 
     pub(crate) fn set_settings(&mut self, settings: ValidatedSettings) {
@@ -454,7 +444,10 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         data: S,
         limits: ExecLimits,
     ) -> Result<Store<StoreCtx<S>>, EnvironmentError> {
-        let wasi = self.environment.wasi_context()?;
+        let wasi = match &self.environment {
+            Some(environment) => environment.wasi_context()?,
+            None => WasiCtxBuilder::new().build(),
+        };
         let mut store = Store::new(
             self.instance_pre.engine(),
             StoreCtx::new(

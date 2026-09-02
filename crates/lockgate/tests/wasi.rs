@@ -309,6 +309,41 @@ fn component_without_env_grants_has_an_empty_environment() {
     });
 }
 
+#[test]
+fn loaded_component_before_admission_has_an_empty_environment() {
+    const TEST_NAME: &str = "loaded_component_before_admission_has_an_empty_environment";
+    const HOST_ONLY_NAME: &str = "LOCKGATE_TEST_PREADMISSION_HOST_ONLY_37BD5C42";
+    const HOST_ONLY_VALUE: &str = "preadmission-host-only-value-73cb0d0f";
+
+    if !enter_controlled_environment(TEST_NAME, &[(HOST_ONLY_NAME, Some(HOST_ONLY_VALUE))]) {
+        return;
+    }
+
+    run_async(async {
+        let engine = ExecEngine::new_pooling().unwrap();
+        let loaded = engine
+            .load::<TestState>(&common::WASI_FIXTURE, |_| Ok(()))
+            .unwrap();
+        let environment_count = loaded
+            .export("test:wasi/guest", "environment-count")
+            .expect("environment count export should resolve structurally");
+
+        let results = loaded
+            .invoke(
+                environment_count,
+                &[],
+                TestState,
+                LIMITS,
+                INVOCATION_FUEL,
+                common::INVOCATION_DEADLINE,
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(results.as_slice(), [Val::U64(0)]));
+    });
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn wasi_importing_guest_instantiates_and_runs() -> Result<()> {
     let engine = ExecEngine::new_pooling()?;
