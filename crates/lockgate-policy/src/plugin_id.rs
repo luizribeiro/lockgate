@@ -30,6 +30,26 @@ impl From<&str> for PluginId {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for PluginId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for PluginId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        <String as serde::Deserialize>::deserialize(deserializer).map(Self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PluginId;
@@ -69,6 +89,43 @@ mod tests {
                 PluginId::from("openai"),
                 PluginId::from("sandbox"),
             ]
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_json_round_trip() {
+        let plugin_id = PluginId::from("openai");
+
+        let json = serde_json::to_string(&plugin_id).unwrap();
+
+        assert_eq!(json, r#""openai""#);
+        assert_eq!(serde_json::from_str::<PluginId>(&json).unwrap(), plugin_id);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_json_btree_map_round_trip_uses_string_keys() {
+        let plugins = BTreeMap::from([
+            (PluginId::from("openai"), 1_u32),
+            (PluginId::from("kagi"), 2_u32),
+        ]);
+
+        let json = serde_json::to_string(&plugins).unwrap();
+
+        assert_eq!(json, r#"{"kagi":2,"openai":1}"#);
+        assert_eq!(
+            serde_json::from_str::<BTreeMap<PluginId, u32>>(&json).unwrap(),
+            plugins
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_json_string_deserializes_into_plugin_id() {
+        assert_eq!(
+            serde_json::from_str::<PluginId>(r#""kagi""#).unwrap(),
+            PluginId::from("kagi")
         );
     }
 }

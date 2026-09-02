@@ -1436,6 +1436,8 @@ dependencies = [
  "lockgate-macros",
  "lockgate-schema",
  "proptest",
+ "serde",
+ "serde_json",
  "trybuild",
  "url",
 ]
