@@ -37,8 +37,8 @@ pub use lifecycle::{
     RequiredEnvironmentVariable, RuntimeLimits, SymbolicRoots,
 };
 pub use lockgate_policy::{
-    CapabilityContract, EnvVarName, HttpOrigin, Permission, Scope, ScopeError, ScopeRef, ScopeRepr,
-    ScopedPermission, capability, check_scope_laws, env, net,
+    CapabilityContract, EnvVarName, HttpOrigin, Permission, PluginId, Scope, ScopeError, ScopeRef,
+    ScopeRepr, ScopedPermission, capability, check_scope_laws, env, net,
 };
 pub use policy::{
     CapabilityRegistrationError, ConsentManifest, ConsentRecord, ConsentRequired, DriftChange,

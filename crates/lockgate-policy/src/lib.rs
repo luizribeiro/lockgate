@@ -10,6 +10,7 @@ mod env_var_name;
 mod http_origin;
 mod need;
 mod permission;
+mod plugin_id;
 mod scope;
 
 pub use capability::CapabilityContract;
@@ -17,6 +18,7 @@ pub use env_var_name::EnvVarName;
 pub use http_origin::HttpOrigin;
 pub use need::{Need, Needs, ScopeRef};
 pub use permission::{Permission, ScopedPermission};
+pub use plugin_id::PluginId;
 pub use scope::{
     ExhaustiveScopeDomain, Scope, ScopeError, ScopeRepr, check_scope_laws,
     check_scope_laws_for_registration,
