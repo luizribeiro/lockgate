@@ -6,7 +6,7 @@ use wasmtime::Trap;
 
 #[test]
 fn load_errors_distinguish_compile_from_link() {
-    let engine = ExecEngine::new().unwrap();
+    let engine = ExecEngine::new_pooling().unwrap();
 
     assert!(matches!(
         engine.load::<TestState>(b"not a component", |_| Ok(())),
@@ -20,7 +20,7 @@ fn load_errors_distinguish_compile_from_link() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn trap_is_isolated_from_the_next_invocation() {
-    let engine = ExecEngine::new().unwrap();
+    let engine = ExecEngine::new_pooling().unwrap();
     let loaded = engine
         .load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)
         .unwrap();
@@ -69,7 +69,7 @@ async fn trap_is_isolated_from_the_next_invocation() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn marked_host_failure_maps_to_host_import() {
-    let engine = ExecEngine::new().unwrap();
+    let engine = ExecEngine::new_pooling().unwrap();
     let loaded = engine
         .load::<TestState>(&common::EXEC_FIXTURE, |linker| {
             linker
@@ -107,7 +107,7 @@ async fn marked_host_failure_maps_to_host_import() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn guest_trap_after_successful_import_stays_a_trap() {
-    let engine = ExecEngine::new().unwrap();
+    let engine = ExecEngine::new_pooling().unwrap();
     let loaded = engine
         .load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)
         .unwrap();

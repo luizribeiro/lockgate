@@ -302,7 +302,7 @@ fn component_without_env_grants_has_an_empty_environment() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn wasi_importing_guest_instantiates_and_runs() -> Result<()> {
-    let engine = ExecEngine::new()?;
+    let engine = ExecEngine::new_pooling()?;
     let loaded = engine.load::<TestState>(&common::WASI_FIXTURE, |_| Ok(()))?;
     let clock = loaded
         .export("test:wasi/guest", "clock-seconds")
@@ -325,7 +325,7 @@ async fn wasi_importing_guest_instantiates_and_runs() -> Result<()> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn wasi_outbound_network_is_denied_at_runtime() -> Result<()> {
-    let engine = ExecEngine::new()?;
+    let engine = ExecEngine::new_pooling()?;
     let loaded = engine.load::<TestState>(&common::WASI_FIXTURE, |_| Ok(()))?;
     let connect = loaded
         .export("test:wasi/guest", "network-denied")
@@ -348,7 +348,7 @@ async fn wasi_outbound_network_is_denied_at_runtime() -> Result<()> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn wasi_filesystem_access_is_denied_at_runtime() -> Result<()> {
-    let engine = ExecEngine::new()?;
+    let engine = ExecEngine::new_pooling()?;
     let loaded = engine.load::<TestState>(&common::WASI_FIXTURE, |_| Ok(()))?;
     let open = loaded
         .export("test:wasi/guest", "filesystem-denied")

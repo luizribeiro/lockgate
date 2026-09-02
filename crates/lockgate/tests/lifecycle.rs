@@ -1,8 +1,8 @@
 mod common;
 
 use lockgate::{
-    AdmissionError, CallBudget, HostBuilder, InspectError, LimitSet, PluginConfig, Role, RoleError,
-    RoleInvocation, RuntimeLimits, inspect,
+    AdmissionError, CallBudget, HostBuilder, InspectError, InstanceAllocation, LimitSet,
+    PluginConfig, PoolingAllocationConfig, Role, RoleError, RoleInvocation, RuntimeLimits, inspect,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, PluginMetadata};
@@ -356,7 +356,11 @@ async fn smoke_instantiation_budget_exhaustion_is_typed() {
 #[tokio::test]
 async fn smoke_instantiation_applies_the_store_memory_cap() {
     let bytes = common::sectioned_fixture(&memory_growing_component(), &metadata());
-    let mut builder = HostBuilder::new(()).unwrap();
+    let mut builder = HostBuilder::with_allocation(
+        (),
+        InstanceAllocation::Pooling(PoolingAllocationConfig::default()),
+    )
+    .unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
@@ -374,6 +378,61 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
     assert!(matches!(error, AdmissionError::SmokeFailure { .. }));
     assert!(error.to_string().contains("linear memory growth"));
     assert!(error.to_string().contains("0-byte limit"));
+}
+
+#[test]
+fn default_pooling_slots_fit_the_default_runtime_memory_limit() {
+    assert!(
+        PoolingAllocationConfig::default().max_memory_size
+            >= RuntimeLimits::default().max_memory_bytes
+    );
+}
+
+#[tokio::test]
+async fn pooling_rejects_a_runtime_memory_limit_larger_than_its_slots() {
+    const SLOT_SIZE: usize = 1024 * 1024;
+    const REQUESTED_SIZE: usize = SLOT_SIZE + 1;
+
+    let bytes = common::sectioned_fixture(&memory_growing_component(), &metadata());
+    let mut builder = HostBuilder::with_allocation(
+        (),
+        InstanceAllocation::Pooling(PoolingAllocationConfig {
+            max_memory_size: SLOT_SIZE,
+            ..PoolingAllocationConfig::default()
+        }),
+    )
+    .unwrap();
+    let prepared = builder
+        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let acceptance = prepared.accept_all();
+    let limits = RuntimeLimits {
+        max_memory_bytes: REQUESTED_SIZE,
+        ..RuntimeLimits::default()
+    };
+
+    let error = builder
+        .admit(prepared, acceptance, limits)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AdmissionError::PoolingMemoryLimitExceeded {
+            max_memory_bytes: REQUESTED_SIZE,
+            max_memory_size: SLOT_SIZE,
+        }
+    ));
+    assert_eq!(
+        error.to_string(),
+        "plugin memory limit of 1048577 bytes exceeds the pooling allocator slot size of 1048576 bytes"
+    );
+    assert_eq!(
+        error.hint(),
+        Some(
+            "increase PoolingAllocationConfig::max_memory_size or lower RuntimeLimits::max_memory_bytes"
+        )
+    );
 }
 
 #[tokio::test]

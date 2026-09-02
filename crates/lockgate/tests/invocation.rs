@@ -14,7 +14,7 @@ use wasmtime::component::{Linker, Val};
 
 #[tokio::test(flavor = "current_thread")]
 async fn value_export_returns_expected_value() -> Result<()> {
-    let engine = ExecEngine::new()?;
+    let engine = ExecEngine::new_pooling()?;
     let loaded = engine.load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)?;
     let export = loaded
         .export("test:exec/guest", "value")
@@ -37,7 +37,7 @@ async fn value_export_returns_expected_value() -> Result<()> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn smoke_probe_drops_its_store() -> Result<()> {
-    let engine = ExecEngine::new()?;
+    let engine = ExecEngine::new_pooling()?;
     let loaded = engine.load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)?;
     let dropped = Arc::new(AtomicBool::new(false));
 
@@ -57,7 +57,7 @@ async fn smoke_probe_drops_its_store() -> Result<()> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn dropping_invocation_drops_store_and_stops_guest() -> Result<()> {
-    let engine = ExecEngine::new()?;
+    let engine = ExecEngine::new_pooling()?;
     let entered = Arc::new(Notify::new());
     let calls = Arc::new(AtomicUsize::new(0));
     let import_dropped = Arc::new(AtomicBool::new(false));

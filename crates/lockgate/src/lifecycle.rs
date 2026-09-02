@@ -19,7 +19,7 @@ use crate::config::{SettingsValidationError, validate_settings};
 use crate::exec::cache::CompiledComponentCache;
 use crate::exec::{
     EnvironmentError, EnvironmentGrants, ExecEngine, ExecError, ExecLimits, HttpPool,
-    ImportsFactory, LoadError, LoadedComponent, TypedImports,
+    ImportsFactory, InstanceAllocation, LoadError, LoadedComponent, TypedImports,
 };
 use crate::inspection::{
     InspectError, Inspection, decode_imported_interfaces, decode_metadata, decode_needs,
@@ -383,8 +383,20 @@ impl<S: CallContext> HostBuilder<S> {
     /// Generated bindings implement [`crate::HostImports`] for the supplied
     /// value. Pass `()` when admitted plugins import no application functions.
     pub fn new<I: crate::HostImports<S>>(imports: I) -> Result<Self, HostConstructionError> {
+        Self::with_allocation(imports, InstanceAllocation::default())
+    }
+
+    /// Creates a builder with an explicitly selected instance allocator.
+    ///
+    /// Pooling capacity is fixed for the lifetime of the host. Each admitted
+    /// plugin's [`RuntimeLimits::max_memory_bytes`] must fit within the configured
+    /// pooling memory-slot size.
+    pub fn with_allocation<I: crate::HostImports<S>>(
+        imports: I,
+        allocation: InstanceAllocation,
+    ) -> Result<Self, HostConstructionError> {
         let policy_metadata = I::policy_metadata().map_err(HostConstructionError::HostImports)?;
-        let engine = ExecEngine::new()
+        let engine = ExecEngine::with_allocation(allocation)
             .map_err(EngineError::new)
             .map_err(HostConstructionError::Engine)?;
         let jobs = JobTracker::new()
@@ -701,6 +713,14 @@ impl<S: CallContext> HostBuilder<S> {
         if prepared.host != self.id {
             return Err(AdmissionError::PreparedHostMismatch {
                 plugin: prepared.instance_id.clone(),
+            });
+        }
+        if let Some(max_memory_size) = self.engine.pooling_memory_slot_size()
+            && limits.max_memory_bytes > max_memory_size
+        {
+            return Err(AdmissionError::PoolingMemoryLimitExceeded {
+                max_memory_bytes: limits.max_memory_bytes,
+                max_memory_size,
             });
         }
         let prepared_artifact = prepared
@@ -1102,6 +1122,13 @@ pub enum AdmissionError {
     Preflight {
         message: String,
     },
+    /// A plugin's memory ceiling is larger than the host's pooled memory slots.
+    PoolingMemoryLimitExceeded {
+        /// Per-store memory ceiling requested for the plugin.
+        max_memory_bytes: usize,
+        /// Maximum memory size reserved in each pooling slot.
+        max_memory_size: usize,
+    },
     UnregisteredGuardPermission {
         atom: AtomKey,
         interface: String,
@@ -1188,6 +1215,9 @@ impl AdmissionError {
             Self::UnsupportedExport(error) => error.hint(),
             Self::HostImportManifestMismatch { .. } => Some(
                 "add at least one as a required or optional need, or remove the interface import",
+            ),
+            Self::PoolingMemoryLimitExceeded { .. } => Some(
+                "increase PoolingAllocationConfig::max_memory_size or lower RuntimeLimits::max_memory_bytes",
             ),
             Self::PreparedHostMismatch { .. } => Some("prepare it with this builder"),
             Self::AcceptanceDigestMismatch { .. } => Some("accept this prepared request again"),
@@ -1291,6 +1321,13 @@ impl fmt::Display for AdmissionError {
             Self::Preflight { message } => {
                 write!(formatter, "component linker preflight failed: {message}")
             }
+            Self::PoolingMemoryLimitExceeded {
+                max_memory_bytes,
+                max_memory_size,
+            } => write!(
+                formatter,
+                "plugin memory limit of {max_memory_bytes} bytes exceeds the pooling allocator slot size of {max_memory_size} bytes"
+            ),
             Self::UnregisteredGuardPermission {
                 atom,
                 interface,

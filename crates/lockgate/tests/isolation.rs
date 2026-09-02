@@ -10,7 +10,7 @@ use wasmtime::component::{Linker, Val};
 
 #[tokio::test(flavor = "current_thread")]
 async fn same_loaded_component_accepts_overlapping_invocations() {
-    let engine = ExecEngine::new().unwrap();
+    let engine = ExecEngine::new_pooling().unwrap();
     let barrier = Arc::new(Barrier::new(2));
     let loaded = engine
         .load::<TestState>(&common::EXEC_FIXTURE, {
@@ -52,7 +52,7 @@ async fn same_loaded_component_accepts_overlapping_invocations() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn every_root_invocation_gets_fresh_guest_globals() {
-    let engine = ExecEngine::new().unwrap();
+    let engine = ExecEngine::new_pooling().unwrap();
     let loaded = engine
         .load::<TestState>(&common::EXEC_FIXTURE, wire_ready_wait)
         .unwrap();

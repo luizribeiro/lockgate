@@ -28,6 +28,7 @@ mod role;
 pub(crate) mod test_support;
 mod validate;
 
+pub use exec::{InstanceAllocation, PoolingAllocationConfig};
 pub use inspection::{InspectError, Inspection, inspect};
 pub use jobs::{DetachError, DetachedJobFailure, JobId};
 pub use lifecycle::{
@@ -324,6 +325,8 @@ mod tests {
     #[test]
     fn creates_engine_with_pinned_configuration() {
         ExecEngine::new().expect("the pinned Wasmtime configuration should be valid");
+        ExecEngine::new_pooling()
+            .expect("the pinned Wasmtime pooling configuration should be valid");
     }
 
     #[test]

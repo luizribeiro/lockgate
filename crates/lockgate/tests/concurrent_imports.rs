@@ -15,7 +15,7 @@ const REGRESSION_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::test(flavor = "current_thread")]
 async fn guest_async_imports_run_concurrently() -> Result<()> {
-    let engine = ExecEngine::new()?;
+    let engine = ExecEngine::new_pooling()?;
     let barrier = Arc::new(Barrier::new(2));
     let entries = Arc::new(AtomicUsize::new(0));
     let loaded = engine.load::<TestState>(&common::EXEC_CONCURRENT_FIXTURE, {

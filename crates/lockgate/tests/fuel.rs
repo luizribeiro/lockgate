@@ -17,7 +17,7 @@ const FUEL_LIMITS: ExecLimits = ExecLimits {
 
 #[tokio::test(flavor = "current_thread")]
 async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
-    let engine = ExecEngine::new().unwrap();
+    let engine = ExecEngine::new_pooling().unwrap();
     let reported = Arc::new(AtomicU32::new(0));
     let loaded = engine
         .load::<TestState>(&common::EXEC_FUEL_FIXTURE, {

@@ -11,7 +11,10 @@ use std::{any::Any, marker::PhantomData, time::Duration};
 use wasmtime::component::{
     Component, ComponentExportIndex, InstancePre, Linker, ResourceTable, Val, types::ComponentItem,
 };
-use wasmtime::{Config, Engine, ResourceLimiter, Store};
+use wasmtime::{
+    Config, Engine, InstanceAllocationStrategy as WasmtimeInstanceAllocationStrategy,
+    PoolingAllocationConfig as WasmtimePoolingAllocationConfig, ResourceLimiter, Store,
+};
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
@@ -52,8 +55,46 @@ pub(crate) use wasi_http_sender::HttpPool;
 // them; smaller values tighten deadline adherence at the cost of slightly more overhead.
 const DEADLINE_YIELD_FUEL: u64 = 10_000;
 
+/// Wasmtime instance allocation strategy used by a Lockgate host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InstanceAllocation {
+    /// Allocate instance resources for each invocation and release them afterward.
+    #[default]
+    OnDemand,
+    /// Reuse preallocated instance resources sized by the supplied configuration.
+    Pooling(PoolingAllocationConfig),
+}
+
+/// Capacity reserved by Wasmtime's pooling instance allocator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoolingAllocationConfig {
+    /// Maximum number of concurrent linear memories.
+    pub total_memories: u32,
+    /// Maximum number of concurrent tables.
+    pub total_tables: u32,
+    /// Maximum number of concurrent core Wasm instances.
+    pub total_core_instances: u32,
+    /// Maximum number of concurrent component instances.
+    pub total_component_instances: u32,
+    /// Maximum byte size of each pooled linear-memory slot.
+    pub max_memory_size: usize,
+}
+
+impl Default for PoolingAllocationConfig {
+    fn default() -> Self {
+        Self {
+            total_memories: 64,
+            total_tables: 64,
+            total_core_instances: 64,
+            total_component_instances: 64,
+            max_memory_size: 64 * 1024 * 1024,
+        }
+    }
+}
+
 pub(crate) struct ExecEngine {
     engine: Engine,
+    pooling_memory_slot_size: Option<usize>,
     #[cfg(test)]
     cache_hits: AtomicU64,
     #[cfg(test)]
@@ -61,7 +102,15 @@ pub(crate) struct ExecEngine {
 }
 
 impl ExecEngine {
+    #[allow(
+        dead_code,
+        reason = "direct execution tests exercise the on-demand engine"
+    )]
     pub(crate) fn new() -> WasmtimeResult<Self> {
+        Self::with_allocation(InstanceAllocation::default())
+    }
+
+    pub(crate) fn with_allocation(allocation: InstanceAllocation) -> WasmtimeResult<Self> {
         let mut config = Config::new();
         config
             .wasm_component_model(true)
@@ -70,9 +119,28 @@ impl ExecEngine {
             .wasm_component_model_map(true)
             .concurrency_support(true)
             .consume_fuel(true);
+        // Preserve shareable compiled memory images across fresh per-call instances.
+        config.memory_init_cow(true);
+
+        let pooling_memory_slot_size = match allocation {
+            InstanceAllocation::OnDemand => None,
+            InstanceAllocation::Pooling(settings) => {
+                let mut pooling = WasmtimePoolingAllocationConfig::default();
+                pooling
+                    .total_memories(settings.total_memories)
+                    .total_tables(settings.total_tables)
+                    .total_stacks(settings.total_component_instances)
+                    .total_core_instances(settings.total_core_instances)
+                    .total_component_instances(settings.total_component_instances)
+                    .max_memory_size(settings.max_memory_size);
+                config.allocation_strategy(WasmtimeInstanceAllocationStrategy::Pooling(pooling));
+                Some(settings.max_memory_size)
+            }
+        };
 
         Ok(Self {
             engine: Engine::new(&config)?,
+            pooling_memory_slot_size,
             #[cfg(test)]
             cache_hits: AtomicU64::new(0),
             #[cfg(test)]
@@ -80,8 +148,19 @@ impl ExecEngine {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_pooling() -> WasmtimeResult<Self> {
+        Self::with_allocation(InstanceAllocation::Pooling(
+            PoolingAllocationConfig::default(),
+        ))
+    }
+
     pub(crate) fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    pub(crate) fn pooling_memory_slot_size(&self) -> Option<usize> {
+        self.pooling_memory_slot_size
     }
 
     pub(crate) fn compile(&self, bytes: &[u8]) -> Result<Component, LoadError> {

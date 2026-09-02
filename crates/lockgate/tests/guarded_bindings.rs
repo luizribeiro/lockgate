@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use lockgate::{
     AdmissionError, CallError, HostConstructionError, HostCtx, HostImportPolicyError,
-    PermissionDenied, PluginConfig, PluginSubject, ResolveScopedResource, RuntimeLimits,
-    ScopedResource,
+    InstanceAllocation, PermissionDenied, PluginConfig, PluginSubject, PoolingAllocationConfig,
+    ResolveScopedResource, RuntimeLimits, ScopedResource,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
@@ -512,12 +512,15 @@ fn fixture(wit: &str, needs: &NeedsManifest) -> Vec<u8> {
 }
 
 fn host_builder() -> lockgate::HostBuilder<()> {
-    lockgate::HostBuilder::new(Imports::default())
-        .unwrap()
-        .register::<permissions::Contract>()
-        .unwrap()
-        .register::<admin_permissions::Contract>()
-        .unwrap()
+    lockgate::HostBuilder::with_allocation(
+        Imports::default(),
+        InstanceAllocation::Pooling(PoolingAllocationConfig::default()),
+    )
+    .unwrap()
+    .register::<permissions::Contract>()
+    .unwrap()
+    .register::<admin_permissions::Contract>()
+    .unwrap()
 }
 
 async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
@@ -659,12 +662,15 @@ async fn runtime_host_with_limits(
     needs: &NeedsManifest,
     limits: RuntimeLimits,
 ) -> (lockgate::Host<()>, lockgate::PluginHandle) {
-    let mut builder = lockgate::HostBuilder::new(imports)
-        .unwrap()
-        .register::<permissions::Contract>()
-        .unwrap()
-        .register::<admin_permissions::Contract>()
-        .unwrap();
+    let mut builder = lockgate::HostBuilder::with_allocation(
+        imports,
+        InstanceAllocation::Pooling(PoolingAllocationConfig::default()),
+    )
+    .unwrap()
+    .register::<permissions::Contract>()
+    .unwrap()
+    .register::<admin_permissions::Contract>()
+    .unwrap();
     let bytes = runtime_fixture(plugin_id, needs);
     let prepared = builder
         .prepare(plugin_id, &bytes, PluginConfig::default())
