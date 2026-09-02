@@ -53,43 +53,81 @@ impl HostId {
     }
 }
 
-/// Per-invocation execution budget.
+/// Fuel and wall-clock bounds for one exported function call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum BudgetClass {
-    /// A deterministic fuel ceiling and wall-clock deadline for one invocation.
-    ///
-    /// `fuel` caps guest instructions, while `deadline` bounds elapsed wall-clock time for
-    /// both compute-bound guest execution and asynchronous host work.
-    Bounded { fuel: u64, deadline: Duration },
+pub struct CallBudget {
+    /// Maximum guest instructions available to the call.
+    pub fuel: u64,
+    /// Maximum elapsed time for guest execution and asynchronous host work.
+    pub deadline: Duration,
 }
 
-/// A [`CallContext`] and execution budget installed for one invocation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InvocationCtx<S> {
-    pub data: S,
-    pub budget: BudgetClass,
-}
-
-impl InvocationCtx<()> {
-    /// Creates a context with no application data and bounded fuel and time budgets.
-    ///
-    /// # Requires a time-enabled Tokio runtime
-    ///
-    /// The deadline is enforced with [`tokio::time::timeout`], so invoking with this context
-    /// **panics on a runtime built without timers**. `#[tokio::main]` and `#[tokio::test]`
-    /// enable them by default; a hand-built [`tokio::runtime::Builder`] needs `.enable_time()`
-    /// (or `.enable_all()`).
-    pub fn bounded(fuel: u64, deadline: Duration) -> Self {
-        Self::new((), BudgetClass::Bounded { fuel, deadline })
+impl CallBudget {
+    pub(crate) fn validate(self, target: impl Into<String>) -> Result<(), InvalidCallBudget> {
+        let target = target.into();
+        if self.fuel == 0 {
+            return Err(InvalidCallBudget {
+                target,
+                reason: "fuel must be greater than zero",
+            });
+        }
+        if self.deadline.is_zero() {
+            return Err(InvalidCallBudget {
+                target,
+                reason: "deadline must be greater than zero",
+            });
+        }
+        Ok(())
     }
 }
 
-impl<S> InvocationCtx<S> {
-    /// Creates an invocation context with `data` as its [`CallContext`] and the
-    /// supplied budget.
-    pub fn new(data: S, budget: BudgetClass) -> Self {
-        Self { data, budget }
+impl Default for CallBudget {
+    fn default() -> Self {
+        Self {
+            fuel: 25_000_000,
+            deadline: Duration::from_secs(30),
+        }
+    }
+}
+
+/// An invalid setup-time call budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidCallBudget {
+    target: String,
+    reason: &'static str,
+}
+
+impl fmt::Display for InvalidCallBudget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "invalid budget for {}: {}",
+            self.target, self.reason
+        )
+    }
+}
+
+impl Error for InvalidCallBudget {}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RegisteredCallBudgets(BTreeMap<(&'static str, &'static str), CallBudget>);
+
+impl RegisteredCallBudgets {
+    fn register<R: Role>(&mut self, budgets: R::Budgets) -> Result<(), InvalidCallBudget> {
+        self.0
+            .retain(|(interface, _), _| *interface != R::INTERFACE);
+        for (function, budget) in crate::RoleBudgets::__into_entries(budgets) {
+            budget.validate(format!("{}#{function}", R::INTERFACE))?;
+            self.0.insert((R::INTERFACE, function), budget);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn resolve(&self, interface: &'static str, function: &str) -> CallBudget {
+        self.0
+            .get(&(interface, function))
+            .copied()
+            .unwrap_or_default()
     }
 }
 
@@ -224,6 +262,8 @@ pub struct HostBuilder<S: CallContext> {
     policy_metadata: HostImportPolicyMetadata,
     compiled_cache: Option<CompiledComponentCache>,
     http_pool: std::sync::Arc<HttpPool>,
+    call_budgets: RegisteredCallBudgets,
+    admission_budget: CallBudget,
 }
 
 struct AdmittedPlugin<S: 'static> {
@@ -372,6 +412,8 @@ impl<S: CallContext> HostBuilder<S> {
             policy_metadata,
             compiled_cache: None,
             http_pool: std::sync::Arc::new(HttpPool::new()),
+            call_budgets: RegisteredCallBudgets::default(),
+            admission_budget: CallBudget::default(),
         })
     }
 
@@ -423,6 +465,22 @@ impl<S: CallContext> HostBuilder<S> {
         mut self,
     ) -> Result<Self, CapabilityRegistrationError> {
         self.registry.register::<C>()?;
+        Ok(self)
+    }
+
+    /// Configures every exported function budget for one generated role.
+    ///
+    /// Roles without an explicit registration use [`CallBudget::default`] for
+    /// each function. Registering the same role again replaces its prior budgets.
+    pub fn budgets<R: Role>(mut self, budgets: R::Budgets) -> Result<Self, InvalidCallBudget> {
+        self.call_budgets.register::<R>(budgets)?;
+        Ok(self)
+    }
+
+    /// Configures the budget used by preflight and admission smoke instantiation.
+    pub fn admission_budget(mut self, budget: CallBudget) -> Result<Self, InvalidCallBudget> {
+        budget.validate("admission")?;
+        self.admission_budget = budget;
         Ok(self)
     }
 
@@ -563,14 +621,14 @@ impl<S: CallContext> HostBuilder<S> {
     /// it is currently present. Missing variables do not fail preflight; admission
     /// remains the readiness boundary that enforces them. The temporary Store and
     /// instance are dropped, and the plugin is not registered with this builder.
-    pub async fn preflight(
+    pub async fn preflight_with_data(
         &mut self,
         prepared: &Prepared,
         limits: &RuntimeLimits,
-        startup_ctx: InvocationCtx<S>,
+        startup_data: S,
     ) -> Result<Preflight, AdmissionError> {
         let result = self
-            .preflight_prepared(prepared, limits, startup_ctx, None)
+            .preflight_prepared(prepared, limits, startup_data, None)
             .await?;
         Ok(result.report)
     }
@@ -583,15 +641,15 @@ impl<S: CallContext> HostBuilder<S> {
     /// then registers the retained artifact and returns its handle.
     ///
     /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
-    /// `startup_ctx`'s fuel and deadline, so an application-chosen
+    /// the configured admission budget, so an application-chosen
     /// startup budget may reject a constructor that steady-state calls would
     /// instantiate under the full limit.
-    pub async fn admit(
+    pub async fn admit_with_data(
         &mut self,
         prepared: Prepared,
         acceptance: Acceptance,
         limits: RuntimeLimits,
-        startup_ctx: InvocationCtx<S>,
+        startup_data: S,
     ) -> Result<PluginHandle, AdmissionError> {
         if prepared.host != self.id {
             return Err(AdmissionError::PreparedHostMismatch {
@@ -622,7 +680,7 @@ impl<S: CallContext> HostBuilder<S> {
             registry: std::sync::Arc::new(self.registry.clone()),
         };
         let result = self
-            .preflight_prepared(&prepared, &limits, startup_ctx, Some(&handle))
+            .preflight_prepared(&prepared, &limits, startup_data, Some(&handle))
             .await?;
 
         self.admitted.push(AdmittedPlugin {
@@ -637,7 +695,7 @@ impl<S: CallContext> HostBuilder<S> {
         &self,
         prepared: &Prepared,
         limits: &RuntimeLimits,
-        startup_ctx: InvocationCtx<S>,
+        startup_data: S,
         admitted_handle: Option<&PluginHandle>,
     ) -> Result<PreflightResult<S>, AdmissionError> {
         if prepared.host != self.id {
@@ -701,9 +759,9 @@ impl<S: CallContext> HostBuilder<S> {
             )),
         }
 
-        let BudgetClass::Bounded { fuel, deadline } = startup_ctx.budget;
+        let CallBudget { fuel, deadline } = self.admission_budget;
         artifact
-            .smoke(startup_ctx.data, (*limits).into(), fuel, deadline)
+            .smoke(startup_data, (*limits).into(), fuel, deadline)
             .await
             .map_err(AdmissionError::from_smoke)?;
         Ok(PreflightResult { report, artifact })
@@ -722,7 +780,29 @@ impl<S: CallContext> HostBuilder<S> {
             jobs: self.jobs,
             registry: self.registry,
             http_pool: self.http_pool,
+            call_budgets: self.call_budgets,
         }
+    }
+}
+
+impl HostBuilder<()> {
+    /// Preflights a prepared plugin using the configured admission budget.
+    pub async fn preflight(
+        &mut self,
+        prepared: &Prepared,
+        limits: &RuntimeLimits,
+    ) -> Result<Preflight, AdmissionError> {
+        self.preflight_with_data(prepared, limits, ()).await
+    }
+
+    /// Admits a plugin using the configured admission budget.
+    pub async fn admit(
+        &mut self,
+        prepared: Prepared,
+        acceptance: Acceptance,
+        limits: RuntimeLimits,
+    ) -> Result<PluginHandle, AdmissionError> {
+        self.admit_with_data(prepared, acceptance, limits, ()).await
     }
 }
 
@@ -860,6 +940,7 @@ pub struct Host<S: CallContext> {
     )]
     registry: CapabilityRegistry,
     http_pool: std::sync::Arc<HttpPool>,
+    call_budgets: RegisteredCallBudgets,
 }
 
 impl<S: CallContext> Drop for Host<S> {
@@ -896,6 +977,7 @@ impl<S: CallContext> Host<S> {
             &admitted.artifact,
             admitted.limits,
             R::INTERFACE,
+            &self.call_budgets,
         )))
     }
 
@@ -1717,21 +1799,11 @@ mod grant_tests {
         let staging_acceptance = staging.accept_all();
 
         let prod = builder
-            .admit(
-                prod,
-                prod_acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-            )
+            .admit(prod, prod_acceptance, RuntimeLimits::default())
             .await
             .unwrap();
         let staging = builder
-            .admit(
-                staging,
-                staging_acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-            )
+            .admit(staging, staging_acceptance, RuntimeLimits::default())
             .await
             .unwrap();
 
@@ -1776,12 +1848,7 @@ mod grant_tests {
         let mismatched_acceptance = other.accept_all();
 
         let error = builder
-            .admit(
-                rejected,
-                mismatched_acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-            )
+            .admit(rejected, mismatched_acceptance, RuntimeLimits::default())
             .await
             .unwrap_err();
         assert!(matches!(
@@ -1798,12 +1865,7 @@ mod grant_tests {
             .unwrap();
         let acceptance = retry.accept_all();
         let handle = builder
-            .admit(
-                retry,
-                acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-            )
+            .admit(retry, acceptance, RuntimeLimits::default())
             .await
             .unwrap();
 
@@ -1909,12 +1971,7 @@ mod grant_tests {
             .unwrap();
 
         let error = conflicting
-            .admit(
-                prepared,
-                acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-            )
+            .admit(prepared, acceptance, RuntimeLimits::default())
             .await
             .unwrap_err();
 
@@ -1964,12 +2021,7 @@ mod grant_tests {
         let acceptance = prepared.accept_all();
 
         let handle = builder
-            .admit(
-                prepared,
-                acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-            )
+            .admit(prepared, acceptance, RuntimeLimits::default())
             .await
             .unwrap();
 

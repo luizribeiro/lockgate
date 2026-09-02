@@ -1,15 +1,13 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
+use lockgate::{HostBuilder, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "greeter";
 const DEFAULT_PLUGIN_PATH: &str =
     "examples/greeter/plugin/target/wasm32-wasip2/release/greeter_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
 examples/greeter/plugin/Cargo.toml --target wasm32-wasip2 --release";
-const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 
 lockgate::host_bindings!({
     path: "../wit",
@@ -41,18 +39,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // admit records consent, applies limits, and proves the component can start.
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await?;
     let host = builder.finish();
 
-    // Every call receives its own application context and execution budget.
-    let ctx = InvocationCtx::bounded(25_000_000, INVOCATION_DEADLINE);
-    let greeting = host.greeter(&plugin)?.greet(ctx, "world").await?;
+    let greeting = host.greeter(&plugin)?.greet("world").await?;
     println!("{greeting}");
     host.shutdown().await;
     Ok(())

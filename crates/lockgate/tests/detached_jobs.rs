@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use lockgate::{
-    CallError, DetachError, DetachedJobFailure, Host, HostBuilder, HostCtx, InvocationCtx,
-    PluginConfig, PluginHandle, Role, RoleInvocation, RuntimeLimits, Value,
+    CallError, DetachError, DetachedJobFailure, Host, HostBuilder, HostCtx, PluginConfig,
+    PluginHandle, Role, RoleInvocation, RuntimeLimits, Value,
 };
 use tokio::sync::Semaphore;
 
@@ -163,6 +163,8 @@ struct DetachedClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>);
 impl Role for DetachedRole {
     const INTERFACE: &'static str = "test:detached-jobs/guest";
 
+    type Budgets = ();
+
     type Client<'a, S>
         = DetachedClient<'a, S>
     where
@@ -178,14 +180,7 @@ impl Role for DetachedRole {
 
 impl DetachedClient<'_, ()> {
     async fn start(&self, kind: u8) -> Result<String, CallError> {
-        let values = self
-            .0
-            .invoke(
-                "start",
-                &[Value::U8(kind)],
-                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("start", &[Value::U8(kind)], ()).await?;
         match values.as_slice() {
             [Value::String(value)] => Ok(value.clone()),
             _ => Err(CallError::shape("expected one string result")),
@@ -193,14 +188,7 @@ impl DetachedClient<'_, ()> {
     }
 
     async fn cancel(&self) -> Result<(), CallError> {
-        let values = self
-            .0
-            .invoke(
-                "cancel",
-                &[],
-                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("cancel", &[], ()).await?;
         if values.is_empty() {
             Ok(())
         } else {
@@ -209,14 +197,7 @@ impl DetachedClient<'_, ()> {
     }
 
     async fn healthy(&self) -> Result<u32, CallError> {
-        let values = self
-            .0
-            .invoke(
-                "healthy",
-                &[],
-                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("healthy", &[], ()).await?;
         match values.as_slice() {
             [Value::U32(value)] => Ok(*value),
             _ => Err(CallError::shape("expected one u32 result")),
@@ -247,7 +228,6 @@ async fn host(
                 max_detached_jobs: 1,
                 ..RuntimeLimits::default()
             },
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();

@@ -1,8 +1,8 @@
 mod common;
 
 use lockgate::{
-    AdmissionError, CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation,
-    RuntimeLimits, Value,
+    AdmissionError, CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits,
+    Value,
 };
 use lockgate_schema::PluginMetadata;
 
@@ -15,6 +15,8 @@ struct SettingsClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>);
 
 impl Role for SettingsRole {
     const INTERFACE: &'static str = "test:config-fixture/guest";
+
+    type Budgets = ();
 
     type Client<'a, S>
         = SettingsClient<'a, S>
@@ -32,6 +34,8 @@ impl Role for SettingsRole {
 impl Role for TypedSettingsRole {
     const INTERFACE: &'static str = "test:typed-settings/guest";
 
+    type Budgets = ();
+
     type Client<'a, S>
         = SettingsClient<'a, S>
     where
@@ -47,14 +51,7 @@ impl Role for TypedSettingsRole {
 
 impl SettingsClient<'_, ()> {
     async fn observed_settings(&self) -> Result<String, CallError> {
-        let values = self
-            .0
-            .invoke(
-                "observed-settings",
-                &[],
-                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("observed-settings", &[], ()).await?;
         match values.as_slice() {
             [Value::String(value)] => Ok(value.clone()),
             _ => Err(CallError::shape("expected one string result")),
@@ -62,14 +59,7 @@ impl SettingsClient<'_, ()> {
     }
 
     async fn typed_observed_settings(&self) -> Result<String, CallError> {
-        let values = self
-            .0
-            .invoke(
-                "observed-settings",
-                &[],
-                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("observed-settings", &[], ()).await?;
         match values.as_slice() {
             [Value::String(value)] => Ok(value.clone()),
             _ => Err(CallError::shape("expected one string result")),
@@ -96,22 +86,13 @@ async fn valid_config_preflights_without_acceptance_and_remains_admissible() {
         .await
         .unwrap();
     let preflight = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap();
     assert!(preflight.required_environment_variables.is_empty());
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let host = builder.finish();
@@ -138,12 +119,7 @@ async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let host = builder.finish();
@@ -168,21 +144,12 @@ async fn invalid_settings_fail_preflight_and_admission_identically() {
         .await
         .unwrap();
     let preflight_error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
     let acceptance = prepared.accept_all();
     let admission_error = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap_err();
 
@@ -236,11 +203,7 @@ async fn facade_no_settings_rejects_every_supplied_key_by_name() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
 

@@ -3,8 +3,8 @@ mod common;
 use std::str::FromStr;
 
 use lockgate::{
-    AdmissionError, HostBuilder, InvocationCtx, JsonValueKind, PluginConfig, RuntimeLimits, Scope,
-    ScopeError, ScopeReference, ScopeRepr, SymbolicRoots,
+    AdmissionError, HostBuilder, JsonValueKind, PluginConfig, RuntimeLimits, Scope, ScopeError,
+    ScopeReference, ScopeRepr, SymbolicRoots,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
@@ -150,12 +150,7 @@ async fn literal_setting_and_root_references_prepare_accept_and_admit() {
     let acceptance = prepared.accept_all();
 
     let handle = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
 
@@ -272,12 +267,7 @@ async fn acceptance_for_one_instance_cannot_admit_another() {
     let acceptance_b = prepared_b.accept_all();
 
     let error = builder
-        .admit(
-            prepared_a,
-            acceptance_b,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared_a, acceptance_b, RuntimeLimits::default())
         .await
         .unwrap_err();
 
@@ -322,12 +312,7 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
         .unwrap();
 
     let error = builder
-        .admit(
-            current,
-            stale_acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(current, stale_acceptance, RuntimeLimits::default())
         .await
         .unwrap_err();
 
@@ -376,12 +361,7 @@ async fn dash_prefix_declaration_orders_admit_identically() {
             .unwrap();
         let acceptance = prepared.accept_all();
         let handle = builder
-            .admit(
-                prepared,
-                acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-            )
+            .admit(prepared, acceptance, RuntimeLimits::default())
             .await
             .unwrap();
         assert_eq!(handle.id(), instance_id);

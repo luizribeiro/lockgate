@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Duration};
+use std::str::FromStr;
 
 use lockgate_policy::{Need, Needs, Scope, ScopeError, ScopeRef, ScopeRepr, env};
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
@@ -8,7 +8,7 @@ use crate::policy::diff_grants;
 use crate::test_support::{component_from_wit, settings_schema_component, with_section};
 use crate::{
     ConsentRecord, ConsentRequired, DriftKind, ExportDrift, ExportDriftKind, GrantReview,
-    HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits, consent_drift,
+    HostBuilder, PluginConfig, RuntimeLimits, consent_drift,
 };
 
 const INSTANCE_ID: &str = "sessions-prod";
@@ -436,12 +436,7 @@ async fn component_digest_changes_do_not_require_new_consent() {
 
         let acceptance = current.accept_reviewed(Some(&record)).unwrap();
         let admitted = current_builder
-            .admit(
-                current,
-                acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-            )
+            .admit(current, acceptance, RuntimeLimits::default())
             .await
             .unwrap();
 
@@ -468,12 +463,7 @@ async fn first_run_refuses_acceptance_until_explicit_approval_then_admits() {
     let record = prepared.approve("2026-08-19T15:00:00Z".to_owned());
     let acceptance = prepared.accept_reviewed(Some(&record)).unwrap();
     let admitted = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
 
@@ -862,12 +852,7 @@ async fn scope_and_requirement_narrowing_rebinds_to_the_current_manifest() {
 
     let acceptance = current.accept_reviewed(Some(&record)).unwrap();
     let admitted = current_builder
-        .admit(
-            current,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, Duration::from_secs(30)),
-        )
+        .admit(current, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
 

@@ -1,8 +1,6 @@
 mod common;
 
-use lockgate::{
-    CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value,
-};
+use lockgate::{CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value};
 
 struct InlineComposedRole;
 
@@ -10,6 +8,8 @@ struct InlineComposedClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>)
 
 impl Role for InlineComposedRole {
     const INTERFACE: &'static str = "test:inline-composed/guest";
+
+    type Budgets = ();
 
     type Client<'a, S>
         = InlineComposedClient<'a, S>
@@ -26,14 +26,7 @@ impl Role for InlineComposedRole {
 
 impl InlineComposedClient<'_, ()> {
     async fn run(&self) -> Result<u32, CallError> {
-        let values = self
-            .0
-            .invoke(
-                "run",
-                &[],
-                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("run", &[], ()).await?;
         match values.as_slice() {
             [Value::U32(value)] => Ok(*value),
             _ => Err(CallError::shape("expected one u32 result")),
@@ -54,12 +47,7 @@ async fn inline_composed_world_builds_admits_and_invokes() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let host = builder.finish();

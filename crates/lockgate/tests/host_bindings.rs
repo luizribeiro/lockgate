@@ -7,10 +7,7 @@ use std::sync::{
 use std::time::Duration;
 use std::{future::Future, process::Command};
 
-use lockgate::{
-    BudgetClass, CallError, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RoleError,
-    RuntimeLimits,
-};
+use lockgate::{CallError, HostBuilder, HostCtx, PluginConfig, RoleError, RuntimeLimits};
 use tokio::sync::Barrier;
 
 const REGRESSION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -139,37 +136,25 @@ async fn host() -> (
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
+        .admit_with_data(
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::new(
-                CallData {
-                    label: "startup".into(),
-                    startup: 17,
-                },
-                BudgetClass::Bounded {
-                    fuel: 1_000_000,
-                    deadline: common::INVOCATION_DEADLINE,
-                },
-            ),
+            CallData {
+                label: "startup".into(),
+                startup: 17,
+            },
         )
         .await
         .unwrap();
     (builder.finish(), plugin, entries, startups)
 }
 
-fn context(label: &str) -> InvocationCtx<CallData> {
-    InvocationCtx::new(
-        CallData {
-            label: label.into(),
-            startup: 0,
-        },
-        BudgetClass::Bounded {
-            fuel: 1_000_000,
-            deadline: common::INVOCATION_DEADLINE,
-        },
-    )
+fn context(label: &str) -> CallData {
+    CallData {
+        label: label.into(),
+        startup: 0,
+    }
 }
 
 fn run_async(future: impl Future<Output = ()>) {
@@ -305,20 +290,14 @@ async fn smoke_imports_observe_startup_data() {
         .unwrap();
     let acceptance = prepared.accept_all();
     builder
-        .admit(
+        .admit_with_data(
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            InvocationCtx::new(
-                CallData {
-                    label: "startup".into(),
-                    startup: 17,
-                },
-                BudgetClass::Bounded {
-                    fuel: 1_000_000,
-                    deadline: common::INVOCATION_DEADLINE,
-                },
-            ),
+            CallData {
+                label: "startup".into(),
+                startup: 17,
+            },
         )
         .await
         .unwrap();
@@ -419,7 +398,7 @@ async fn generated_role_fails_at_the_cast_when_not_exported() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
+        .admit_with_data(
             prepared,
             acceptance,
             RuntimeLimits::default(),
@@ -456,7 +435,7 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
         .unwrap();
     let acceptance = skipped.accept_all();
     builder
-        .admit(
+        .admit_with_data(
             skipped,
             acceptance,
             RuntimeLimits::default(),
@@ -474,7 +453,7 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
         .unwrap();
     let acceptance = implementing.accept_all();
     let implementing = builder
-        .admit(
+        .admit_with_data(
             implementing,
             acceptance,
             RuntimeLimits::default(),
@@ -511,7 +490,7 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         .unwrap();
     let acceptance = first.accept_all();
     let first = builder
-        .admit(
+        .admit_with_data(
             first,
             acceptance,
             RuntimeLimits::default(),
@@ -529,7 +508,7 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         .unwrap();
     let acceptance = second.accept_all();
     let second = builder
-        .admit(
+        .admit_with_data(
             second,
             acceptance,
             RuntimeLimits::default(),

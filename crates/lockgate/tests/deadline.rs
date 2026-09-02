@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use lockgate::__private::{StoreCtx, wasmtime};
 use lockgate::{
-    AdmissionError, CallError, Host, HostBuilder, HostImports, InvocationCtx, PluginConfig,
+    AdmissionError, CallBudget, CallError, Host, HostBuilder, HostImports, PluginConfig,
     PluginHandle, Role, RoleInvocation, RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
@@ -48,6 +48,8 @@ struct GuestClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>);
 impl Role for GuestRole {
     const INTERFACE: &'static str = "test:exec/guest";
 
+    type Budgets = ();
+
     type Client<'a, S>
         = GuestClient<'a, S>
     where
@@ -62,20 +64,28 @@ impl Role for GuestRole {
 }
 
 impl<S: Send + Sync + 'static> GuestClient<'_, S> {
-    async fn value(&self, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
-        self.call_u32("value", ctx).await
+    async fn value(&self, data: S, budget: CallBudget) -> Result<u32, CallError> {
+        self.call_u32("value", data, budget).await
     }
 
-    async fn suspend(&self, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
-        self.call_u32("suspend", ctx).await
+    async fn suspend(&self, data: S, budget: CallBudget) -> Result<u32, CallError> {
+        self.call_u32("suspend", data, budget).await
     }
 
-    async fn spin(&self, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
-        self.call_u32("spin", ctx).await
+    async fn spin(&self, data: S, budget: CallBudget) -> Result<u32, CallError> {
+        self.call_u32("spin", data, budget).await
     }
 
-    async fn call_u32(&self, function: &str, ctx: InvocationCtx<S>) -> Result<u32, CallError> {
-        let results = self.0.invoke(function, &[], ctx).await?;
+    async fn call_u32(
+        &self,
+        function: &str,
+        data: S,
+        budget: CallBudget,
+    ) -> Result<u32, CallError> {
+        let results = self
+            .0
+            .invoke_with_budget(function, &[], data, budget)
+            .await?;
         match results.as_slice() {
             [Value::U32(value)] => Ok(*value),
             _ => Err(CallError::shape(format!(
@@ -102,7 +112,6 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
                 max_host_import_calls: 0,
                 ..RuntimeLimits::default()
             },
-            InvocationCtx::bounded(CALL_FUEL, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap();
@@ -138,7 +147,14 @@ fn blocking_start_component() -> Vec<u8> {
 
 #[tokio::test]
 async fn blocking_start_returns_a_smoke_deadline_error() {
-    let mut builder = HostBuilder::new(BlockingImports).unwrap();
+    let deadline = Duration::from_millis(200);
+    let mut builder = HostBuilder::new(BlockingImports)
+        .unwrap()
+        .admission_budget(CallBudget {
+            fuel: CALL_FUEL,
+            deadline,
+        })
+        .unwrap();
     let metadata = PluginMetadata::new("deadline-start", "Deadline start fixture", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&blocking_start_component(), &metadata);
     let prepared = builder
@@ -146,15 +162,8 @@ async fn blocking_start_returns_a_smoke_deadline_error() {
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
-    let deadline = Duration::from_millis(200);
-
     let error = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(CALL_FUEL, deadline),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap_err();
 
@@ -172,7 +181,13 @@ async fn blocking_guest_returns_deadline_exceeded() {
     let deadline = Duration::from_millis(200);
 
     let error = guest
-        .suspend(InvocationCtx::bounded(CALL_FUEL, deadline))
+        .suspend(
+            (),
+            CallBudget {
+                fuel: CALL_FUEL,
+                deadline,
+            },
+        )
         .await
         .unwrap_err();
 
@@ -190,7 +205,13 @@ async fn compute_bound_guest_returns_deadline_exceeded() {
     let deadline = Duration::from_millis(50);
 
     let error = guest
-        .spin(InvocationCtx::bounded(COMPUTE_FUEL, deadline))
+        .spin(
+            (),
+            CallBudget {
+                fuel: COMPUTE_FUEL,
+                deadline,
+            },
+        )
         .await
         .unwrap_err();
 
@@ -210,7 +231,13 @@ async fn fast_guest_succeeds_with_a_generous_deadline() {
     let guest = host.client::<GuestRole>(&plugin).unwrap();
 
     let value = guest
-        .value(InvocationCtx::bounded(CALL_FUEL, Duration::from_secs(5)))
+        .value(
+            (),
+            CallBudget {
+                fuel: CALL_FUEL,
+                deadline: Duration::from_secs(5),
+            },
+        )
         .await
         .unwrap();
 

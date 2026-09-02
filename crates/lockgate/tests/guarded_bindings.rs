@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use lockgate::{
     AdmissionError, CallError, HostConstructionError, HostCtx, HostImportPolicyError,
-    InvocationCtx, PermissionDenied, PluginConfig, PluginSubject, ResolveScopedResource,
-    RuntimeLimits, ScopedResource,
+    PermissionDenied, PluginConfig, PluginSubject, ResolveScopedResource, RuntimeLimits,
+    ScopedResource,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
@@ -520,10 +520,6 @@ fn host_builder() -> lockgate::HostBuilder<()> {
         .unwrap()
 }
 
-fn startup_context() -> InvocationCtx<()> {
-    InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE)
-}
-
 async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
     let prepared = builder
         .prepare(PLUGIN_ID, bytes, PluginConfig::default())
@@ -531,12 +527,7 @@ async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
         .unwrap();
     let acceptance = prepared.accept_all();
     builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            startup_context(),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
 }
@@ -604,9 +595,9 @@ async fn cross_capability_mixed_methods_deny_independently_after_interface_wirin
         let (host, plugin) = runtime_host(imports.clone(), "mixed-plugin", &needs).await;
         let guest = host.guest(&plugin).unwrap();
 
-        assert_eq!(guest.mixed_version(call()).await.unwrap(), "mixed-v1");
-        assert_eq!(guest.mixed_vm(call()).await.unwrap(), vm_result);
-        assert_eq!(guest.mixed_admin(call()).await.unwrap(), admin_result);
+        assert_eq!(guest.mixed_version().await.unwrap(), "mixed-v1");
+        assert_eq!(guest.mixed_vm().await.unwrap(), vm_result);
+        assert_eq!(guest.mixed_admin().await.unwrap(), admin_result);
         assert_eq!(
             imports
                 .state
@@ -680,10 +671,7 @@ async fn runtime_host_with_limits(
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
-    let plugin = builder
-        .admit(prepared, acceptance, limits, startup_context())
-        .await
-        .unwrap();
+    let plugin = builder.admit(prepared, acceptance, limits).await.unwrap();
     (builder.finish(), plugin)
 }
 
@@ -704,7 +692,7 @@ async fn guarded_capability_imports_still_consume_the_call_limit() {
     let guest = host.guest(&plugin).unwrap();
 
     let error = guest
-        .protocol_version_many(call(), LIMIT as u32 + 1)
+        .protocol_version_many(LIMIT as u32 + 1)
         .await
         .unwrap_err();
 
@@ -723,10 +711,6 @@ async fn guarded_capability_imports_still_consume_the_call_limit() {
     host.shutdown().await;
 }
 
-fn call() -> InvocationCtx<()> {
-    InvocationCtx::bounded(25_000_000, common::INVOCATION_DEADLINE)
-}
-
 #[tokio::test]
 async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
     let imports = Imports::default();
@@ -741,25 +725,22 @@ async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
     let (host, plugin) = runtime_host(imports.clone(), "pool-plugin", &needs).await;
     let guest = host.guest(&plugin).unwrap();
 
-    let vm = guest.create(call(), "gpu").await.unwrap();
+    let vm = guest.create("gpu").await.unwrap();
     assert_eq!(vm, "ok:gpu-1");
     assert_eq!(imports.state.pool_resolutions.load(Ordering::SeqCst), 1);
     assert_eq!(imports.state.body_calls.create.load(Ordering::SeqCst), 1);
     assert_eq!(
-        guest.exec(call(), "gpu-1", "nvidia-smi").await.unwrap(),
+        guest.exec("gpu-1", "nvidia-smi").await.unwrap(),
         "ok:gpu-1:nvidia-smi"
     );
     assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 1);
     assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
 
-    assert_eq!(guest.create(call(), "cpu").await.unwrap(), "denied");
-    assert_eq!(guest.create(call(), "missing").await.unwrap(), "not-found");
+    assert_eq!(guest.create("cpu").await.unwrap(), "denied");
+    assert_eq!(guest.create("missing").await.unwrap(), "not-found");
     assert_eq!(imports.state.pool_resolutions.load(Ordering::SeqCst), 3);
     assert_eq!(imports.state.body_calls.create.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        guest.exec(call(), "cpu-b", "hostname").await.unwrap(),
-        "denied"
-    );
+    assert_eq!(guest.exec("cpu-b", "hostname").await.unwrap(), "denied");
     assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 2);
     assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
     host.shutdown().await;
@@ -773,13 +754,10 @@ async fn argument_resource_guard_executes_the_normalized_checked_resource() {
     let guest = host.guest(&plugin).unwrap();
 
     assert_eq!(
-        guest.exec(call(), "  GPU-A  ", "uptime").await.unwrap(),
+        guest.exec("  GPU-A  ", "uptime").await.unwrap(),
         "ok:gpu-a:uptime"
     );
-    assert_eq!(
-        guest.exec(call(), "  CPU-B  ", "hostname").await.unwrap(),
-        "denied"
-    );
+    assert_eq!(guest.exec("  CPU-B  ", "hostname").await.unwrap(), "denied");
     assert_eq!(imports.state.vm_resolutions.load(Ordering::SeqCst), 2);
     assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
     host.shutdown().await;
@@ -800,17 +778,14 @@ async fn created_by_caller_guards_cover_only_the_callers_own_vms() {
     let guest = host.guest(&plugin).unwrap();
 
     assert_eq!(
-        guest.exec(call(), "gpu-a", "uptime").await.unwrap(),
+        guest.exec("gpu-a", "uptime").await.unwrap(),
         "ok:gpu-a:uptime"
     );
-    assert_eq!(
-        guest.exec(call(), "gpu-b", "uptime").await.unwrap(),
-        "denied"
-    );
+    assert_eq!(guest.exec("gpu-b", "uptime").await.unwrap(), "denied");
     assert_eq!(imports.state.body_calls.exec.load(Ordering::SeqCst), 1);
 
-    assert_eq!(guest.destroy(call(), "gpu-a").await.unwrap(), "ok");
-    assert_eq!(guest.destroy(call(), "gpu-b").await.unwrap(), "denied");
+    assert_eq!(guest.destroy("gpu-a").await.unwrap(), "ok");
+    assert_eq!(guest.destroy("gpu-b").await.unwrap(), "denied");
     assert_eq!(imports.state.body_calls.destroy.load(Ordering::SeqCst), 1);
     host.shutdown().await;
 }
@@ -821,7 +796,7 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
     let (host, plugin) =
         runtime_host(denied_imports.clone(), "no-grants", &NeedsManifest::empty()).await;
     let guest = host.guest(&plugin).unwrap();
-    assert_eq!(guest.list_pools(call()).await.unwrap(), "denied");
+    assert_eq!(guest.list_pools().await.unwrap(), "denied");
     assert_eq!(
         denied_imports
             .state
@@ -830,7 +805,7 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
             .load(Ordering::SeqCst),
         0
     );
-    assert_eq!(guest.protocol_version(call()).await.unwrap(), "1");
+    assert_eq!(guest.protocol_version().await.unwrap(), "1");
     assert_eq!(
         denied_imports
             .state
@@ -849,7 +824,7 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
     .unwrap();
     let (host, plugin) = runtime_host(allowed_imports.clone(), "list-plugin", &needs).await;
     let guest = host.guest(&plugin).unwrap();
-    assert_eq!(guest.list_pools(call()).await.unwrap(), "cpu,gpu");
+    assert_eq!(guest.list_pools().await.unwrap(), "cpu,gpu");
     assert_eq!(
         allowed_imports
             .state

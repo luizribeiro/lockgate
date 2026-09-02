@@ -1,8 +1,6 @@
 mod common;
 
-use lockgate::{
-    CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value,
-};
+use lockgate::{CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value};
 
 struct ReexportedPluginRole;
 
@@ -10,6 +8,8 @@ struct ReexportedPluginClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S
 
 impl Role for ReexportedPluginRole {
     const INTERFACE: &'static str = "test:reexported-plugin/guest";
+
+    type Budgets = ();
 
     type Client<'a, S>
         = ReexportedPluginClient<'a, S>
@@ -26,14 +26,7 @@ impl Role for ReexportedPluginRole {
 
 impl ReexportedPluginClient<'_, ()> {
     async fn value(&self) -> Result<u32, CallError> {
-        let values = self
-            .0
-            .invoke(
-                "value",
-                &[],
-                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("value", &[], ()).await?;
         match values.as_slice() {
             [Value::U32(value)] => Ok(*value),
             _ => Err(CallError::shape("expected one u32 result")),
@@ -54,12 +47,7 @@ async fn reexport_only_guest_builds_admits_and_invokes() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let host = builder.finish();

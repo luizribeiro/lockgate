@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use lockgate::{Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, RuntimeLimits};
+use lockgate::{Host, HostBuilder, PluginConfig, PluginHandle, RuntimeLimits};
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use rustls::{RootCertStore, ServerConfig, pki_types::PrivatePkcs8KeyDer};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -193,15 +193,7 @@ async fn admitted_client_with_options(
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
-    let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            limits,
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-        )
-        .await
-        .unwrap();
+    let plugin = builder.admit(prepared, acceptance, limits).await.unwrap();
     (builder.finish(), plugin)
 }
 
@@ -213,10 +205,7 @@ async fn https_with_default_roots_rejects_private_ca() {
 
     let error = tokio::time::timeout(
         Duration::from_secs(5),
-        guest.get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &format!("{}/private", server.origin),
-        ),
+        guest.get(&format!("{}/private", server.origin)),
     )
     .await
     .expect("HTTPS request must not hang")
@@ -242,10 +231,7 @@ async fn https_with_supplied_tls_root_accepts_private_ca() {
 
     let response = tokio::time::timeout(
         Duration::from_secs(5),
-        guest.get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &format!("{}/private", server.origin),
-        ),
+        guest.get(&format!("{}/private", server.origin)),
     )
     .await
     .expect("HTTPS request must not hang")
@@ -266,10 +252,7 @@ async fn sequential_invocations_reuse_one_http_connection() {
 
     for path in ["first", "second"] {
         let response = guest
-            .get(
-                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-                &format!("{origin}/{path}"),
-            )
+            .get(&format!("{origin}/{path}"))
             .await
             .unwrap()
             .unwrap();
@@ -295,10 +278,7 @@ async fn wasi_stream_io_does_not_consume_the_guarded_call_limit() {
     let guest = host.guest(&plugin).unwrap();
 
     let response = guest
-        .get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &format!("{allowed_origin}/stream-limit"),
-        )
+        .get(&format!("{allowed_origin}/stream-limit"))
         .await
         .unwrap()
         .unwrap();
@@ -326,28 +306,14 @@ async fn guest_http_client_reaches_only_its_granted_origin() {
     let guest = host.guest(&plugin).unwrap();
 
     let allowed_url = format!("{allowed_origin}/client");
-    let response = guest
-        .get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &allowed_url,
-        )
-        .await
-        .unwrap()
-        .unwrap();
+    let response = guest.get(&allowed_url).await.unwrap().unwrap();
     assert_eq!(response.status, 201);
     assert_eq!(response.body, RESPONSE_BODY);
     server.join().unwrap();
 
     let blocked = TcpListener::bind("127.0.0.1:0").unwrap();
     let blocked_url = format!("http://{}/blocked", blocked.local_addr().unwrap());
-    let error = guest
-        .get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &blocked_url,
-        )
-        .await
-        .unwrap()
-        .unwrap_err();
+    let error = guest.get(&blocked_url).await.unwrap().unwrap_err();
     assert!(error.contains("HTTP request failed"), "{error}");
     assert_no_connection(blocked);
     host.shutdown().await;
@@ -361,14 +327,7 @@ async fn base_url_setting_resolves_to_its_origin() {
     let guest = host.guest(&plugin).unwrap();
 
     let allowed_url = format!("{allowed_origin}/client");
-    let response = guest
-        .get(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &allowed_url,
-        )
-        .await
-        .unwrap()
-        .unwrap();
+    let response = guest.get(&allowed_url).await.unwrap().unwrap();
     assert_eq!(response.status, 201);
     assert_eq!(response.body, RESPONSE_BODY);
     server.join().unwrap();
@@ -382,11 +341,7 @@ async fn first_byte_timeout_fails_a_stalled_request() {
     let guest = host.guest(&plugin).unwrap();
 
     let error = guest
-        .get_with_first_byte_timeout(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &format!("{allowed_origin}/stall"),
-            SHORT_TIMEOUT_MILLIS,
-        )
+        .get_with_first_byte_timeout(&format!("{allowed_origin}/stall"), SHORT_TIMEOUT_MILLIS)
         .await
         .unwrap()
         .unwrap_err();
@@ -404,11 +359,7 @@ async fn normal_request_succeeds_with_generous_timeouts() {
     let guest = host.guest(&plugin).unwrap();
 
     let response = guest
-        .get_with_timeouts(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            &format!("{allowed_origin}/timeouts"),
-            5_000,
-        )
+        .get_with_timeouts(&format!("{allowed_origin}/timeouts"), 5_000)
         .await
         .unwrap()
         .unwrap();

@@ -1,8 +1,6 @@
 mod common;
 
-use lockgate::{
-    CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value,
-};
+use lockgate::{CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value};
 
 struct WithReuseRole;
 
@@ -10,6 +8,8 @@ struct WithReuseClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>);
 
 impl Role for WithReuseRole {
     const INTERFACE: &'static str = "test:with-reuse/guest@1.2.3";
+
+    type Budgets = ();
 
     type Client<'a, S>
         = WithReuseClient<'a, S>
@@ -27,14 +27,7 @@ impl Role for WithReuseRole {
 impl WithReuseClient<'_, ()> {
     async fn round_trip(&self, value: u32) -> Result<u32, CallError> {
         let arguments = [Value::Record(vec![("value".into(), Value::U32(value))])];
-        let values = self
-            .0
-            .invoke(
-                "round-trip",
-                &arguments,
-                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("round-trip", &arguments, ()).await?;
         match values.as_slice() {
             [Value::Record(fields)] => match fields.as_slice() {
                 [(name, Value::U32(value))] if name == "value" => Ok(*value),
@@ -58,12 +51,7 @@ async fn mapped_shared_type_builds_admits_and_round_trips() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let host = builder.finish();

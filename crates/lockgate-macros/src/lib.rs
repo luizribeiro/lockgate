@@ -145,9 +145,10 @@ pub fn derive_scope_repr(input: TokenStream) -> TokenStream {
 /// one table owned by the invocation Store, never in the cloned imports value.
 ///
 /// Each named exported interface becomes a top-level module containing its WIT
-/// value types plus `Role`, `Client`, and `HostExt`. Client methods take an
-/// `InvocationCtx` before their WIT arguments and invoke the plugin through
-/// Lockgate's value-only call boundary.
+/// value types plus `Budgets`, `Role`, `Client`, and `HostExt`. Clients for
+/// `data: ()` take only WIT arguments; clients with application call data take
+/// that value before their WIT arguments. Every method also has a
+/// `_with_budget` form for one-call overrides.
 /// Types reused from another interface are available when that defining
 /// interface is also exported by the selected world; other cross-interface
 /// type references are rejected during macro expansion.
@@ -392,6 +393,7 @@ fn export_module(
     exported: &ExportedInterface,
     exported_modules: &BTreeMap<InterfaceId, Ident>,
     lockgate: &TokenStream2,
+    unit_data: bool,
 ) -> syn::Result<TokenStream2> {
     let interface = &resolve.interfaces[exported.id];
     let module = &exported.public_module;
@@ -419,12 +421,56 @@ fn export_module(
     let methods = interface
         .functions
         .values()
-        .map(|function| client_method(&types, function, lockgate))
+        .map(|function| client_method(&types, function, lockgate, unit_data))
         .collect::<syn::Result<Vec<_>>>()?;
+    let client_impl = if unit_data {
+        quote! {
+            impl Client<'_, ()> {
+                #(#methods)*
+            }
+        }
+    } else {
+        quote! {
+            impl<S: #lockgate::CallContext> Client<'_, S> {
+                #(#methods)*
+            }
+        }
+    };
+    let budget_fields = interface.functions.values().map(|function| {
+        let field = format_ident!("{}", rust_ident(&function.name));
+        quote!(pub #field: #lockgate::CallBudget)
+    });
+    let budget_defaults = interface.functions.values().map(|function| {
+        let field = format_ident!("{}", rust_ident(&function.name));
+        quote!(#field: #lockgate::CallBudget::default())
+    });
+    let budget_entries = interface.functions.values().map(|function| {
+        let field = format_ident!("{}", rust_ident(&function.name));
+        let function_name = &function.name;
+        quote!((#function_name, self.#field))
+    });
 
     Ok(quote! {
         pub mod #module {
             #(#type_definitions)*
+
+            /// Per-function execution budgets for this exported interface.
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            pub struct Budgets {
+                #(#budget_fields,)*
+            }
+
+            impl Default for Budgets {
+                fn default() -> Self {
+                    Self { #(#budget_defaults,)* }
+                }
+            }
+
+            impl #lockgate::RoleBudgets for Budgets {
+                fn __into_entries(self) -> Vec<(&'static str, #lockgate::CallBudget)> {
+                    vec![#(#budget_entries),*]
+                }
+            }
 
             /// Role marker for this exported WIT interface.
             pub struct Role;
@@ -436,6 +482,8 @@ fn export_module(
 
             impl #lockgate::Role for Role {
                 const INTERFACE: &'static str = #interface_name;
+
+                type Budgets = Budgets;
 
                 type Client<'a, S>
                     = Client<'a, S>
@@ -452,9 +500,7 @@ fn export_module(
                 }
             }
 
-            impl<S: #lockgate::CallContext> Client<'_, S> {
-                #(#methods)*
-            }
+            #client_impl
 
             /// Readable cast extension for this exported WIT interface.
             pub trait HostExt<S: #lockgate::CallContext> {
@@ -617,6 +663,7 @@ fn client_method(
     types: &ExportTypeContext<'_>,
     function: &wit_parser::Function,
     lockgate: &TokenStream2,
+    unit_data: bool,
 ) -> syn::Result<TokenStream2> {
     let method = format_ident!("{}", rust_ident(&function.name));
     let function_name = &function.name;
@@ -658,15 +705,35 @@ fn client_method(
         }
     };
 
+    let override_method = format_ident!("{method}_with_budget");
+    let (data_parameter, data_value) = if unit_data {
+        (quote!(), quote!(()))
+    } else {
+        (quote!(data: S,), quote!(data))
+    };
+
     Ok(quote! {
         pub async fn #method(
             &self,
-            ctx: #lockgate::InvocationCtx<S>,
+            #data_parameter
             #(#parameters),*
         ) -> Result<#result_type, #lockgate::CallError> {
             let results = self
                 .invocation
-                .invoke(#function_name, &[#(#arguments),*], ctx)
+                .invoke(#function_name, &[#(#arguments),*], #data_value)
+                .await?;
+            #lifted
+        }
+
+        pub async fn #override_method(
+            &self,
+            budget: #lockgate::CallBudget,
+            #data_parameter
+            #(#parameters),*
+        ) -> Result<#result_type, #lockgate::CallError> {
+            let results = self
+                .invocation
+                .invoke_with_budget(#function_name, &[#(#arguments),*], #data_value, budget)
                 .await?;
             #lifted
         }
@@ -1690,9 +1757,15 @@ fn expand_with(
         .iter()
         .map(|interface| (interface.id, interface.public_module.clone()))
         .collect::<BTreeMap<_, _>>();
+    let call_data: SynType = input
+        .imports
+        .as_ref()
+        .map(|config| config.data.clone())
+        .unwrap_or_else(|| syn::parse_quote!(()));
+    let unit_data = matches!(&call_data, SynType::Tuple(tuple) if tuple.elems.is_empty());
     let export_modules = exported_interfaces
         .iter()
-        .map(|interface| export_module(&resolve, interface, &exported_modules, lockgate))
+        .map(|interface| export_module(&resolve, interface, &exported_modules, lockgate, unit_data))
         .collect::<syn::Result<Vec<_>>>()?;
     let host_imports_impl = input.imports.as_ref().map(|config| {
         let imports = &config.imports;

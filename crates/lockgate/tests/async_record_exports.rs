@@ -1,6 +1,6 @@
 mod common;
 
-use lockgate::{HostBuilder, InvocationCtx, PluginConfig, RuntimeLimits};
+use lockgate::{HostBuilder, PluginConfig, RuntimeLimits};
 
 lockgate::host_bindings!({
     path: "tests/fixtures/async-record-guest/wit",
@@ -22,25 +22,17 @@ async fn async_export_with_params_and_rich_result_round_trips() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let host = builder.finish();
     let guest = host.guest(&plugin).unwrap();
 
     let reply = guest
-        .run(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            guest::Request {
-                prompt: "hello".into(),
-                limit: 7,
-            },
-        )
+        .run(guest::Request {
+            prompt: "hello".into(),
+            limit: 7,
+        })
         .await
         .unwrap()
         .unwrap();
@@ -51,13 +43,10 @@ async fn async_export_with_params_and_rich_result_round_trips() {
     ));
 
     let error = guest
-        .run(
-            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            guest::Request {
-                prompt: String::new(),
-                limit: 0,
-            },
-        )
+        .run(guest::Request {
+            prompt: String::new(),
+            limit: 0,
+        })
         .await
         .unwrap()
         .unwrap_err();

@@ -31,8 +31,8 @@ mod validate;
 pub use inspection::{InspectError, Inspection, inspect};
 pub use jobs::{DetachError, DetachedJobFailure, JobId};
 pub use lifecycle::{
-    Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, HostConstructionError,
-    InvocationCtx, LimitSet, PluginConfig, PluginHandle, Preflight, Prepared,
+    Acceptance, AdmissionError, CallBudget, EngineError, Host, HostBuilder, HostConstructionError,
+    InvalidCallBudget, LimitSet, PluginConfig, PluginHandle, Preflight, Prepared,
     RequiredEnvironmentVariable, RuntimeLimits, SymbolicRoots,
 };
 pub use lockgate_policy::{
@@ -55,14 +55,13 @@ pub use wasmtime::component::Resource;
 /// For worlds with imported interfaces, the `data` option names the
 /// [`CallContext`] type.
 pub use lockgate_macros::{guarded, host_bindings, no_capability_required, requires};
-pub use role::{CallError, Role, RoleError, RoleInvocation, Value};
+pub use role::{CallError, Role, RoleBudgets, RoleError, RoleInvocation, Value};
 pub use validate::ValidationError;
 
 /// The application value that travels with one plugin invocation — past the
 /// plugin — from the host's call site to the host's import handlers.
 ///
-/// The host sets it when invoking an export (the value given to
-/// [`InvocationCtx::new`]) and reads it back inside its own generated import
+/// The host sets it when invoking an export and reads it back inside its own generated import
 /// implementations ([`HostCtx::data`]). The plugin in between can never
 /// observe or forge it: it appears nowhere in the WIT and never enters guest
 /// memory. That makes it the right carrier for facts about who a call is for —

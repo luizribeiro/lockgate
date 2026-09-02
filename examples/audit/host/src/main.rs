@@ -1,16 +1,14 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use lockgate::{BudgetClass, HostBuilder, HostCtx, InvocationCtx, PluginConfig, RuntimeLimits};
+use lockgate::{HostBuilder, HostCtx, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "audit";
 const DEFAULT_PLUGIN_PATH: &str =
     "examples/audit/plugin/target/wasm32-wasip2/release/audit_plugin.wasm";
 const BUILD_COMMAND: &str = "nix develop -c cargo build --manifest-path \
 examples/audit/plugin/Cargo.toml --target wasm32-wasip2 --release";
-const INVOCATION_DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct CallOrigin {
@@ -69,18 +67,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .await?;
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
+        .admit_with_data(
             prepared,
             acceptance,
             RuntimeLimits::default(),
-            call("startup", 1_000_000),
+            call("startup"),
         )
         .await?;
     let host = builder.finish();
     let tasks = host.tasks(&plugin)?;
 
-    tasks.run(call("alice", 25_000_000), "index").await?;
-    tasks.run(call("bob", 25_000_000), "backup").await?;
+    tasks.run(call("alice"), "index").await?;
+    tasks.run(call("bob"), "backup").await?;
 
     for line in lines.lock().unwrap().iter() {
         println!("{line}");
@@ -89,14 +87,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn call(user: &str, fuel: u64) -> InvocationCtx<CallOrigin> {
-    InvocationCtx::new(
-        CallOrigin { user: user.into() },
-        BudgetClass::Bounded {
-            fuel,
-            deadline: INVOCATION_DEADLINE,
-        },
-    )
+fn call(user: &str) -> CallOrigin {
+    CallOrigin { user: user.into() }
 }
 
 fn read_component(path: &Path) -> Result<Vec<u8>, std::io::Error> {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use lockgate::{
-    HostCtx, InvocationCtx, PermissionDenied, PluginConfig, PluginSubject, ResolveCtx,
+    HostCtx, PermissionDenied, PluginConfig, PluginSubject, ResolveCtx,
     ResolveScopedResourceHandle, Resource, ResourceLookupError, RuntimeLimits, Scope,
     ScopedResource,
 };
@@ -234,19 +234,10 @@ async fn runtime_host(
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     (builder.finish(), plugin)
-}
-
-fn call() -> InvocationCtx<()> {
-    InvocationCtx::bounded(5_000_000, common::INVOCATION_DEADLINE)
 }
 
 #[tokio::test]
@@ -255,11 +246,7 @@ async fn session_send_authorizes_the_live_host_representation() {
     let (host, plugin) = runtime_host(imports.clone(), &needs_current()).await;
 
     assert_eq!(
-        host.guest(&plugin)
-            .unwrap()
-            .live_send(call())
-            .await
-            .unwrap(),
+        host.guest(&plugin).unwrap().live_send().await.unwrap(),
         "ok:hello"
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 1);
@@ -273,11 +260,7 @@ async fn one_handle_reevaluates_membership_on_the_second_guarded_call() {
     let (host, plugin) = runtime_host(imports.clone(), &needs_current()).await;
 
     assert_eq!(
-        host.guest(&plugin)
-            .unwrap()
-            .repeated_call(call())
-            .await
-            .unwrap(),
+        host.guest(&plugin).unwrap().repeated_call().await.unwrap(),
         "ok:first,denied"
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 2);
@@ -291,11 +274,7 @@ async fn invalidated_handle_uses_the_method_error_path_and_drops_without_trappin
     let (host, plugin) = runtime_host(imports.clone(), &needs_current()).await;
 
     assert_eq!(
-        host.guest(&plugin)
-            .unwrap()
-            .stale_handle(call())
-            .await
-            .unwrap(),
+        host.guest(&plugin).unwrap().stale_handle().await.unwrap(),
         "not-found"
     );
     assert_eq!(imports.calls.resolutions.load(Ordering::SeqCst), 0);
@@ -311,7 +290,7 @@ async fn acquiring_a_handle_grants_no_authority_to_later_methods() {
     assert_eq!(
         host.guest(&plugin)
             .unwrap()
-            .acquire_without_authority(call())
+            .acquire_without_authority()
             .await
             .unwrap(),
         "denied"
@@ -329,7 +308,7 @@ async fn resource_wire_guard_executes_the_checked_live_resource() {
     assert_eq!(
         host.guest(&plugin)
             .unwrap()
-            .checked_resource(call())
+            .checked_resource()
             .await
             .unwrap(),
         "ok:live-session-0:hello,denied"

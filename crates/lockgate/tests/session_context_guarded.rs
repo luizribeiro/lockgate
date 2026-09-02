@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lockgate::{
-    BudgetClass, HostCtx, InvocationCtx, PermissionDenied, PluginConfig, PluginSubject,
-    ResolveScopedResource, RuntimeLimits, Scope, ScopeRepr, ScopedResource,
+    HostCtx, PermissionDenied, PluginConfig, PluginSubject, ResolveScopedResource, RuntimeLimits,
+    Scope, ScopeRepr, ScopedResource,
 };
 use lockgate_schema::{NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
@@ -274,16 +274,10 @@ fn needs(grant: &str) -> NeedsManifest {
     .unwrap()
 }
 
-fn call(session: Option<&str>) -> InvocationCtx<SageCall> {
-    InvocationCtx::new(
-        SageCall {
-            session: session.map(SessionId::new),
-        },
-        BudgetClass::Bounded {
-            fuel: 5_000_000,
-            deadline: common::INVOCATION_DEADLINE,
-        },
-    )
+fn call(session: Option<&str>) -> SageCall {
+    SageCall {
+        session: session.map(SessionId::new),
+    }
 }
 
 async fn runtime_host(
@@ -302,7 +296,7 @@ async fn runtime_host(
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(prepared, acceptance, RuntimeLimits::default(), call(None))
+        .admit_with_data(prepared, acceptance, RuntimeLimits::default(), call(None))
         .await
         .unwrap();
     (builder.finish(), plugin)

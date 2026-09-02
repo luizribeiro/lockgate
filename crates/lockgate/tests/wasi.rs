@@ -3,8 +3,8 @@ mod common;
 use common::exec::ExecEngine;
 use common::{INVOCATION_FUEL, LIMITS, TestState};
 use lockgate::{
-    AdmissionError, CallError, Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, Role,
-    RoleInvocation, RuntimeLimits, Value,
+    AdmissionError, CallError, Host, HostBuilder, PluginConfig, PluginHandle, Role, RoleInvocation,
+    RuntimeLimits, Value,
 };
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 use std::future::Future;
@@ -22,6 +22,8 @@ struct WasiClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>);
 impl Role for WasiRole {
     const INTERFACE: &'static str = "test:wasi/guest";
 
+    type Budgets = ();
+
     type Client<'a, S>
         = WasiClient<'a, S>
     where
@@ -37,14 +39,7 @@ impl Role for WasiRole {
 
 impl WasiClient<'_, ()> {
     async fn environment_count(&self) -> std::result::Result<u64, CallError> {
-        let values = self
-            .0
-            .invoke(
-                "environment-count",
-                &[],
-                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke("environment-count", &[], ()).await?;
         match values.as_slice() {
             [Value::U64(count)] => Ok(*count),
             _ => Err(CallError::shape("expected one u64 result")),
@@ -76,14 +71,7 @@ impl WasiClient<'_, ()> {
         function: &str,
         arguments: &[Value],
     ) -> std::result::Result<bool, CallError> {
-        let values = self
-            .0
-            .invoke(
-                function,
-                arguments,
-                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            )
-            .await?;
+        let values = self.0.invoke(function, arguments, ()).await?;
         match values.as_slice() {
             [Value::Bool(value)] => Ok(*value),
             _ => Err(CallError::shape("expected one bool result")),
@@ -122,12 +110,7 @@ async fn admitted_wasi(needs: &NeedsManifest) -> (Host<()>, PluginHandle) {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     (builder.finish(), plugin)
@@ -265,11 +248,7 @@ fn preflight_reports_required_unset_env_before_admission_fails() {
             .await
             .unwrap();
         let preflight = builder
-            .preflight(
-                &prepared,
-                &RuntimeLimits::default(),
-                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            )
+            .preflight(&prepared, &RuntimeLimits::default())
             .await
             .unwrap();
         assert_eq!(preflight.required_environment_variables.len(), 1);
@@ -281,12 +260,7 @@ fn preflight_reports_required_unset_env_before_admission_fails() {
         let acceptance = prepared.accept_all();
 
         let error = builder
-            .admit(
-                prepared,
-                acceptance,
-                RuntimeLimits::default(),
-                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
-            )
+            .admit(prepared, acceptance, RuntimeLimits::default())
             .await
             .unwrap_err();
 

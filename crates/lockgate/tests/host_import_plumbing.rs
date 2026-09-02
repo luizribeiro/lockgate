@@ -7,8 +7,8 @@ use std::sync::{
 
 use lockgate::__private::{StoreCtx, wasmtime};
 use lockgate::{
-    CallError, Host, HostBuilder, HostImports, InvocationCtx, PluginConfig, PluginHandle, Role,
-    RoleInvocation, RuntimeLimits, Value,
+    CallError, Host, HostBuilder, HostImports, PluginConfig, PluginHandle, Role, RoleInvocation,
+    RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
 
@@ -62,6 +62,8 @@ struct GuestClient<'a, S: Send + Sync + 'static>(RoleInvocation<'a, S>);
 impl Role for GuestRole {
     const INTERFACE: &'static str = "test:manual/guest";
 
+    type Budgets = ();
+
     type Client<'a, S>
         = GuestClient<'a, S>
     where
@@ -77,10 +79,7 @@ impl Role for GuestRole {
 
 impl GuestClient<'_, u32> {
     async fn call(&self, data: u32) -> Result<u32, CallError> {
-        let values = self
-            .0
-            .invoke("call", &[], InvocationCtx::new(data, budget()))
-            .await?;
+        let values = self.0.invoke("call", &[], data).await?;
         match values.as_slice() {
             [Value::U32(value)] => Ok(*value),
             _ => Err(CallError::shape("expected one u32 result")),
@@ -90,23 +89,12 @@ impl GuestClient<'_, u32> {
     async fn call_many(&self, data: u32, calls: u32) -> Result<u32, CallError> {
         let values = self
             .0
-            .invoke(
-                "call-many",
-                &[Value::U32(calls)],
-                InvocationCtx::new(data, budget()),
-            )
+            .invoke("call-many", &[Value::U32(calls)], data)
             .await?;
         match values.as_slice() {
             [Value::U32(value)] => Ok(*value),
             _ => Err(CallError::shape("expected one u32 result")),
         }
-    }
-}
-
-fn budget() -> lockgate::BudgetClass {
-    lockgate::BudgetClass::Bounded {
-        fuel: 1_000_000,
-        deadline: common::INVOCATION_DEADLINE,
     }
 }
 
@@ -181,12 +169,7 @@ async fn handwritten_imports_receive_data_and_clone_per_call() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::new(11, budget()),
-        )
+        .admit_with_data(prepared, acceptance, RuntimeLimits::default(), 11)
         .await
         .unwrap();
 
@@ -215,14 +198,14 @@ async fn host_with_call_limit(
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
+        .admit_with_data(
             prepared,
             acceptance,
             RuntimeLimits {
                 max_host_import_calls,
                 ..RuntimeLimits::default()
             },
-            InvocationCtx::new(0, budget()),
+            0,
         )
         .await
         .unwrap();

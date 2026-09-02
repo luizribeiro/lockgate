@@ -1,8 +1,8 @@
 mod common;
 
 use lockgate::{
-    AdmissionError, BudgetClass, HostBuilder, InspectError, InvocationCtx, LimitSet, PluginConfig,
-    Role, RoleError, RoleInvocation, RuntimeLimits, inspect,
+    AdmissionError, CallBudget, HostBuilder, InspectError, LimitSet, PluginConfig, Role, RoleError,
+    RoleInvocation, RuntimeLimits, inspect,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, PluginMetadata};
@@ -15,6 +15,7 @@ struct GuestRole;
 
 impl Role for GuestRole {
     const INTERFACE: &'static str = "test:lifecycle/guest";
+    type Budgets = ();
     type Client<'a, S>
         = RoleInvocation<'a, S>
     where
@@ -32,6 +33,7 @@ struct MissingRole;
 
 impl Role for MissingRole {
     const INTERFACE: &'static str = "test:lifecycle/missing";
+    type Budgets = ();
     type Client<'a, S>
         = RoleInvocation<'a, S>
     where
@@ -211,26 +213,26 @@ fn runtime_inputs_are_bounded_and_explicit() {
     assert!(limits.max_memory_bytes < usize::MAX);
     assert_eq!(limits.max_host_import_calls, 10_000);
 
-    assert_eq!(
-        InvocationCtx::bounded(123, common::INVOCATION_DEADLINE),
-        InvocationCtx::new(
-            (),
-            BudgetClass::Bounded {
-                fuel: 123,
+    let call_budget = CallBudget::default();
+    assert!(call_budget.fuel > 0);
+    assert!(!call_budget.deadline.is_zero());
+    assert!(
+        HostBuilder::new(())
+            .unwrap()
+            .admission_budget(CallBudget {
+                fuel: 0,
                 deadline: common::INVOCATION_DEADLINE,
-            },
-        )
+            })
+            .is_err()
     );
-    assert_eq!(
-        InvocationCtx::new(
-            "startup",
-            BudgetClass::Bounded {
-                fuel: 456,
-                deadline: common::INVOCATION_DEADLINE,
-            },
-        )
-        .data,
-        "startup"
+    assert!(
+        HostBuilder::new(())
+            .unwrap()
+            .admission_budget(CallBudget {
+                fuel: 1,
+                deadline: std::time::Duration::ZERO,
+            })
+            .is_err()
     );
 }
 
@@ -244,12 +246,7 @@ async fn empty_needs_accept_all_round_trips() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let handle = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     assert_eq!(handle.id(), PLUGIN_ID);
@@ -266,12 +263,7 @@ async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let admitted = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
 
@@ -294,12 +286,7 @@ async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
         .unwrap();
     let acceptance = prepared.accept_all();
     let handle = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let host = builder.finish();
@@ -345,24 +332,21 @@ async fn unregistered_declared_capability_fails_during_prepare() {
 #[tokio::test]
 async fn smoke_instantiation_budget_exhaustion_is_typed() {
     let bytes = well_formed_fixture();
-    let mut builder = HostBuilder::new(()).unwrap();
+    let mut builder = HostBuilder::new(())
+        .unwrap()
+        .admission_budget(CallBudget {
+            fuel: 1,
+            deadline: common::INVOCATION_DEADLINE,
+        })
+        .unwrap();
     let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
         .await
         .unwrap();
-    let limits = RuntimeLimits {
-        instantiation_fuel: 0,
-        ..RuntimeLimits::default()
-    };
     let acceptance = prepared.accept_all();
 
     let error = builder
-        .admit(
-            prepared,
-            acceptance,
-            limits,
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SmokeOutOfBudget));
@@ -384,12 +368,7 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
     let acceptance = prepared.accept_all();
 
     let error = builder
-        .admit(
-            prepared,
-            acceptance,
-            limits,
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, limits)
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SmokeFailure { .. }));
@@ -411,12 +390,7 @@ async fn smoke_instantiation_observes_ready_validated_settings() {
     let acceptance = prepared.accept_all();
 
     builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
 }
@@ -452,11 +426,7 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &trapped,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&trapped, &RuntimeLimits::default())
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SchemaFetchFailure { .. }));
@@ -467,11 +437,7 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &exhausted,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&exhausted, &RuntimeLimits::default())
         .await
         .unwrap_err();
     assert!(
@@ -503,11 +469,7 @@ async fn settings_follow_the_schema_presence_matrix() {
         .await
         .unwrap();
     builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap();
 
@@ -523,11 +485,7 @@ async fn settings_follow_the_schema_presence_matrix() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SettingsWithoutSchema));
@@ -538,11 +496,7 @@ async fn settings_follow_the_schema_presence_matrix() {
         .await
         .unwrap();
     builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap();
 
@@ -551,11 +505,7 @@ async fn settings_follow_the_schema_presence_matrix() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SettingsValidation { .. }));
@@ -578,11 +528,7 @@ async fn settings_follow_the_schema_presence_matrix() {
         .await
         .unwrap();
     builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap();
 
@@ -598,11 +544,7 @@ async fn settings_follow_the_schema_presence_matrix() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SettingsValidation { .. }));
@@ -619,11 +561,7 @@ async fn malformed_schema_json_is_a_typed_preflight_error() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
 
@@ -666,12 +604,7 @@ async fn embedded_label_can_differ_from_the_admitted_instance_id() {
     let acceptance = prepared.accept_all();
 
     let handle = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
 
@@ -689,12 +622,7 @@ async fn duplicate_instance_id_is_rejected() {
         .unwrap();
     let first_acceptance = first.accept_all();
     builder
-        .admit(
-            first,
-            first_acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(first, first_acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     let duplicate = builder
@@ -704,12 +632,7 @@ async fn duplicate_instance_id_is_rejected() {
     let duplicate_acceptance = duplicate.accept_all();
 
     let error = builder
-        .admit(
-            duplicate,
-            duplicate_acceptance,
-            RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .admit(duplicate, duplicate_acceptance, RuntimeLimits::default())
         .await
         .unwrap_err();
 
@@ -833,11 +756,7 @@ async fn validator_passing_unwired_import_fails_linker_preflight() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
 
@@ -861,11 +780,7 @@ async fn linker_preflight_precedes_settings_matrix_validation() {
         .await
         .unwrap();
     let error = builder
-        .preflight(
-            &prepared,
-            &RuntimeLimits::default(),
-            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
-        )
+        .preflight(&prepared, &RuntimeLimits::default())
         .await
         .unwrap_err();
 
