@@ -18,8 +18,8 @@ use crate::CallContext;
 use crate::config::{SettingsValidationError, validate_settings};
 use crate::exec::cache::CompiledComponentCache;
 use crate::exec::{
-    EnvironmentError, EnvironmentGrants, ExecEngine, ExecError, ExecLimits, ImportsFactory,
-    LoadError, LoadedComponent, TypedImports,
+    EnvironmentError, EnvironmentGrants, ExecEngine, ExecError, ExecLimits, HttpPool,
+    ImportsFactory, LoadError, LoadedComponent, TypedImports,
 };
 use crate::inspection::{
     InspectError, Inspection, decode_imported_interfaces, decode_metadata, decode_needs,
@@ -223,7 +223,7 @@ pub struct HostBuilder<S: CallContext> {
     registry: CapabilityRegistry,
     policy_metadata: HostImportPolicyMetadata,
     compiled_cache: Option<CompiledComponentCache>,
-    tls_roots: Option<std::sync::Arc<RootCertStore>>,
+    http_pool: std::sync::Arc<HttpPool>,
 }
 
 struct AdmittedPlugin<S: 'static> {
@@ -371,7 +371,7 @@ impl<S: CallContext> HostBuilder<S> {
             registry,
             policy_metadata,
             compiled_cache: None,
-            tls_roots: None,
+            http_pool: std::sync::Arc::new(HttpPool::new()),
         })
     }
 
@@ -404,18 +404,13 @@ impl<S: CallContext> HostBuilder<S> {
     /// `wasi:http` HTTPS connection made through the finished [`Host`]. Lockgate
     /// does not install a rustls crypto provider; the embedder remains responsible
     /// for doing so before the first HTTPS request.
-    pub fn tls_roots(mut self, roots: RootCertStore) -> Self {
+    pub fn tls_roots(self, roots: RootCertStore) -> Self {
         let mut extended = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.into(),
         };
         extended.roots.extend(roots.roots);
         let extended = std::sync::Arc::new(extended);
-        for plugin in &mut self.admitted {
-            plugin
-                .artifact
-                .set_tls_roots(Some(std::sync::Arc::clone(&extended)));
-        }
-        self.tls_roots = Some(extended);
+        self.http_pool.set_tls_roots(extended);
         self
     }
 
@@ -682,7 +677,7 @@ impl<S: CallContext> HostBuilder<S> {
         .map_err(AdmissionError::ScopeResolution)?;
         debug_assert_eq!(resolved, prepared.resolved);
         artifact.set_settings(settings);
-        artifact.set_tls_roots(self.tls_roots.clone());
+        artifact.set_http_pool(std::sync::Arc::clone(&self.http_pool));
 
         let report = environment_preflight(&prepared.resolved);
         match admitted_handle {
@@ -726,6 +721,7 @@ impl<S: CallContext> HostBuilder<S> {
             plugins: self.admitted,
             jobs: self.jobs,
             registry: self.registry,
+            http_pool: self.http_pool,
         }
     }
 }
@@ -846,9 +842,9 @@ fn validate_http_egress_grant(
 
 /// Steady-state owner of the execution engine and admitted plugins.
 ///
-/// Call [`Host::shutdown`] to abort and await all detached jobs without blocking
-/// the calling thread. Dropping a Host only initiates best-effort shutdown and
-/// lets the detached-job supervisor finish in the background.
+/// Call [`Host::shutdown`] to abort and await all detached jobs and pooled HTTP
+/// connection drivers without blocking the calling thread. Dropping a Host only
+/// initiates best-effort shutdown and lets task cleanup finish in the background.
 pub struct Host<S: CallContext> {
     id: HostId,
     #[allow(
@@ -863,18 +859,21 @@ pub struct Host<S: CallContext> {
         reason = "retained for prepared grants and guard lookup in later policy slices"
     )]
     registry: CapabilityRegistry,
+    http_pool: std::sync::Arc<HttpPool>,
 }
 
 impl<S: CallContext> Drop for Host<S> {
     fn drop(&mut self) {
         self.jobs.begin_shutdown();
+        self.http_pool.begin_shutdown();
     }
 }
 
 impl<S: CallContext> Host<S> {
-    /// Aborts and awaits all detached jobs without blocking the calling thread.
+    /// Aborts and awaits all detached jobs and pooled HTTP connection drivers.
     pub async fn shutdown(self) {
         self.jobs.shutdown().await;
+        self.http_pool.shutdown().await;
     }
 
     /// Iterates over admitted plugins in admission order.

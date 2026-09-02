@@ -46,6 +46,7 @@ use errors::{
 )]
 pub(crate) use errors::{TrapDetail, host_import_error};
 use wasi_http::HttpHooks;
+pub(crate) use wasi_http_sender::HttpPool;
 
 // Compute-bound guests yield at this fuel granularity so wall-clock deadlines can preempt
 // them; smaller values tighten deadline adherence at the cost of slightly more overhead.
@@ -153,7 +154,7 @@ impl ExecEngine {
             jobs: None,
             settings: SettingsState::NotReady,
             environment: EnvironmentGrants::default(),
-            tls_roots: None,
+            http_pool: None,
         })
     }
 
@@ -180,7 +181,7 @@ impl ExecEngine {
             jobs: None,
             settings: SettingsState::NotReady,
             environment: EnvironmentGrants::default(),
-            tls_roots: None,
+            http_pool: None,
         })
     }
 }
@@ -192,7 +193,7 @@ pub(crate) struct LoadedComponent<S: 'static> {
     jobs: Option<DetachedJobContext>,
     settings: SettingsState,
     environment: EnvironmentGrants,
-    tls_roots: Option<Arc<rustls::RootCertStore>>,
+    http_pool: Option<Arc<HttpPool>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -258,8 +259,8 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
         self.settings = settings.into_state();
     }
 
-    pub(crate) fn set_tls_roots(&mut self, tls_roots: Option<Arc<rustls::RootCertStore>>) {
-        self.tls_roots = tls_roots;
+    pub(crate) fn set_http_pool(&mut self, http_pool: Arc<HttpPool>) {
+        self.http_pool = Some(http_pool);
     }
 
     pub(crate) fn exports_interface(&self, interface: &str) -> bool {
@@ -375,7 +376,7 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 wasi,
                 StoreRuntimeConfig {
                     limits,
-                    tls_roots: self.tls_roots.clone(),
+                    http_pool: self.http_pool.clone(),
                 },
             ),
         );
@@ -438,7 +439,7 @@ pub(crate) struct ExecLimits {
 
 struct StoreRuntimeConfig {
     limits: ExecLimits,
-    tls_roots: Option<Arc<rustls::RootCertStore>>,
+    http_pool: Option<Arc<HttpPool>>,
 }
 
 #[doc(hidden)]
@@ -486,7 +487,7 @@ impl<S> StoreCtx<S> {
             plugin.clone(),
             runtime.limits.http_request_timeout_ceiling,
             host_panics.clone(),
-            runtime.tls_roots,
+            runtime.http_pool,
         );
         Self {
             limiter: MemoryLimiter {

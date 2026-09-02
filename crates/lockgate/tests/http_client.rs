@@ -1,6 +1,6 @@
 mod common;
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::thread;
@@ -122,6 +122,44 @@ fn serve_after_delay(delay: Duration) -> (String, thread::JoinHandle<SocketAddr>
     (format!("http://{address}"), server)
 }
 
+fn serve_keep_alive_twice() -> (String, thread::JoinHandle<SocketAddr>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut connection, peer) = listener.accept().unwrap();
+        connection
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(connection.try_clone().unwrap());
+        for _ in 0..2 {
+            loop {
+                let mut line = String::new();
+                let read = reader.read_line(&mut line).unwrap();
+                assert_ne!(read, 0, "connection closed before the second request");
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(
+                connection,
+                "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\n\r\n{RESPONSE_BODY}",
+                RESPONSE_BODY.len(),
+            )
+            .unwrap();
+            connection.flush().unwrap();
+        }
+
+        let mut trailing = [0];
+        assert_eq!(
+            reader.read(&mut trailing).unwrap(),
+            0,
+            "host shutdown must close the pooled connection",
+        );
+        peer
+    });
+    (format!("http://{address}"), server)
+}
+
 async fn admitted_client(origin: String) -> (Host<()>, PluginHandle) {
     admitted_client_with_options(origin, RuntimeLimits::default(), None).await
 }
@@ -218,6 +256,29 @@ async fn https_with_supplied_tls_root_accepts_private_ca() {
     assert_eq!(response.body, RESPONSE_BODY);
     server.task.await.unwrap().unwrap();
     host.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sequential_invocations_reuse_one_http_connection() {
+    let (origin, server) = serve_keep_alive_twice();
+    let (host, plugin) = admitted_client(origin.clone()).await;
+    let guest = host.guest(&plugin).unwrap();
+
+    for path in ["first", "second"] {
+        let response = guest
+            .get(
+                InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
+                &format!("{origin}/{path}"),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, RESPONSE_BODY);
+    }
+
+    host.shutdown().await;
+    server.join().unwrap();
 }
 
 #[tokio::test(flavor = "current_thread")]

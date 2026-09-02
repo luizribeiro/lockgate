@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use ::http::{Request, Response, Uri, uri::Scheme};
+use ::http::{Request, Response, Uri};
 use lockgate_policy::{HttpOrigin, net};
 use wasmtime_wasi_http::{
     Error as WasiHttpError, RequestOptions, WasiBody, WasiHttpHooks, default_hooks,
@@ -27,7 +27,7 @@ pub(crate) struct HttpHooks {
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     request_timeout_ceiling: Option<Duration>,
     host_panics: HostPanicState,
-    tls_roots: Option<Arc<rustls::RootCertStore>>,
+    http_pool: Option<Arc<wasi_http_sender::HttpPool>>,
 }
 
 impl HttpHooks {
@@ -51,13 +51,13 @@ impl HttpHooks {
         plugin: Option<Arc<dyn Any + Send + Sync>>,
         request_timeout_ceiling: Option<Duration>,
         host_panics: HostPanicState,
-        tls_roots: Option<Arc<rustls::RootCertStore>>,
+        http_pool: Option<Arc<wasi_http_sender::HttpPool>>,
     ) -> Self {
         Self {
             plugin,
             request_timeout_ceiling,
             host_panics,
-            tls_roots,
+            http_pool,
         }
     }
 
@@ -101,19 +101,17 @@ impl WasiHttpHooks for HttpHooks {
             > + Send,
     > {
         let host_panics = self.host_panics.clone();
-        let tls_roots = self.tls_roots.clone();
+        let http_pool = self.http_pool.clone();
         let future = catch_unwind(AssertUnwindSafe(|| {
             if !self.allows(request.uri()) {
                 return Box::new(async { Err(WasiHttpError::HttpRequestDenied) }) as Box<_>;
             }
             let options = clamp_request_options(options, self.request_timeout_ceiling);
-            match tls_roots {
-                Some(roots) if request.uri().scheme() == Some(&Scheme::HTTPS) => {
-                    Box::new(async move {
-                        drop(fut);
-                        wasi_http_sender::send_request(request, options, roots).await
-                    }) as Box<_>
-                }
+            match http_pool {
+                Some(pool) => Box::new(async move {
+                    drop(fut);
+                    pool.send_request(request, options).await
+                }) as Box<_>,
                 _ => default_hooks().send_request(request, options, fut),
             }
         }));
