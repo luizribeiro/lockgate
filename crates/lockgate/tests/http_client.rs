@@ -2,10 +2,15 @@ mod common;
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use lockgate::{Host, HostBuilder, InvocationCtx, PluginConfig, PluginHandle, RuntimeLimits};
+use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
+use rustls::{RootCertStore, ServerConfig, pki_types::PrivatePkcs8KeyDer};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio_rustls::TlsAcceptor;
 
 lockgate::host_bindings!({
     path: "tests/fixtures/http-client-guest/wit",
@@ -16,6 +21,65 @@ use guest::HostExt as _;
 
 const RESPONSE_BODY: &str = "lockgate-http works!";
 const SHORT_TIMEOUT_MILLIS: u64 = 100;
+
+struct TlsServer {
+    origin: String,
+    roots: RootCertStore,
+    task: tokio::task::JoinHandle<Result<SocketAddr, std::io::Error>>,
+}
+
+async fn serve_tls_once() -> TlsServer {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+    ];
+    let ca_key = KeyPair::generate().unwrap();
+    let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+    let issuer = Issuer::new(ca_params, ca_key);
+
+    let leaf_params = CertificateParams::new(vec!["127.0.0.1".to_owned()]).unwrap();
+    let leaf_key = KeyPair::generate().unwrap();
+    let leaf_cert = leaf_params.signed_by(&leaf_key, &issuer).unwrap();
+    let private_key = PrivatePkcs8KeyDer::from(leaf_key.serialize_der()).into();
+    let server_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![leaf_cert.der().clone()], private_key)
+        .unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let acceptor = TlsAcceptor::from(Arc::new(server_config));
+    let task = tokio::spawn(async move {
+        let (stream, peer) = listener.accept().await?;
+        let mut connection = acceptor.accept(stream).await?;
+        let mut request = [0; 1024];
+        let _ = connection.read(&mut request).await?;
+        connection
+            .write_all(
+                format!(
+                    "HTTP/1.1 201 Created\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{RESPONSE_BODY}",
+                    RESPONSE_BODY.len(),
+                )
+                .as_bytes(),
+            )
+            .await?;
+        connection.shutdown().await?;
+        Ok(peer)
+    });
+
+    let mut roots = RootCertStore::empty();
+    roots.add(ca_cert.der().clone()).unwrap();
+    TlsServer {
+        origin: format!("https://{address}"),
+        roots,
+        task,
+    }
+}
 
 fn serve_once() -> (String, thread::JoinHandle<SocketAddr>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -59,14 +123,26 @@ fn serve_after_delay(delay: Duration) -> (String, thread::JoinHandle<SocketAddr>
 }
 
 async fn admitted_client(origin: String) -> (Host<()>, PluginHandle) {
-    admitted_client_with_limits(origin, RuntimeLimits::default()).await
+    admitted_client_with_options(origin, RuntimeLimits::default(), None).await
 }
 
 async fn admitted_client_with_limits(
     origin: String,
     limits: RuntimeLimits,
 ) -> (Host<()>, PluginHandle) {
-    let mut builder = HostBuilder::new(()).unwrap();
+    admitted_client_with_options(origin, limits, None).await
+}
+
+async fn admitted_client_with_options(
+    origin: String,
+    limits: RuntimeLimits,
+    tls_roots: Option<RootCertStore>,
+) -> (Host<()>, PluginHandle) {
+    let builder = HostBuilder::new(()).unwrap();
+    let mut builder = match tls_roots {
+        Some(roots) => builder.tls_roots(roots),
+        None => builder,
+    };
     let prepared = builder
         .prepare(
             "http-client",
@@ -89,6 +165,59 @@ async fn admitted_client_with_limits(
         .await
         .unwrap();
     (builder.finish(), plugin)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn https_with_default_roots_rejects_private_ca() {
+    let server = serve_tls_once().await;
+    let (host, plugin) = admitted_client(server.origin.clone()).await;
+    let guest = host.guest(&plugin).unwrap();
+
+    let error = tokio::time::timeout(
+        Duration::from_secs(5),
+        guest.get(
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
+            &format!("{}/private", server.origin),
+        ),
+    )
+    .await
+    .expect("HTTPS request must not hang")
+    .expect("TLS rejection must be a guest-visible wasi-http error")
+    .expect_err("the private CA must not be trusted by default");
+
+    assert!(error.contains("HTTP request failed"), "{error}");
+    assert!(error.contains("TlsCertificateError"), "{error}");
+    assert!(server.task.await.unwrap().is_err());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn https_with_supplied_tls_root_accepts_private_ca() {
+    let server = serve_tls_once().await;
+    let (host, plugin) = admitted_client_with_options(
+        server.origin.clone(),
+        RuntimeLimits::default(),
+        Some(server.roots),
+    )
+    .await;
+    let guest = host.guest(&plugin).unwrap();
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        guest.get(
+            InvocationCtx::bounded(common::INVOCATION_FUEL, common::INVOCATION_DEADLINE),
+            &format!("{}/private", server.origin),
+        ),
+    )
+    .await
+    .expect("HTTPS request must not hang")
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(response.status, 201);
+    assert_eq!(response.body, RESPONSE_BODY);
+    server.task.await.unwrap().unwrap();
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "current_thread")]

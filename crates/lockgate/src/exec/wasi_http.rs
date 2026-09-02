@@ -9,13 +9,14 @@ use std::{
     time::Duration,
 };
 
-use ::http::{Request, Response, Uri};
+use ::http::{Request, Response, Uri, uri::Scheme};
 use lockgate_policy::{HttpOrigin, net};
 use wasmtime_wasi_http::{
     Error as WasiHttpError, RequestOptions, WasiBody, WasiHttpHooks, default_hooks,
 };
 
 use super::errors::{HostPanicState, catch_unwind_future};
+use super::wasi_http_sender;
 
 #[cfg(not(test))]
 use crate::PluginHandle;
@@ -26,6 +27,7 @@ pub(crate) struct HttpHooks {
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     request_timeout_ceiling: Option<Duration>,
     host_panics: HostPanicState,
+    tls_roots: Option<Arc<rustls::RootCertStore>>,
 }
 
 impl HttpHooks {
@@ -37,18 +39,25 @@ impl HttpHooks {
         plugin: Option<Arc<dyn Any + Send + Sync>>,
         request_timeout_ceiling: Option<Duration>,
     ) -> Self {
-        Self::with_host_panics(plugin, request_timeout_ceiling, HostPanicState::default())
+        Self::with_host_panics(
+            plugin,
+            request_timeout_ceiling,
+            HostPanicState::default(),
+            None,
+        )
     }
 
     pub(crate) fn with_host_panics(
         plugin: Option<Arc<dyn Any + Send + Sync>>,
         request_timeout_ceiling: Option<Duration>,
         host_panics: HostPanicState,
+        tls_roots: Option<Arc<rustls::RootCertStore>>,
     ) -> Self {
         Self {
             plugin,
             request_timeout_ceiling,
             host_panics,
+            tls_roots,
         }
     }
 
@@ -64,6 +73,17 @@ impl HttpHooks {
 }
 
 impl WasiHttpHooks for HttpHooks {
+    fn p3_error_from_tls(
+        &mut self,
+        error: &std::io::Error,
+    ) -> wasmtime_wasi_http::p3::bindings::http::types::ErrorCode {
+        if is_certificate_error(error) {
+            wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::TlsCertificateError
+        } else {
+            wasmtime_wasi_http::p3::bindings::http::types::ErrorCode::TlsProtocolError
+        }
+    }
+
     fn send_request(
         &mut self,
         request: Request<WasiBody>,
@@ -81,12 +101,21 @@ impl WasiHttpHooks for HttpHooks {
             > + Send,
     > {
         let host_panics = self.host_panics.clone();
+        let tls_roots = self.tls_roots.clone();
         let future = catch_unwind(AssertUnwindSafe(|| {
             if !self.allows(request.uri()) {
                 return Box::new(async { Err(WasiHttpError::HttpRequestDenied) }) as Box<_>;
             }
             let options = clamp_request_options(options, self.request_timeout_ceiling);
-            default_hooks().send_request(request, options, fut)
+            match tls_roots {
+                Some(roots) if request.uri().scheme() == Some(&Scheme::HTTPS) => {
+                    Box::new(async move {
+                        drop(fut);
+                        wasi_http_sender::send_request(request, options, roots).await
+                    }) as Box<_>
+                }
+                _ => default_hooks().send_request(request, options, fut),
+            }
         }));
         let future = match future {
             Ok(future) => future,
@@ -105,6 +134,13 @@ impl WasiHttpHooks for HttpHooks {
             Ok((response, io))
         })
     }
+}
+
+fn is_certificate_error(error: &std::io::Error) -> bool {
+    error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<rustls::Error>())
+        .is_some_and(|error| matches!(error, rustls::Error::InvalidCertificate(_)))
 }
 
 const HTTP_SEND_IMPORT: &str = "wasi:http/client@0.3.0#send";

@@ -11,6 +11,7 @@ use std::{
 use lockgate_schema::{
     AtomKey, GrantSet, GrantValue, NeedKind, NeedsManifest, PluginMetadata, hex_encode,
 };
+use rustls::RootCertStore;
 use sha2::{Digest, Sha256};
 
 use crate::CallContext;
@@ -222,6 +223,7 @@ pub struct HostBuilder<S: CallContext> {
     registry: CapabilityRegistry,
     policy_metadata: HostImportPolicyMetadata,
     compiled_cache: Option<CompiledComponentCache>,
+    tls_roots: Option<std::sync::Arc<RootCertStore>>,
 }
 
 struct AdmittedPlugin<S: 'static> {
@@ -369,6 +371,7 @@ impl<S: CallContext> HostBuilder<S> {
             registry,
             policy_metadata,
             compiled_cache: None,
+            tls_roots: None,
         })
     }
 
@@ -391,6 +394,28 @@ impl<S: CallContext> HostBuilder<S> {
     /// built-in oldest-first limit is left as a follow-up.
     pub fn compiled_cache(mut self, directory: PathBuf) -> Self {
         self.compiled_cache = Some(CompiledComponentCache::new(directory));
+        self
+    }
+
+    /// Adds TLS trust anchors for every plugin admitted by this builder.
+    ///
+    /// The supplied anchors extend the WebPKI roots used by default; they do not
+    /// replace public trust. The resulting store is shared by every outgoing
+    /// `wasi:http` HTTPS connection made through the finished [`Host`]. Lockgate
+    /// does not install a rustls crypto provider; the embedder remains responsible
+    /// for doing so before the first HTTPS request.
+    pub fn tls_roots(mut self, roots: RootCertStore) -> Self {
+        let mut extended = RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+        };
+        extended.roots.extend(roots.roots);
+        let extended = std::sync::Arc::new(extended);
+        for plugin in &mut self.admitted {
+            plugin
+                .artifact
+                .set_tls_roots(Some(std::sync::Arc::clone(&extended)));
+        }
+        self.tls_roots = Some(extended);
         self
     }
 
@@ -657,6 +682,7 @@ impl<S: CallContext> HostBuilder<S> {
         .map_err(AdmissionError::ScopeResolution)?;
         debug_assert_eq!(resolved, prepared.resolved);
         artifact.set_settings(settings);
+        artifact.set_tls_roots(self.tls_roots.clone());
 
         let report = environment_preflight(&prepared.resolved);
         match admitted_handle {

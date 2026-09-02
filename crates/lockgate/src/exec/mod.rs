@@ -26,6 +26,7 @@ use lockgate::__private::ResourceStore;
 pub(crate) mod cache;
 mod errors;
 pub(crate) mod wasi_http;
+mod wasi_http_sender;
 
 use cache::CompiledComponentCache;
 #[doc(hidden)]
@@ -152,6 +153,7 @@ impl ExecEngine {
             jobs: None,
             settings: SettingsState::NotReady,
             environment: EnvironmentGrants::default(),
+            tls_roots: None,
         })
     }
 
@@ -178,6 +180,7 @@ impl ExecEngine {
             jobs: None,
             settings: SettingsState::NotReady,
             environment: EnvironmentGrants::default(),
+            tls_roots: None,
         })
     }
 }
@@ -189,6 +192,7 @@ pub(crate) struct LoadedComponent<S: 'static> {
     jobs: Option<DetachedJobContext>,
     settings: SettingsState,
     environment: EnvironmentGrants,
+    tls_roots: Option<Arc<rustls::RootCertStore>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -252,6 +256,10 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
 
     pub(crate) fn set_settings(&mut self, settings: ValidatedSettings) {
         self.settings = settings.into_state();
+    }
+
+    pub(crate) fn set_tls_roots(&mut self, tls_roots: Option<Arc<rustls::RootCertStore>>) {
+        self.tls_roots = tls_roots;
     }
 
     pub(crate) fn exports_interface(&self, interface: &str) -> bool {
@@ -365,7 +373,10 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 self.jobs.clone(),
                 self.settings.clone(),
                 wasi,
-                limits,
+                StoreRuntimeConfig {
+                    limits,
+                    tls_roots: self.tls_roots.clone(),
+                },
             ),
         );
         store.limiter(|ctx| &mut ctx.limiter);
@@ -425,6 +436,11 @@ pub(crate) struct ExecLimits {
     pub(crate) http_request_timeout_ceiling: Option<Duration>,
 }
 
+struct StoreRuntimeConfig {
+    limits: ExecLimits,
+    tls_roots: Option<Arc<rustls::RootCertStore>>,
+}
+
 #[doc(hidden)]
 pub type HostParts<S, I, P> = (I, Arc<S>, Arc<P>, DetachedJobContext, ResourceStore);
 
@@ -463,17 +479,18 @@ impl<S> StoreCtx<S> {
         jobs: Option<DetachedJobContext>,
         settings: SettingsState,
         wasi: WasiCtx,
-        limits: ExecLimits,
+        runtime: StoreRuntimeConfig,
     ) -> Self {
         let host_panics = HostPanicState::default();
         let http_hooks = HttpHooks::with_host_panics(
             plugin.clone(),
-            limits.http_request_timeout_ceiling,
+            runtime.limits.http_request_timeout_ceiling,
             host_panics.clone(),
+            runtime.tls_roots,
         );
         Self {
             limiter: MemoryLimiter {
-                max_memory_bytes: limits.max_memory_bytes,
+                max_memory_bytes: runtime.limits.max_memory_bytes,
             },
             data: Arc::new(data),
             imports,
@@ -481,7 +498,7 @@ impl<S> StoreCtx<S> {
             jobs,
             resources: ResourceStore::__new(),
             host_import_calls: 0,
-            max_host_import_calls: limits.max_host_import_calls,
+            max_host_import_calls: runtime.limits.max_host_import_calls,
             settings,
             // The context retains its deny-by-default network policy and no
             // filesystem preopens. Raw WASI sockets and paths therefore cannot

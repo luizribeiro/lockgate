@@ -1238,19 +1238,26 @@ name = "lockgate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
  "jsonschema",
  "lockgate-macros",
  "lockgate-policy",
  "lockgate-schema",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
+ "tokio-rustls",
  "wasmparser 0.254.0",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+ "webpki-roots",
  "wit-parser 0.254.0",
 ]
 
