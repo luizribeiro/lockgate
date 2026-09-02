@@ -294,7 +294,7 @@ mod tests {
                 ExecLimits {
                     instantiation_fuel: 1_000_000,
                     max_memory_bytes: 1024 * 1024,
-                    max_host_import_calls: 1_000,
+                    max_host_import_calls: 10_000,
                     http_request_timeout_ceiling: None,
                 },
             )
@@ -308,7 +308,7 @@ mod tests {
                 ExecLimits {
                     instantiation_fuel: 1_000_000,
                     max_memory_bytes: 0,
-                    max_host_import_calls: 1_000,
+                    max_host_import_calls: 10_000,
                     http_request_timeout_ceiling: None,
                 },
             )

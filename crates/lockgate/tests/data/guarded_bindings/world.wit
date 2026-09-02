@@ -38,6 +38,7 @@ interface guest {
   destroy: func(vm: string) -> string;
   list-pools: func() -> string;
   protocol-version: func() -> string;
+  protocol-version-many: func(calls: u32) -> string;
   mixed-vm: func() -> string;
   mixed-admin: func() -> string;
   mixed-version: func() -> string;

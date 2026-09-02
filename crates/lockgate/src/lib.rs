@@ -248,7 +248,7 @@ impl<'a, S> HostCtx<'a, S> {
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::exec::StoreCtx;
+    pub use crate::exec::{HostParts, StoreCtx};
     pub use crate::jobs::DetachedJobContext;
     pub use crate::policy::{
         HostImportPolicyError, HostImportPolicyMetadata, InterfaceIdentity, MethodClassification,

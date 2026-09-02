@@ -46,7 +46,7 @@ impl HostImports<u32> for Imports {
                 Box::new(async move {
                     let (imports, data, _plugin, _jobs, _resources) =
                         host.data_mut()
-                            .host_parts::<Imports, lockgate::PluginHandle>();
+                            .host_parts::<Imports, lockgate::PluginHandle>()?;
                     imports.calls.fetch_add(1, Ordering::SeqCst);
                     Ok((*data,))
                 })

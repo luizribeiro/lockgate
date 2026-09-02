@@ -209,7 +209,7 @@ fn runtime_inputs_are_bounded_and_explicit() {
     assert!(limits.instantiation_fuel < u64::MAX);
     assert!(limits.max_memory_bytes > 0);
     assert!(limits.max_memory_bytes < usize::MAX);
-    assert_eq!(limits.max_host_import_calls, 1_000);
+    assert_eq!(limits.max_host_import_calls, 10_000);
 
     assert_eq!(
         InvocationCtx::bounded(123, common::INVOCATION_DEADLINE),

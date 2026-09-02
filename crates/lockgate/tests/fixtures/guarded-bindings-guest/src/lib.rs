@@ -49,6 +49,14 @@ impl exports::test::guarded::guest::Guest for Fixture {
         test::guarded::vm::protocol_version()
     }
 
+    fn protocol_version_many(calls: u32) -> String {
+        let mut version = String::new();
+        for _ in 0..calls {
+            version = test::guarded::vm::protocol_version();
+        }
+        version
+    }
+
     fn mixed_vm() -> String {
         render_mixed(test::guarded::mixed::vm_action())
     }

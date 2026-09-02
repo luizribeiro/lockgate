@@ -11,7 +11,7 @@ use std::{any::Any, marker::PhantomData, time::Duration};
 use wasmtime::component::{
     Component, ComponentExportIndex, InstancePre, Linker, ResourceTable, Val, types::ComponentItem,
 };
-use wasmtime::{CallHook, Config, Engine, ResourceLimiter, Store};
+use wasmtime::{Config, Engine, ResourceLimiter, Store};
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
@@ -318,14 +318,6 @@ impl<S: Send + Sync + 'static> LoadedComponent<S> {
                 limits,
             ),
         );
-        if limits.max_host_import_calls != 0 {
-            store.call_hook(move |mut store, hook| match hook {
-                CallHook::CallingHost => store
-                    .data_mut()
-                    .record_host_import_call(limits.max_host_import_calls),
-                _ => Ok(()),
-            });
-        }
         store.limiter(|ctx| &mut ctx.limiter);
         Ok(store)
     }
@@ -380,6 +372,9 @@ pub(crate) struct ExecLimits {
     pub(crate) http_request_timeout_ceiling: Option<Duration>,
 }
 
+#[doc(hidden)]
+pub type HostParts<S, I, P> = (I, Arc<S>, Arc<P>, DetachedJobContext, ResourceStore);
+
 /// Data owned by every `Store` this module creates.
 ///
 /// The invocation data is installed before instantiation so constructor host
@@ -396,6 +391,7 @@ pub struct StoreCtx<S> {
     jobs: Option<DetachedJobContext>,
     resources: ResourceStore,
     host_import_calls: u64,
+    max_host_import_calls: u64,
     settings: SettingsState,
     wasi: WasiCtx,
     wasi_http: WasiHttpCtx,
@@ -426,6 +422,7 @@ impl<S> StoreCtx<S> {
             jobs,
             resources: ResourceStore::__new(),
             host_import_calls: 0,
+            max_host_import_calls: limits.max_host_import_calls,
             settings,
             // The context retains its deny-by-default network policy and no
             // filesystem preopens. Raw WASI sockets and paths therefore cannot
@@ -451,21 +448,20 @@ impl<S> StoreCtx<S> {
         &self.settings
     }
 
-    fn record_host_import_call(&mut self, limit: u64) -> WasmtimeResult<()> {
-        self.host_import_calls += 1;
-        if self.host_import_calls > limit {
-            Err(host_import_call_limit_error(limit))
-        } else {
-            Ok(())
-        }
-    }
-
     #[doc(hidden)]
-    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, Arc<P>, DetachedJobContext, ResourceStore)
+    pub fn host_parts<I, P>(&mut self) -> WasmtimeResult<HostParts<S, I, P>>
     where
         I: Clone + 'static,
         P: Send + Sync + 'static,
     {
+        // Generated capability adapters enter here exactly once per call;
+        // framework and WASI implementations use their dedicated Store views.
+        if self.max_host_import_calls != 0 {
+            if self.host_import_calls >= self.max_host_import_calls {
+                return Err(host_import_call_limit_error(self.max_host_import_calls));
+            }
+            self.host_import_calls += 1;
+        }
         let imports = self
             .imports
             .downcast_ref::<I>()
@@ -482,13 +478,13 @@ impl<S> StoreCtx<S> {
             .jobs
             .clone()
             .expect("public plugin Stores must carry detached-job context");
-        (
+        Ok((
             imports,
             Arc::clone(&self.data),
             plugin,
             jobs,
             self.resources.clone(),
-        )
+        ))
     }
 
     #[cfg(test)]

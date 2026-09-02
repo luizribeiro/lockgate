@@ -1542,7 +1542,7 @@ fn expand_with(
     let mut imports_config = FunctionConfig::new();
     imports_config.push(
         FunctionFilter::Default,
-        FunctionFlags::ASYNC | FunctionFlags::STORE,
+        FunctionFlags::ASYNC | FunctionFlags::STORE | FunctionFlags::TRAPPABLE,
     );
     let mut options = Opts {
         imports: imports_config,
@@ -1892,7 +1892,8 @@ fn adapter_items(
                 )),
             })
             .collect::<syn::Result<Vec<_>>>()?;
-        let result = future_output(&method.sig.output)?;
+        let adapter_result = future_output(&method.sig.output)?;
+        let result = trappable_import_output(&adapter_result)?;
         let name = &method.sig.ident;
         public_methods.push(quote! {
             fn #name(
@@ -1935,20 +1936,20 @@ fn adapter_items(
             fn #name(
                 #host_input,
                 #(#inputs),*
-            ) -> impl ::core::future::Future<Output = #result> + Send {
+            ) -> impl ::core::future::Future<Output = #adapter_result> + Send {
                 async move {
-                    let (mut imports, data, plugin, jobs, resources) = #host_parts;
+                    let (mut imports, data, plugin, jobs, resources) = #host_parts?;
                     let cx = #lockgate::HostCtx::new(
                         data.as_ref(),
                         plugin.as_ref(),
                         jobs,
                         resources,
                     );
-                    <#imports as __LockgateHost>::#name(
+                    Ok(<#imports as __LockgateHost>::#name(
                         &mut imports,
                         cx,
                         #(#arguments),*
-                    ).await
+                    ).await)
                 }
             }
         });
@@ -2091,11 +2092,11 @@ fn resource_adapter_items(
                 {
                     async move {
                         let resources = accessor.with(|mut access| {
-                            let (_, _, _, _, resources) = access
+                            access
                                 .data_mut()
-                                .host_parts::<#imports, #lockgate::PluginHandle>();
-                            resources
-                        });
+                                .host_parts::<#imports, #lockgate::PluginHandle>()
+                                .map(|(_, _, _, _, resources)| resources)
+                        })?;
                         match resources.__delete_resource(&rep) {
                             Ok(())
                             | Err(#lockgate::ResourceLookupError::NotPresent) => Ok(()),
@@ -2134,7 +2135,8 @@ fn resource_adapter_items(
                 )),
             })
             .collect::<syn::Result<Vec<_>>>()?;
-        let result = future_output(&method.sig.output)?;
+        let adapter_result = future_output(&method.sig.output)?;
+        let result = trappable_import_output(&adapter_result)?;
         public_methods.push(quote! {
             fn #name(
                 &mut self,
@@ -2149,22 +2151,22 @@ fn resource_adapter_items(
                     Self,
                 >,
                 #(#inputs),*
-            ) -> impl ::core::future::Future<Output = #result> + Send {
+            ) -> impl ::core::future::Future<Output = #adapter_result> + Send {
                 async move {
                     let (mut imports, data, plugin, jobs, resources) = host
                         .data_mut()
-                        .host_parts::<#imports, #lockgate::PluginHandle>();
+                        .host_parts::<#imports, #lockgate::PluginHandle>()?;
                     let cx = #lockgate::HostCtx::new(
                         data.as_ref(),
                         plugin.as_ref(),
                         jobs,
                         resources,
                     );
-                    <#imports as #generated_host>::#name(
+                    Ok(<#imports as #generated_host>::#name(
                         &mut imports,
                         cx,
                         #(#arguments),*
-                    ).await
+                    ).await)
                 }
             }
         });
@@ -2261,6 +2263,40 @@ fn future_output(output: &ReturnType) -> syn::Result<SynType> {
         ty,
         "generated host Future has no Output type",
     ))
+}
+
+fn trappable_import_output(output: &SynType) -> syn::Result<SynType> {
+    let SynType::Path(path) = output else {
+        return Err(syn::Error::new_spanned(
+            output,
+            "generated trappable host method output is not a Result",
+        ));
+    };
+    let Some(result) = path.path.segments.last() else {
+        return Err(syn::Error::new_spanned(
+            output,
+            "generated trappable host method output has no path segment",
+        ));
+    };
+    let PathArguments::AngleBracketed(arguments) = &result.arguments else {
+        return Err(syn::Error::new_spanned(
+            output,
+            "generated trappable host method Result has no output type",
+        ));
+    };
+    arguments
+        .args
+        .iter()
+        .find_map(|argument| match argument {
+            GenericArgument::Type(output) => Some(output.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            syn::Error::new_spanned(
+                output,
+                "generated trappable host method Result has no output type",
+            )
+        })
 }
 
 fn nested_module_mut<'a>(items: &'a mut [Item], path: &[Ident]) -> Option<&'a mut syn::ItemMod> {
