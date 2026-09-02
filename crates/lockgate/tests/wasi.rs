@@ -246,8 +246,8 @@ fn optional_env_read_setting_may_be_absent() {
 }
 
 #[test]
-fn required_unset_env_read_grant_fails_admission() {
-    const TEST_NAME: &str = "required_unset_env_read_grant_fails_admission";
+fn preflight_reports_required_unset_env_before_admission_fails() {
+    const TEST_NAME: &str = "preflight_reports_required_unset_env_before_admission_fails";
     const REQUIRED_NAME: &str = "LOCKGATE_TEST_REQUIRED_UNSET_1BF58709";
 
     if !enter_controlled_environment(TEST_NAME, &[(REQUIRED_NAME, None)]) {
@@ -264,6 +264,20 @@ fn required_unset_env_read_grant_fails_admission() {
             .prepare(ENV_PLUGIN_ID, &component, PluginConfig::default())
             .await
             .unwrap();
+        let preflight = builder
+            .preflight(
+                &prepared,
+                &RuntimeLimits::default(),
+                InvocationCtx::bounded(INVOCATION_FUEL, common::INVOCATION_DEADLINE),
+            )
+            .await
+            .unwrap();
+        assert_eq!(preflight.required_environment_variables.len(), 1);
+        assert_eq!(
+            preflight.required_environment_variables[0].name,
+            REQUIRED_NAME
+        );
+        assert!(!preflight.required_environment_variables[0].present);
         let acceptance = prepared.accept_all();
 
         let error = builder

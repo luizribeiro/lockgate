@@ -390,14 +390,8 @@ impl<S: CallContext> HostBuilder<S> {
         self.jobs.set_error_sink(sink);
     }
 
-    /// Validates and compiles the artifact, preflights its complete linker,
-    /// then probes and validates its settings contract for later admission.
-    ///
-    /// A schema export is invoked once in a capped internal Store that has no
-    /// application call context or application import implementations. The
-    /// framework settings import reports `not-ready` during that probe. Once
-    /// the supplied settings (or `{}` when absent) pass the plugin's Draft
-    /// 2020-12 schema, their JSON is retained for smoke and steady-state Stores.
+    /// Inspects and compiles the artifact, then resolves its concrete consent
+    /// surface for preflight and later admission.
     pub async fn prepare(
         &mut self,
         id: &str,
@@ -424,27 +418,12 @@ impl<S: CallContext> HostBuilder<S> {
             .engine
             .compile(bytes)
             .map_err(AdmissionError::from_load)?;
-        let mut artifact = self
-            .engine
-            .load_hosted_component::<S>(
-                &component,
-                std::sync::Arc::clone(&self.imports),
-                &wired_interfaces,
-                has_http_egress,
-            )
-            .map_err(AdmissionError::from_load)?;
-        let schema = self
-            .engine
-            .fetch_settings_schema(&component, RuntimeLimits::default().into())
-            .await
-            .map_err(AdmissionError::from_schema_fetch)?;
-        let settings = validate_settings(schema.as_deref(), config.settings)
-            .map_err(AdmissionError::from_settings_validation)?;
-        let resolved = resolve_needs(&needs, settings.value(), &config.roots, &self.registry)
+        let empty_settings = serde_json::json!({});
+        let settings = config.settings.as_ref().unwrap_or(&empty_settings);
+        let resolved = resolve_needs(&needs, settings, &config.roots, &self.registry)
             .map_err(AdmissionError::ScopeResolution)?;
         let prepared_digest = PreparedNeedsDigest::compute(needs_digest, &resolved);
         let component_digest = raw_component_digest(bytes);
-        artifact.set_settings(settings);
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             host: self.id,
@@ -453,7 +432,13 @@ impl<S: CallContext> HostBuilder<S> {
             resolved,
             prepared_digest,
             component_digest,
-            artifact: Box::new(artifact),
+            artifact: Box::new(PreparedArtifact {
+                component,
+                settings: config.settings,
+                roots: config.roots,
+                wired_interfaces,
+                has_http_egress,
+            }),
         })
     }
 
@@ -522,7 +507,32 @@ impl<S: CallContext> HostBuilder<S> {
         Ok(wired)
     }
 
-    /// Verifies prepared acceptance and smoke-instantiates the plugin.
+    /// Validates a prepared plugin through linker wiring and smoke instantiation
+    /// without requiring consent or minting a [`PluginHandle`].
+    ///
+    /// The returned report lists every required environment variable and whether
+    /// it is currently present. Missing variables do not fail preflight; admission
+    /// remains the readiness boundary that enforces them. The temporary Store and
+    /// instance are dropped, and the plugin is not registered with this builder.
+    pub async fn preflight(
+        &mut self,
+        prepared: &Prepared,
+        limits: &RuntimeLimits,
+        startup_ctx: InvocationCtx<S>,
+    ) -> Result<Preflight, AdmissionError> {
+        let result = self
+            .preflight_prepared(prepared, limits, startup_ctx, None)
+            .await?;
+        Ok(result.report)
+    }
+
+    /// Verifies prepared acceptance, preflights, and admits the plugin.
+    ///
+    /// Preflight establishes coherence: settings satisfy the plugin schema,
+    /// imports wire, and a temporary instance starts successfully. Admission adds
+    /// readiness by requiring consent and all required environment variables,
+    /// then registers the retained artifact and returns its handle.
+    ///
     /// Smoke instantiation uses the smaller of `limits.instantiation_fuel` and
     /// `startup_ctx`'s fuel and deadline, so an application-chosen
     /// startup budget may reject a constructor that steady-state calls would
@@ -534,63 +544,119 @@ impl<S: CallContext> HostBuilder<S> {
         limits: RuntimeLimits,
         startup_ctx: InvocationCtx<S>,
     ) -> Result<PluginHandle, AdmissionError> {
-        let Prepared {
-            host,
-            instance_id,
-            inspection,
-            resolved,
-            prepared_digest,
-            component_digest: _,
-            artifact,
-        } = prepared;
-        if host != self.id {
+        if prepared.host != self.id {
             return Err(AdmissionError::PreparedHostMismatch {
-                plugin: instance_id,
+                plugin: prepared.instance_id,
             });
         }
         if self
             .admitted
             .iter()
-            .any(|plugin| plugin.handle.id() == instance_id.as_str())
+            .any(|plugin| plugin.handle.id() == prepared.instance_id.as_str())
         {
-            return Err(AdmissionError::DuplicateInstanceId { instance_id });
+            return Err(AdmissionError::DuplicateInstanceId {
+                instance_id: prepared.instance_id,
+            });
         }
-        let environment = environment_grants(&instance_id, &resolved);
-        let effective_grants =
-            bind_effective_grants(&instance_id, prepared_digest, resolved, &acceptance)?;
-
-        let mut artifact = artifact
-            .downcast::<LoadedComponent<S>>()
-            .expect("prepared artifact type must match its originating HostBuilder");
-        artifact.set_environment_grants(environment);
+        let effective_grants = bind_effective_grants(
+            &prepared.instance_id,
+            prepared.prepared_digest,
+            prepared.resolved.clone(),
+            &acceptance,
+        )?;
         let handle = PluginHandle {
             host: self.id,
             index: self.admitted.len(),
-            instance_id,
-            metadata: inspection.metadata().clone(),
+            instance_id: prepared.instance_id.clone(),
+            metadata: prepared.inspection.metadata().clone(),
             effective_grants,
             registry: std::sync::Arc::new(self.registry.clone()),
         };
-        artifact.set_plugin(
-            handle.clone(),
-            DetachedJobContext::new(
-                std::sync::Arc::clone(&self.jobs),
-                handle.id().to_owned(),
-                limits.max_detached_jobs,
-            ),
-        );
-        let BudgetClass::Bounded { fuel, deadline } = startup_ctx.budget;
-        artifact
-            .smoke(startup_ctx.data, limits.into(), fuel, deadline)
-            .await
-            .map_err(AdmissionError::from_smoke)?;
+        let result = self
+            .preflight_prepared(&prepared, &limits, startup_ctx, Some(&handle))
+            .await?;
 
         self.admitted.push(AdmittedPlugin {
             handle: handle.clone(),
-            artifact: *artifact,
+            artifact: result.artifact,
             limits,
         });
         Ok(handle)
+    }
+
+    async fn preflight_prepared(
+        &self,
+        prepared: &Prepared,
+        limits: &RuntimeLimits,
+        startup_ctx: InvocationCtx<S>,
+        admitted_handle: Option<&PluginHandle>,
+    ) -> Result<PreflightResult<S>, AdmissionError> {
+        if prepared.host != self.id {
+            return Err(AdmissionError::PreparedHostMismatch {
+                plugin: prepared.instance_id.clone(),
+            });
+        }
+        let prepared_artifact = prepared
+            .artifact
+            .downcast_ref::<PreparedArtifact>()
+            .expect("prepared artifact type must match its originating HostBuilder");
+        let mut artifact = self
+            .engine
+            .load_hosted_component::<S>(
+                &prepared_artifact.component,
+                std::sync::Arc::clone(&self.imports),
+                &prepared_artifact.wired_interfaces,
+                prepared_artifact.has_http_egress,
+            )
+            .map_err(AdmissionError::from_load)?;
+        let schema = self
+            .engine
+            .fetch_settings_schema(
+                &prepared_artifact.component,
+                RuntimeLimits::default().into(),
+            )
+            .await
+            .map_err(AdmissionError::from_schema_fetch)?;
+        let settings = validate_settings(schema.as_deref(), prepared_artifact.settings.clone())
+            .map_err(AdmissionError::from_settings_validation)?;
+        let resolved = resolve_needs(
+            prepared.inspection.needs(),
+            settings.value(),
+            &prepared_artifact.roots,
+            &self.registry,
+        )
+        .map_err(AdmissionError::ScopeResolution)?;
+        debug_assert_eq!(resolved, prepared.resolved);
+        artifact.set_settings(settings);
+
+        let report = environment_preflight(&prepared.resolved);
+        match admitted_handle {
+            Some(handle) => {
+                artifact.set_environment_grants(environment_grants(
+                    &prepared.instance_id,
+                    &prepared.resolved,
+                ));
+                artifact.set_plugin(
+                    handle.clone(),
+                    DetachedJobContext::new(
+                        std::sync::Arc::clone(&self.jobs),
+                        handle.id().to_owned(),
+                        limits.max_detached_jobs,
+                    ),
+                );
+            }
+            None => artifact.set_environment_grants(preflight_environment_grants(
+                &prepared.instance_id,
+                &prepared.resolved,
+            )),
+        }
+
+        let BudgetClass::Bounded { fuel, deadline } = startup_ctx.budget;
+        artifact
+            .smoke(startup_ctx.data, (*limits).into(), fuel, deadline)
+            .await
+            .map_err(AdmissionError::from_smoke)?;
+        Ok(PreflightResult { report, artifact })
     }
 
     /// Finishes configuration and transfers admitted plugins into a steady-state Host.
@@ -609,16 +675,68 @@ impl<S: CallContext> HostBuilder<S> {
     }
 }
 
+struct PreparedArtifact {
+    component: wasmtime::component::Component,
+    settings: Option<serde_json::Value>,
+    roots: SymbolicRoots,
+    wired_interfaces: Vec<String>,
+    has_http_egress: bool,
+}
+
+struct PreflightResult<S: 'static> {
+    report: Preflight,
+    artifact: LoadedComponent<S>,
+}
+
+/// The consent-free coherence report produced by [`HostBuilder::preflight`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Preflight {
+    /// Required environment variables and their current host presence.
+    pub required_environment_variables: Vec<RequiredEnvironmentVariable>,
+}
+
+/// One required environment variable observed during preflight.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequiredEnvironmentVariable {
+    /// The exact host environment variable name requested by the plugin.
+    pub name: String,
+    /// Whether the variable is currently present, regardless of Unicode validity.
+    pub present: bool,
+}
+
+fn environment_preflight(resolved: &ResolvedNeeds) -> Preflight {
+    let required_environment_variables = environment_grant_values(&resolved.required)
+        .into_iter()
+        .map(|name| RequiredEnvironmentVariable {
+            present: std::env::var_os(&name).is_some(),
+            name,
+        })
+        .collect();
+    Preflight {
+        required_environment_variables,
+    }
+}
+
+fn preflight_environment_grants(instance_id: &str, resolved: &ResolvedNeeds) -> EnvironmentGrants {
+    let mut available = environment_grant_values(&resolved.required);
+    available.extend(environment_grant_values(&resolved.optional));
+    EnvironmentGrants::new(instance_id.to_owned(), Vec::new(), available)
+}
+
 fn environment_grants(instance_id: &str, resolved: &ResolvedNeeds) -> EnvironmentGrants {
+    EnvironmentGrants::new(
+        instance_id.to_owned(),
+        environment_grant_values(&resolved.required),
+        environment_grant_values(&resolved.optional),
+    )
+}
+
+fn environment_grant_values(grants: &GrantSet) -> Vec<String> {
     let (capability, permission) =
         lockgate_policy::__private::scoped_permission_ids(lockgate_policy::env::READ);
     let atom = AtomKey::new(capability, permission)
         .expect("typed permissions always contain a valid wire atom");
-    EnvironmentGrants::new(
-        instance_id.to_owned(),
-        scoped_grant_values(&resolved.required, &atom),
-        scoped_grant_values(&resolved.optional, &atom),
-    )
+    scoped_grant_values(grants, &atom)
 }
 
 fn scoped_grant_values(grants: &GrantSet, atom: &AtomKey) -> Vec<String> {
@@ -743,7 +861,7 @@ impl<S: CallContext> Host<S> {
     }
 }
 
-/// A validated, compiled, and prelinked plugin artifact.
+/// An inspected and compiled plugin request ready for consent and preflight.
 pub struct Prepared {
     host: HostId,
     pub(crate) instance_id: String,

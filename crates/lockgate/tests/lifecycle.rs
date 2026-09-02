@@ -440,7 +440,7 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
     );
     let mut builder = HostBuilder::new(()).unwrap();
 
-    let error = builder
+    let trapped = builder
         .prepare(
             PLUGIN_ID,
             &trapped,
@@ -450,12 +450,28 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
             },
         )
         .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &trapped,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SchemaFetchFailure { .. }));
     assert!(error.to_string().contains("settings schema fetch failed"));
 
-    let error = builder
+    let exhausted = builder
         .prepare(PLUGIN_ID, &exhausted, PluginConfig::default())
+        .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &exhausted,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
         .await
         .unwrap_err();
     assert!(
@@ -482,12 +498,20 @@ async fn settings_follow_the_schema_presence_matrix() {
     );
     let mut builder = HostBuilder::new(()).unwrap();
 
-    builder
+    let prepared = builder
         .prepare(PLUGIN_ID, &without_schema, PluginConfig::default())
         .await
         .unwrap();
+    builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
+        .unwrap();
 
-    let error = builder
+    let prepared = builder
         .prepare(
             PLUGIN_ID,
             &without_schema,
@@ -497,17 +521,41 @@ async fn settings_follow_the_schema_presence_matrix() {
             },
         )
         .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SettingsWithoutSchema));
     assert!(error.to_string().contains("exports no settings schema"));
 
-    builder
+    let prepared = builder
         .prepare(PLUGIN_ID, &empty_schema, PluginConfig::default())
         .await
         .unwrap();
+    builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
+        .unwrap();
 
-    let error = builder
+    let prepared = builder
         .prepare(PLUGIN_ID, &configured_schema, PluginConfig::default())
+        .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SettingsValidation { .. }));
@@ -518,7 +566,7 @@ async fn settings_follow_the_schema_presence_matrix() {
         "{error}"
     );
 
-    builder
+    let prepared = builder
         .prepare(
             PLUGIN_ID,
             &configured_schema,
@@ -529,8 +577,16 @@ async fn settings_follow_the_schema_presence_matrix() {
         )
         .await
         .unwrap();
+    builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
+        .unwrap();
 
-    let error = builder
+    let prepared = builder
         .prepare(
             PLUGIN_ID,
             &configured_schema,
@@ -540,18 +596,34 @@ async fn settings_follow_the_schema_presence_matrix() {
             },
         )
         .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::SettingsValidation { .. }));
     assert!(error.to_string().contains("do not match their schema"));
 }
 
 #[tokio::test]
-async fn malformed_schema_json_is_a_typed_preparation_error() {
+async fn malformed_schema_json_is_a_typed_preflight_error() {
     let bytes =
         common::sectioned_fixture(&common::constant_schema_component("not JSON"), &metadata());
     let mut builder = HostBuilder::new(()).unwrap();
-    let error = builder
+    let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
         .await
         .unwrap_err();
 
@@ -756,8 +828,16 @@ async fn forbidden_exports_keep_the_stable_teaching_error() {
 async fn validator_passing_unwired_import_fails_linker_preflight() {
     let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
     let mut builder = HostBuilder::new(()).unwrap();
-    let error = builder
+    let prepared = builder
         .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
         .await
         .unwrap_err();
 
@@ -769,7 +849,7 @@ async fn validator_passing_unwired_import_fails_linker_preflight() {
 async fn linker_preflight_precedes_settings_matrix_validation() {
     let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
     let mut builder = HostBuilder::new(()).unwrap();
-    let error = builder
+    let prepared = builder
         .prepare(
             PLUGIN_ID,
             &bytes,
@@ -777,6 +857,14 @@ async fn linker_preflight_precedes_settings_matrix_validation() {
                 settings: Some(serde_json::json!({ "would": "lack a schema" })),
                 ..PluginConfig::default()
             },
+        )
+        .await
+        .unwrap();
+    let error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
         )
         .await
         .unwrap_err();

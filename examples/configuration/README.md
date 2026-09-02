@@ -2,10 +2,11 @@
 
 You want users to tune a plugin without giving the plugin access to files,
 environment variables, or another host capability. Your application supplies a
-JSON settings table during preparation, Lockgate validates it before admission,
-and the plugin reads the retained value as its own Rust type. In this example,
-the host chooses the visible `prefix` while omitting `ending`; serde applies the
-plugin's `!` default when the guest deserializes the settings.
+JSON settings table during preparation, Lockgate validates it during preflight,
+and the plugin reads the retained value as its own Rust type. Admission performs
+the same preflight before retaining the plugin. In this example, the host chooses
+the visible `prefix` while omitting `ending`; serde applies the plugin's `!`
+default when the guest deserializes the settings.
 
 The `wit/` directory holds the formatter contract. The `plugin/` directory
 declares one `Settings` struct, generates its schema, and calls
@@ -32,6 +33,6 @@ Configured: world!
 ```
 
 If the host omits the whole settings table, `{}` is validated instead and the
-required `prefix` property fails during `prepare`, before admission or any
-application-facing plugin call. Misspelled keys fail there too because the
-default settings policy closes the top-level object.
+required `prefix` property fails during `preflight` (or admission's shared
+preflight), before any application-facing plugin call. Misspelled keys fail
+there too because the default settings policy closes the top-level object.

@@ -1,7 +1,8 @@
 mod common;
 
 use lockgate::{
-    CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value,
+    AdmissionError, CallError, HostBuilder, InvocationCtx, PluginConfig, Role, RoleInvocation,
+    RuntimeLimits, Value,
 };
 use lockgate_schema::PluginMetadata;
 
@@ -77,7 +78,7 @@ impl SettingsClient<'_, ()> {
 }
 
 #[tokio::test]
-async fn guest_observes_exactly_the_validated_settings_json() {
+async fn valid_config_preflights_without_acceptance_and_remains_admissible() {
     let metadata = PluginMetadata::new(PLUGIN_ID, "Config fixture", "1.0").unwrap();
     let component = common::sectioned_fixture(&common::CONFIG_FIXTURE, &metadata);
     let settings = serde_json::json!({ "message": "from the application" });
@@ -94,6 +95,15 @@ async fn guest_observes_exactly_the_validated_settings_json() {
         )
         .await
         .unwrap();
+    let preflight = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
+        .unwrap();
+    assert!(preflight.required_environment_variables.is_empty());
     let acceptance = prepared.accept_all();
     let plugin = builder
         .admit(
@@ -105,6 +115,7 @@ async fn guest_observes_exactly_the_validated_settings_json() {
         .await
         .unwrap();
     let host = builder.finish();
+    assert_eq!(host.plugins().count(), 1);
 
     let guest = host.client::<SettingsRole>(&plugin).unwrap();
     assert_eq!(guest.observed_settings().await.unwrap(), expected);
@@ -146,21 +157,50 @@ async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
 }
 
 #[tokio::test]
-async fn missing_required_typed_settings_fail_during_preparation() {
+async fn invalid_settings_fail_preflight_and_admission_identically() {
     let mut builder = HostBuilder::new(()).unwrap();
-    let error = builder
+    let prepared = builder
         .prepare(
             "typed-settings",
             &common::TYPED_SETTINGS_FIXTURE,
             PluginConfig::default(),
         )
         .await
-        .err()
         .unwrap();
-    let message = error.to_string();
+    let preflight_error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
+        .unwrap_err();
+    let acceptance = prepared.accept_all();
+    let admission_error = builder
+        .admit(
+            prepared,
+            acceptance,
+            RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
+        .unwrap_err();
 
-    assert!(message.contains("plugin settings do not match their schema"));
-    assert!(message.contains("required"), "{message}");
+    assert!(matches!(
+        preflight_error,
+        AdmissionError::SettingsValidation { .. }
+    ));
+    assert!(matches!(
+        admission_error,
+        AdmissionError::SettingsValidation { .. }
+    ));
+    assert_eq!(preflight_error.to_string(), admission_error.to_string());
+    assert!(
+        preflight_error
+            .to_string()
+            .contains("plugin settings do not match their schema")
+    );
+    assert!(preflight_error.to_string().contains("required"));
 }
 
 #[tokio::test]
@@ -184,7 +224,7 @@ async fn facade_no_settings_accepts_absent_and_empty_configuration() {
 #[tokio::test]
 async fn facade_no_settings_rejects_every_supplied_key_by_name() {
     let mut builder = HostBuilder::new(()).unwrap();
-    let error = builder
+    let prepared = builder
         .prepare(
             "greeter",
             &common::PUBLIC_FIXTURE,
@@ -194,8 +234,15 @@ async fn facade_no_settings_rejects_every_supplied_key_by_name() {
             },
         )
         .await
-        .err()
         .unwrap();
+    let error = builder
+        .preflight(
+            &prepared,
+            &RuntimeLimits::default(),
+            InvocationCtx::bounded(1_000_000, common::INVOCATION_DEADLINE),
+        )
+        .await
+        .unwrap_err();
 
     assert!(error.to_string().contains("surprise"), "{error}");
 }

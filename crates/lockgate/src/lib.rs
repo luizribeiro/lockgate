@@ -32,7 +32,8 @@ pub use inspection::{InspectError, Inspection, inspect};
 pub use jobs::{DetachError, DetachedJobFailure, JobId};
 pub use lifecycle::{
     Acceptance, AdmissionError, BudgetClass, EngineError, Host, HostBuilder, HostConstructionError,
-    InvocationCtx, LimitSet, PluginConfig, PluginHandle, Prepared, RuntimeLimits, SymbolicRoots,
+    InvocationCtx, LimitSet, PluginConfig, PluginHandle, Preflight, Prepared,
+    RequiredEnvironmentVariable, RuntimeLimits, SymbolicRoots,
 };
 pub use lockgate_policy::{
     CapabilityContract, EnvVarName, HttpOrigin, Permission, Scope, ScopeError, ScopeRef, ScopeRepr,
