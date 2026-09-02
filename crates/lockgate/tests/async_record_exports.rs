@@ -1,5 +1,6 @@
 mod common;
 
+use lockgate::PluginId;
 use lockgate::{HostBuilder, PluginConfig, RuntimeLimits};
 
 lockgate::host_bindings!({
@@ -14,7 +15,7 @@ async fn async_export_with_params_and_rich_result_round_trips() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            "async-record",
+            PluginId::from("async-record"),
             &common::ASYNC_RECORD_FIXTURE,
             PluginConfig::default(),
         )

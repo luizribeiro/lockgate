@@ -7,6 +7,7 @@ use std::sync::{
 use std::time::Duration;
 use std::{future::Future, process::Command};
 
+use lockgate::PluginId;
 use lockgate::{CallError, HostBuilder, HostCtx, PluginConfig, RoleError, RuntimeLimits};
 use tokio::sync::Barrier;
 
@@ -77,7 +78,7 @@ impl application::Host for Imports {
         if cx.data().label == HOST_PANIC_LABEL {
             panic!("{HOST_PANIC_MESSAGE}");
         }
-        cx.plugin().id().to_owned()
+        cx.plugin().id().as_str().to_owned()
     }
 
     #[lockgate::no_capability_required(reason = "test-only generated type plumbing")]
@@ -128,7 +129,7 @@ async fn host() -> (
     let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
         .prepare(
-            "host-caller",
+            PluginId::from("host-caller"),
             &common::HOST_BINDINGS_FIXTURE,
             PluginConfig::default(),
         )
@@ -285,7 +286,11 @@ async fn smoke_imports_observe_startup_data() {
     let component = common::sectioned_fixture(&component, &metadata);
     let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
-        .prepare("smoke-caller", &component, PluginConfig::default())
+        .prepare(
+            PluginId::from("smoke-caller"),
+            &component,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -393,7 +398,11 @@ async fn generated_role_fails_at_the_cast_when_not_exported() {
     };
     let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
-        .prepare("greeter", &common::PUBLIC_FIXTURE, PluginConfig::default())
+        .prepare(
+            PluginId::from("greeter"),
+            &common::PUBLIC_FIXTURE,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -430,7 +439,11 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
     };
     let mut builder = HostBuilder::new(imports).unwrap();
     let skipped = builder
-        .prepare("greeter", &common::PUBLIC_FIXTURE, PluginConfig::default())
+        .prepare(
+            PluginId::from("greeter"),
+            &common::PUBLIC_FIXTURE,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = skipped.accept_all();
@@ -445,7 +458,7 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
         .unwrap();
     let implementing = builder
         .prepare(
-            "host-caller",
+            PluginId::from("host-caller"),
             &common::HOST_BINDINGS_FIXTURE,
             PluginConfig::default(),
         )
@@ -482,7 +495,7 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
     let mut builder = HostBuilder::new(imports).unwrap();
     let first = builder
         .prepare(
-            "host-caller",
+            PluginId::from("host-caller"),
             &common::HOST_BINDINGS_FIXTURE,
             PluginConfig::default(),
         )
@@ -503,7 +516,11 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
         lockgate_schema::PluginMetadata::new("other-caller", "Other caller", "1.0").unwrap();
     let second_bytes = common::sectioned_fixture(&common::HOST_BINDINGS_FIXTURE, &metadata);
     let second = builder
-        .prepare("other-caller", &second_bytes, PluginConfig::default())
+        .prepare(
+            PluginId::from("other-caller"),
+            &second_bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = second.accept_all();

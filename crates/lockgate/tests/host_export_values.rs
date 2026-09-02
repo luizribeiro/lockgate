@@ -2,6 +2,7 @@ mod common;
 
 use std::collections::HashMap;
 
+use lockgate::PluginId;
 use lockgate::{CallBudget, CallError, HostBuilder, PluginConfig, RuntimeLimits};
 
 lockgate::host_bindings!({
@@ -27,7 +28,7 @@ async fn host_with_budgets(
         .unwrap();
     let prepared = builder
         .prepare(
-            "host-export-values",
+            PluginId::from("host-export-values"),
             &common::HOST_EXPORT_VALUES_FIXTURE,
             PluginConfig::default(),
         )

@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use lockgate_policy::PluginId;
 use lockgate_schema::{
     AtomKey, GrantSet, GrantValue, NeedKind, NeedsManifest, PluginMetadata, hex_encode,
 };
@@ -172,24 +173,24 @@ impl From<RuntimeLimits> for ExecLimits {
 /// prepared-needs digest that admission checks.
 #[derive(Clone, Debug)]
 pub struct Acceptance {
-    plugin_id: String,
+    plugin_id: PluginId,
     digest: PreparedNeedsDigest,
 }
 
 fn validate_acceptance(
-    plugin_id: &str,
+    plugin_id: &PluginId,
     digest: PreparedNeedsDigest,
     acceptance: &Acceptance,
 ) -> Result<(), AdmissionError> {
-    if acceptance.plugin_id != plugin_id {
+    if &acceptance.plugin_id != plugin_id {
         return Err(AdmissionError::AcceptancePluginMismatch {
-            prepared: plugin_id.to_owned(),
-            acceptance: acceptance.plugin_id.clone(),
+            prepared_plugin_id: plugin_id.clone(),
+            acceptance_plugin_id: acceptance.plugin_id.clone(),
         });
     }
     if acceptance.digest != digest {
         return Err(AdmissionError::AcceptanceDigestMismatch {
-            plugin: plugin_id.to_owned(),
+            plugin_id: plugin_id.clone(),
             prepared: digest.to_string(),
             acceptance: acceptance.digest.to_string(),
         });
@@ -198,7 +199,7 @@ fn validate_acceptance(
 }
 
 fn bind_effective_grants(
-    plugin_id: &str,
+    plugin_id: &PluginId,
     digest: PreparedNeedsDigest,
     resolved: ResolvedNeeds,
     acceptance: &Acceptance,
@@ -277,7 +278,7 @@ struct AdmittedPlugin<S: 'static> {
 pub struct PluginHandle {
     host: HostId,
     index: usize,
-    instance_id: String,
+    plugin_id: PluginId,
     metadata: PluginMetadata,
     effective_grants: EffectiveGrants,
     registry: std::sync::Arc<CapabilityRegistry>,
@@ -289,7 +290,7 @@ impl fmt::Debug for PluginHandle {
             .debug_struct("PluginHandle")
             .field("host", &self.host)
             .field("index", &self.index)
-            .field("instance_id", &self.instance_id)
+            .field("plugin_id", &self.plugin_id)
             .field("metadata", &self.metadata)
             .field("effective_grants", &self.effective_grants)
             .finish_non_exhaustive()
@@ -300,7 +301,7 @@ impl PartialEq for PluginHandle {
     fn eq(&self, other: &Self) -> bool {
         self.host == other.host
             && self.index == other.index
-            && self.instance_id == other.instance_id
+            && self.plugin_id == other.plugin_id
             && self.metadata == other.metadata
             && self.effective_grants == other.effective_grants
     }
@@ -309,9 +310,9 @@ impl PartialEq for PluginHandle {
 impl Eq for PluginHandle {}
 
 impl PluginHandle {
-    /// Returns the operator-assigned instance identifier.
-    pub fn id(&self) -> &str {
-        &self.instance_id
+    /// Returns the operator-assigned plugin identifier.
+    pub fn id(&self) -> &PluginId {
+        &self.plugin_id
     }
 
     /// Returns the plugin's validated display metadata.
@@ -351,9 +352,9 @@ impl PluginHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn for_policy_test(instance_id: &str, effective_grants: EffectiveGrants) -> Self {
+    pub(crate) fn for_policy_test(plugin_id: PluginId, effective_grants: EffectiveGrants) -> Self {
         Self::for_policy_test_with_registry(
-            instance_id,
+            plugin_id,
             effective_grants,
             CapabilityRegistry::default(),
         )
@@ -361,15 +362,15 @@ impl PluginHandle {
 
     #[cfg(test)]
     pub(crate) fn for_policy_test_with_registry(
-        instance_id: &str,
+        plugin_id: PluginId,
         effective_grants: EffectiveGrants,
         registry: CapabilityRegistry,
     ) -> Self {
         Self {
             host: HostId(0),
             index: 0,
-            instance_id: instance_id.to_owned(),
-            metadata: PluginMetadata::new(instance_id, "Policy test plugin", "1.0").unwrap(),
+            metadata: PluginMetadata::new(plugin_id.as_str(), "Policy test plugin", "1.0").unwrap(),
+            plugin_id,
             effective_grants,
             registry: std::sync::Arc::new(registry),
         }
@@ -512,7 +513,7 @@ impl<S: CallContext> HostBuilder<S> {
     /// surface for preflight and later admission.
     pub async fn prepare(
         &mut self,
-        id: &str,
+        plugin_id: PluginId,
         bytes: &[u8],
         config: PluginConfig,
     ) -> Result<Prepared, AdmissionError> {
@@ -527,8 +528,11 @@ impl<S: CallContext> HostBuilder<S> {
         let imported_interfaces =
             decode_imported_interfaces(bytes).map_err(AdmissionError::from_inspection)?;
         let wired_interfaces = self.select_host_imports(&imported_interfaces, &needs)?;
-        let has_http_egress =
-            validate_http_egress_grant(id, &imported_interfaces, http_egress_origin_count(&needs))?;
+        let has_http_egress = validate_http_egress_grant(
+            &plugin_id,
+            &imported_interfaces,
+            http_egress_origin_count(&needs),
+        )?;
         if let Some(field) = unavailable_field {
             return Err(AdmissionError::ConfigFeatureUnavailable { field });
         }
@@ -546,7 +550,7 @@ impl<S: CallContext> HostBuilder<S> {
         let inspection = Inspection::new(metadata, needs, needs_digest, exported_interfaces);
         Ok(Prepared {
             host: self.id,
-            instance_id: id.to_owned(),
+            plugin_id,
             inspection,
             resolved,
             prepared_digest,
@@ -665,20 +669,20 @@ impl<S: CallContext> HostBuilder<S> {
     ) -> Result<PluginHandle, AdmissionError> {
         if prepared.host != self.id {
             return Err(AdmissionError::PreparedHostMismatch {
-                plugin: prepared.instance_id,
+                plugin_id: prepared.plugin_id,
             });
         }
         if self
             .admitted
             .iter()
-            .any(|plugin| plugin.handle.id() == prepared.instance_id.as_str())
+            .any(|plugin| plugin.handle.id() == &prepared.plugin_id)
         {
-            return Err(AdmissionError::DuplicateInstanceId {
-                instance_id: prepared.instance_id,
+            return Err(AdmissionError::DuplicatePluginId {
+                plugin_id: prepared.plugin_id,
             });
         }
         let effective_grants = bind_effective_grants(
-            &prepared.instance_id,
+            &prepared.plugin_id,
             prepared.prepared_digest,
             prepared.resolved.clone(),
             &acceptance,
@@ -686,7 +690,7 @@ impl<S: CallContext> HostBuilder<S> {
         let handle = PluginHandle {
             host: self.id,
             index: self.admitted.len(),
-            instance_id: prepared.instance_id.clone(),
+            plugin_id: prepared.plugin_id.clone(),
             metadata: prepared.inspection.metadata().clone(),
             effective_grants,
             registry: std::sync::Arc::new(self.registry.clone()),
@@ -712,7 +716,7 @@ impl<S: CallContext> HostBuilder<S> {
     ) -> Result<PreflightResult<S>, AdmissionError> {
         if prepared.host != self.id {
             return Err(AdmissionError::PreparedHostMismatch {
-                plugin: prepared.instance_id.clone(),
+                plugin_id: prepared.plugin_id.clone(),
             });
         }
         if let Some(max_memory_size) = self.engine.pooling_memory_slot_size()
@@ -761,20 +765,20 @@ impl<S: CallContext> HostBuilder<S> {
         match admitted_handle {
             Some(handle) => {
                 artifact.set_environment_grants(environment_grants(
-                    &prepared.instance_id,
+                    &prepared.plugin_id,
                     &prepared.resolved,
                 ));
                 artifact.set_plugin(
                     handle.clone(),
                     DetachedJobContext::new(
                         std::sync::Arc::clone(&self.jobs),
-                        handle.id().to_owned(),
+                        handle.id().clone(),
                         limits.max_detached_jobs,
                     ),
                 );
             }
             None => artifact.set_environment_grants(preflight_environment_grants(
-                &prepared.instance_id,
+                &prepared.plugin_id,
                 &prepared.resolved,
             )),
         }
@@ -868,15 +872,18 @@ fn environment_preflight(resolved: &ResolvedNeeds) -> Preflight {
     }
 }
 
-fn preflight_environment_grants(instance_id: &str, resolved: &ResolvedNeeds) -> EnvironmentGrants {
+fn preflight_environment_grants(
+    plugin_id: &PluginId,
+    resolved: &ResolvedNeeds,
+) -> EnvironmentGrants {
     let mut available = environment_grant_values(&resolved.required);
     available.extend(environment_grant_values(&resolved.optional));
-    EnvironmentGrants::new(instance_id.to_owned(), Vec::new(), available)
+    EnvironmentGrants::new(plugin_id.clone(), Vec::new(), available)
 }
 
-fn environment_grants(instance_id: &str, resolved: &ResolvedNeeds) -> EnvironmentGrants {
+fn environment_grants(plugin_id: &PluginId, resolved: &ResolvedNeeds) -> EnvironmentGrants {
     EnvironmentGrants::new(
-        instance_id.to_owned(),
+        plugin_id.clone(),
         environment_grant_values(&resolved.required),
         environment_grant_values(&resolved.optional),
     )
@@ -916,7 +923,7 @@ fn http_egress_origin_count(needs: &NeedsManifest) -> Option<usize> {
 }
 
 fn validate_http_egress_grant(
-    plugin: &str,
+    plugin_id: &PluginId,
     imported_interfaces: &[String],
     origin_count: Option<usize>,
 ) -> Result<bool, AdmissionError> {
@@ -926,7 +933,7 @@ fn validate_http_egress_grant(
     // Needs decoding rejects empty scoped needs first; retain this as defense in depth.
     if origin_count == 0 {
         return Err(AdmissionError::EmptyHttpEgressOrigins {
-            plugin: plugin.to_owned(),
+            plugin_id: plugin_id.clone(),
         });
     }
     if !imported_interfaces
@@ -934,7 +941,7 @@ fn validate_http_egress_grant(
         .any(|interface| interface == "wasi:http/client@0.3.0")
     {
         return Err(AdmissionError::HttpEgressUnavailable {
-            plugin: plugin.to_owned(),
+            plugin_id: plugin_id.clone(),
         });
     }
     Ok(true)
@@ -1020,7 +1027,7 @@ impl<S: CallContext> Host<S> {
 /// An inspected and compiled plugin request ready for consent and preflight.
 pub struct Prepared {
     host: HostId,
-    pub(crate) instance_id: String,
+    pub(crate) plugin_id: PluginId,
     pub(crate) inspection: Inspection,
     pub(crate) resolved: ResolvedNeeds,
     pub(crate) prepared_digest: PreparedNeedsDigest,
@@ -1032,7 +1039,7 @@ impl fmt::Debug for Prepared {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Prepared")
-            .field("instance_id", &self.instance_id)
+            .field("plugin_id", &self.plugin_id)
             .field("inspection", &self.inspection)
             .finish_non_exhaustive()
     }
@@ -1047,7 +1054,7 @@ impl Prepared {
     /// Accepts every required and optional atom in this resolved request.
     pub fn accept_all(&self) -> Acceptance {
         Acceptance {
-            plugin_id: self.instance_id.clone(),
+            plugin_id: self.plugin_id.clone(),
             digest: self.prepared_digest,
         }
     }
@@ -1139,17 +1146,17 @@ pub enum AdmissionError {
         permissions: Vec<AtomKey>,
     },
     HttpEgressUnavailable {
-        plugin: String,
+        plugin_id: PluginId,
     },
     EmptyHttpEgressOrigins {
-        plugin: String,
+        plugin_id: PluginId,
     },
     RequiredEnvironmentVariableUnset {
-        instance_id: String,
+        plugin_id: PluginId,
         variable: String,
     },
     RequiredEnvironmentVariableNotUnicode {
-        instance_id: String,
+        plugin_id: PluginId,
         variable: String,
     },
     SmokeOutOfBudget,
@@ -1182,17 +1189,17 @@ pub enum AdmissionError {
     },
     ScopeResolution(ScopeResolutionError),
     PreparedHostMismatch {
-        plugin: String,
+        plugin_id: PluginId,
     },
-    DuplicateInstanceId {
-        instance_id: String,
+    DuplicatePluginId {
+        plugin_id: PluginId,
     },
     AcceptancePluginMismatch {
-        prepared: String,
-        acceptance: String,
+        prepared_plugin_id: PluginId,
+        acceptance_plugin_id: PluginId,
     },
     AcceptanceDigestMismatch {
-        plugin: String,
+        plugin_id: PluginId,
         prepared: String,
         acceptance: String,
     },
@@ -1253,17 +1260,17 @@ impl AdmissionError {
     fn from_smoke(error: ExecError) -> Self {
         match error {
             ExecError::Environment(EnvironmentError::RequiredUnset {
-                instance_id,
+                plugin_id,
                 variable,
             }) => Self::RequiredEnvironmentVariableUnset {
-                instance_id,
+                plugin_id,
                 variable,
             },
             ExecError::Environment(EnvironmentError::RequiredNotUnicode {
-                instance_id,
+                plugin_id,
                 variable,
             }) => Self::RequiredEnvironmentVariableNotUnicode {
-                instance_id,
+                plugin_id,
                 variable,
             },
             ExecError::OutOfBudget => Self::SmokeOutOfBudget,
@@ -1340,27 +1347,27 @@ impl fmt::Display for AdmissionError {
                 formatter,
                 "plugin imports host interface `{interface}` but declares none of its permissions"
             ),
-            Self::HttpEgressUnavailable { plugin } => write!(
+            Self::HttpEgressUnavailable { plugin_id } => write!(
                 formatter,
-                "plugin `{plugin}` has an HTTP egress grant but does not import `wasi:http/client@0.3.0`"
+                "plugin `{plugin_id}` has an HTTP egress grant but does not import `wasi:http/client@0.3.0`"
             ),
-            Self::EmptyHttpEgressOrigins { plugin } => write!(
+            Self::EmptyHttpEgressOrigins { plugin_id } => write!(
                 formatter,
-                "plugin `{plugin}` cannot hold an HTTP egress grant with no origins"
+                "plugin `{plugin_id}` cannot hold an HTTP egress grant with no origins"
             ),
             Self::RequiredEnvironmentVariableUnset {
-                instance_id,
+                plugin_id,
                 variable,
             } => write!(
                 formatter,
-                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but it is unset"
+                "plugin instance `{plugin_id}` requires host environment variable `{variable}`, but it is unset"
             ),
             Self::RequiredEnvironmentVariableNotUnicode {
-                instance_id,
+                plugin_id,
                 variable,
             } => write!(
                 formatter,
-                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but its value is not valid Unicode"
+                "plugin instance `{plugin_id}` requires host environment variable `{variable}`, but its value is not valid Unicode"
             ),
             Self::SmokeOutOfBudget => formatter
                 .write_str("plugin exhausted its startup budget during smoke instantiation"),
@@ -1405,28 +1412,28 @@ impl fmt::Display for AdmissionError {
                 )
             }
             Self::ScopeResolution(error) => error.fmt(formatter),
-            Self::PreparedHostMismatch { plugin } => write!(
+            Self::PreparedHostMismatch { plugin_id } => write!(
                 formatter,
-                "prepared plugin `{plugin}` belongs to another HostBuilder and cannot be admitted here"
+                "prepared plugin `{plugin_id}` belongs to another HostBuilder and cannot be admitted here"
             ),
-            Self::DuplicateInstanceId { instance_id } => write!(
+            Self::DuplicatePluginId { plugin_id } => write!(
                 formatter,
-                "plugin instance id `{instance_id}` is already admitted to this HostBuilder"
+                "plugin instance id `{plugin_id}` is already admitted to this HostBuilder"
             ),
             Self::AcceptancePluginMismatch {
-                prepared,
-                acceptance,
+                prepared_plugin_id,
+                acceptance_plugin_id,
             } => write!(
                 formatter,
-                "prepared plugin `{prepared}` cannot use an acceptance bound to plugin `{acceptance}`"
+                "prepared plugin `{prepared_plugin_id}` cannot use an acceptance bound to plugin `{acceptance_plugin_id}`"
             ),
             Self::AcceptanceDigestMismatch {
-                plugin,
+                plugin_id,
                 prepared,
                 acceptance,
             } => write!(
                 formatter,
-                "prepared plugin `{plugin}` has needs digest `{prepared}`, but the acceptance is bound to needs digest `{acceptance}`"
+                "prepared plugin `{plugin_id}` has needs digest `{prepared}`, but the acceptance is bound to needs digest `{acceptance}`"
             ),
         }
     }
@@ -1564,8 +1571,9 @@ mod grant_tests {
             .unwrap()
     }
 
-    fn cache_fixture(id: &str) -> Vec<u8> {
-        let metadata = PluginMetadata::new(id, "Compiled cache fixture", "1.0").unwrap();
+    fn cache_fixture(plugin_id: &PluginId) -> Vec<u8> {
+        let metadata =
+            PluginMetadata::new(plugin_id.as_str(), "Compiled cache fixture", "1.0").unwrap();
         let needs = NeedsManifest::empty();
         with_section(
             with_section(
@@ -1611,7 +1619,7 @@ mod grant_tests {
         let mut builder = HostBuilder::new(()).unwrap();
 
         let prepared = builder
-            .prepare("digest", &bytes, PluginConfig::default())
+            .prepare(PluginId::from("digest"), &bytes, PluginConfig::default())
             .await
             .unwrap();
 
@@ -1621,14 +1629,14 @@ mod grant_tests {
     #[tokio::test]
     async fn compiled_cache_hits_across_host_builders() {
         let directory = tempdir().unwrap();
-        let bytes = cache_fixture("cache-hit");
+        let bytes = cache_fixture(&PluginId::from("cache-hit"));
         let mut cold = HostBuilder::new(())
             .unwrap()
             .compiled_cache(directory.path().to_path_buf());
 
         let started = Instant::now();
         let prepared = cold
-            .prepare("cache-hit", &bytes, PluginConfig::default())
+            .prepare(PluginId::from("cache-hit"), &bytes, PluginConfig::default())
             .await
             .unwrap();
         let cold_elapsed = started.elapsed();
@@ -1643,7 +1651,7 @@ mod grant_tests {
             .compiled_cache(directory.path().to_path_buf());
         let started = Instant::now();
         cached
-            .prepare("cache-hit", &bytes, PluginConfig::default())
+            .prepare(PluginId::from("cache-hit"), &bytes, PluginConfig::default())
             .await
             .unwrap();
         let cached_elapsed = started.elapsed();
@@ -1656,13 +1664,17 @@ mod grant_tests {
     #[tokio::test]
     async fn corrupt_compiled_cache_entry_is_recompiled_and_overwritten() {
         let directory = tempdir().unwrap();
-        let bytes = cache_fixture("cache-corrupt");
+        let bytes = cache_fixture(&PluginId::from("cache-corrupt"));
         let mut cold = HostBuilder::new(())
             .unwrap()
             .compiled_cache(directory.path().to_path_buf());
-        cold.prepare("cache-corrupt", &bytes, PluginConfig::default())
-            .await
-            .unwrap();
+        cold.prepare(
+            PluginId::from("cache-corrupt"),
+            &bytes,
+            PluginConfig::default(),
+        )
+        .await
+        .unwrap();
         drop(cold);
 
         let entry = only_cache_entry(directory.path());
@@ -1672,7 +1684,11 @@ mod grant_tests {
             .unwrap()
             .compiled_cache(directory.path().to_path_buf());
         repaired
-            .prepare("cache-corrupt", &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::from("cache-corrupt"),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         assert_eq!(repaired.engine.cache_hits(), 0);
@@ -1687,7 +1703,11 @@ mod grant_tests {
             .unwrap()
             .compiled_cache(directory.path().to_path_buf());
         cached
-            .prepare("cache-corrupt", &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::from("cache-corrupt"),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         assert_eq!(cached.engine.cache_hits(), 1);
@@ -1711,11 +1731,15 @@ mod grant_tests {
 
     #[tokio::test]
     async fn no_compiled_cache_configuration_performs_no_cache_writes() {
-        let bytes = cache_fixture("cache-disabled");
+        let bytes = cache_fixture(&PluginId::from("cache-disabled"));
         let mut builder = HostBuilder::new(()).unwrap();
 
         builder
-            .prepare("cache-disabled", &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::from("cache-disabled"),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
 
@@ -1755,7 +1779,7 @@ mod grant_tests {
         let component_digest = display_component_digest(&raw_component_sha256(&component_bytes));
         let prepared = Prepared {
             host: HostId::next(),
-            instance_id: "pure-instance".to_owned(),
+            plugin_id: PluginId::from("pure-instance"),
             inspection: Inspection::new(metadata, needs, needs_digest, Vec::new()),
             resolved,
             prepared_digest,
@@ -1764,14 +1788,14 @@ mod grant_tests {
         };
         let acceptance = prepared.accept_all();
         let Prepared {
-            instance_id,
+            plugin_id,
             resolved,
             prepared_digest,
             ..
         } = prepared;
 
         let grants =
-            bind_effective_grants(&instance_id, prepared_digest, resolved, &acceptance).unwrap();
+            bind_effective_grants(&plugin_id, prepared_digest, resolved, &acceptance).unwrap();
 
         assert!(grants.has_unscoped(&atom("sessions.send")));
         assert!(!grants.has_unscoped(&atom("sessions.missing")));
@@ -1812,7 +1836,7 @@ mod grant_tests {
             .unwrap();
         let prod = builder
             .prepare(
-                "openai-prod",
+                PluginId::from("openai-prod"),
                 &bytes,
                 PluginConfig {
                     settings: Some(serde_json::json!({ "scope": "all" })),
@@ -1823,7 +1847,7 @@ mod grant_tests {
             .unwrap();
         let staging = builder
             .prepare(
-                "openai-staging",
+                PluginId::from("openai-staging"),
                 &bytes,
                 PluginConfig {
                     settings: Some(serde_json::json!({ "scope": "current" })),
@@ -1844,8 +1868,8 @@ mod grant_tests {
             .await
             .unwrap();
 
-        assert_eq!(prod.id(), "openai-prod");
-        assert_eq!(staging.id(), "openai-staging");
+        assert_eq!(prod.id().as_str(), "openai-prod");
+        assert_eq!(staging.id().as_str(), "openai-staging");
         assert_ne!(prod.effective_grants(), staging.effective_grants());
         assert_eq!(
             prod.effective_grants()
@@ -1861,7 +1885,7 @@ mod grant_tests {
     }
 
     #[tokio::test]
-    async fn failed_admission_does_not_reserve_the_instance_id() {
+    async fn failed_admission_does_not_reserve_the_plugin_id() {
         let metadata = PluginMetadata::new("retry-code", "Retry code", "1.0").unwrap();
         let needs = NeedsManifest::empty();
         let bytes = with_section(
@@ -1875,11 +1899,11 @@ mod grant_tests {
         );
         let mut builder = HostBuilder::new(()).unwrap();
         let rejected = builder
-            .prepare("retry", &bytes, PluginConfig::default())
+            .prepare(PluginId::from("retry"), &bytes, PluginConfig::default())
             .await
             .unwrap();
         let other = builder
-            .prepare("other", &bytes, PluginConfig::default())
+            .prepare(PluginId::from("other"), &bytes, PluginConfig::default())
             .await
             .unwrap();
         let mismatched_acceptance = other.accept_all();
@@ -1891,13 +1915,14 @@ mod grant_tests {
         assert!(matches!(
             error,
             AdmissionError::AcceptancePluginMismatch {
-                ref prepared,
-                ref acceptance,
-            } if prepared == "retry" && acceptance == "other"
+                ref prepared_plugin_id,
+                ref acceptance_plugin_id,
+            } if prepared_plugin_id.as_str() == "retry"
+                && acceptance_plugin_id.as_str() == "other"
         ));
 
         let retry = builder
-            .prepare("retry", &bytes, PluginConfig::default())
+            .prepare(PluginId::from("retry"), &bytes, PluginConfig::default())
             .await
             .unwrap();
         let acceptance = retry.accept_all();
@@ -1906,7 +1931,7 @@ mod grant_tests {
             .await
             .unwrap();
 
-        assert_eq!(handle.id(), "retry");
+        assert_eq!(handle.id().as_str(), "retry");
     }
 
     #[tokio::test]
@@ -1935,13 +1960,18 @@ mod grant_tests {
         let mut builder = HostBuilder::new(()).unwrap();
 
         let error = builder
-            .prepare("http-no-import", &component, PluginConfig::default())
+            .prepare(
+                PluginId::from("http-no-import"),
+                &component,
+                PluginConfig::default(),
+            )
             .await
             .unwrap_err();
 
         assert!(matches!(
             error,
-            AdmissionError::HttpEgressUnavailable { ref plugin } if plugin == "http-no-import"
+            AdmissionError::HttpEgressUnavailable { ref plugin_id }
+                if plugin_id.as_str() == "http-no-import"
         ));
     }
 
@@ -1961,7 +1991,11 @@ mod grant_tests {
         let mut builder = HostBuilder::new(()).unwrap();
 
         let error = builder
-            .prepare("empty-http", &component, PluginConfig::default())
+            .prepare(
+                PluginId::from("empty-http"),
+                &component,
+                PluginConfig::default(),
+            )
             .await
             .unwrap_err();
         let message = error.to_string();
@@ -1998,7 +2032,11 @@ mod grant_tests {
             .register::<permissions::Contract>()
             .unwrap();
         let prepared = originating
-            .prepare("host-bound", &component, PluginConfig::default())
+            .prepare(
+                PluginId::from("host-bound"),
+                &component,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let acceptance = prepared.accept_all();
@@ -2014,7 +2052,8 @@ mod grant_tests {
 
         assert!(matches!(
             error,
-            AdmissionError::PreparedHostMismatch { ref plugin } if plugin == "host-bound"
+            AdmissionError::PreparedHostMismatch { ref plugin_id }
+                if plugin_id.as_str() == "host-bound"
         ));
         let message = error.to_string();
         assert!(message.contains("host-bound"));
@@ -2052,7 +2091,11 @@ mod grant_tests {
             .register::<permissions::Contract>()
             .unwrap();
         let prepared = builder
-            .prepare("grant-query", &component, PluginConfig::default())
+            .prepare(
+                PluginId::from("grant-query"),
+                &component,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let acceptance = prepared.accept_all();
@@ -2079,7 +2122,7 @@ mod grant_tests {
             Some(["all".to_owned()].as_slice())
         );
         assert_eq!(
-            crate::PluginSubject::new(&handle).plugin_id(),
+            crate::PluginSubject::new(&handle).plugin_id().as_str(),
             "grant-query"
         );
 

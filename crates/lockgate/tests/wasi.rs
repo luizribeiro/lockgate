@@ -2,6 +2,7 @@ mod common;
 
 use common::exec::ExecEngine;
 use common::{INVOCATION_FUEL, LIMITS, TestState};
+use lockgate::PluginId;
 use lockgate::{
     AdmissionError, CallError, Host, HostBuilder, PluginConfig, PluginHandle, Role, RoleInvocation,
     RuntimeLimits, Value,
@@ -105,7 +106,11 @@ async fn admitted_wasi(needs: &NeedsManifest) -> (Host<()>, PluginHandle) {
     let component = common::policy_fixture(&common::WASI_FIXTURE, &metadata, needs);
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(ENV_PLUGIN_ID, &component, PluginConfig::default())
+        .prepare(
+            PluginId::from(ENV_PLUGIN_ID),
+            &component,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -244,7 +249,11 @@ fn preflight_reports_required_unset_env_before_admission_fails() {
         let component = common::policy_fixture(&common::WASI_FIXTURE, &metadata, &needs);
         let mut builder = HostBuilder::new(()).unwrap();
         let prepared = builder
-            .prepare(ENV_PLUGIN_ID, &component, PluginConfig::default())
+            .prepare(
+                PluginId::from(ENV_PLUGIN_ID),
+                &component,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let preflight = builder
@@ -267,9 +276,9 @@ fn preflight_reports_required_unset_env_before_admission_fails() {
         assert!(matches!(
             error,
             AdmissionError::RequiredEnvironmentVariableUnset {
-                ref instance_id,
+                ref plugin_id,
                 ref variable,
-            } if instance_id == ENV_PLUGIN_ID && variable == REQUIRED_NAME
+            } if plugin_id.as_str() == ENV_PLUGIN_ID && variable == REQUIRED_NAME
         ));
         assert_eq!(
             error.to_string(),

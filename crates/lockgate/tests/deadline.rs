@@ -4,6 +4,7 @@ use std::future::pending;
 use std::time::Duration;
 
 use lockgate::__private::{StoreCtx, wasmtime};
+use lockgate::PluginId;
 use lockgate::{
     AdmissionError, CallBudget, CallError, Host, HostBuilder, HostImports, PluginConfig,
     PluginHandle, Role, RoleInvocation, RuntimeLimits, Value,
@@ -100,7 +101,7 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
     let metadata = PluginMetadata::new("deadline", "Deadline fixture", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&common::EXEC_FIXTURE, &metadata);
     let prepared = builder
-        .prepare("deadline", &bytes, PluginConfig::default())
+        .prepare(PluginId::from("deadline"), &bytes, PluginConfig::default())
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -158,7 +159,11 @@ async fn blocking_start_returns_a_smoke_deadline_error() {
     let metadata = PluginMetadata::new("deadline-start", "Deadline start fixture", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&blocking_start_component(), &metadata);
     let prepared = builder
-        .prepare("deadline-start", &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::from("deadline-start"),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();

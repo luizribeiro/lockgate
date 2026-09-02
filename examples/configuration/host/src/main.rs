@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+use lockgate::PluginId;
 use lockgate::{HostBuilder, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "configuration";
@@ -37,7 +38,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut builder = HostBuilder::new(())?;
     let prepared = builder
         .prepare(
-            PLUGIN_ID,
+            PluginId::from(PLUGIN_ID),
             &bytes,
             PluginConfig {
                 settings: Some(settings),

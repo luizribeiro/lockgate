@@ -1,5 +1,6 @@
 mod common;
 
+use lockgate::PluginId;
 use lockgate::{
     AdmissionError, CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits,
     Value,
@@ -76,7 +77,7 @@ async fn valid_config_preflights_without_acceptance_and_remains_admissible() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PLUGIN_ID,
+            PluginId::from(PLUGIN_ID),
             &component,
             PluginConfig {
                 settings: Some(settings),
@@ -108,7 +109,7 @@ async fn typed_guest_settings_round_trip_and_apply_serde_defaults() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            "typed-settings",
+            PluginId::from("typed-settings"),
             &common::TYPED_SETTINGS_FIXTURE,
             PluginConfig {
                 settings: Some(serde_json::json!({ "required": "from-host" })),
@@ -137,7 +138,7 @@ async fn invalid_settings_fail_preflight_and_admission_identically() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            "typed-settings",
+            PluginId::from("typed-settings"),
             &common::TYPED_SETTINGS_FIXTURE,
             PluginConfig::default(),
         )
@@ -176,7 +177,7 @@ async fn facade_no_settings_accepts_absent_and_empty_configuration() {
         let mut builder = HostBuilder::new(()).unwrap();
         builder
             .prepare(
-                "greeter",
+                PluginId::from("greeter"),
                 &common::PUBLIC_FIXTURE,
                 PluginConfig {
                     settings,
@@ -193,7 +194,7 @@ async fn facade_no_settings_rejects_every_supplied_key_by_name() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            "greeter",
+            PluginId::from("greeter"),
             &common::PUBLIC_FIXTURE,
             PluginConfig {
                 settings: Some(serde_json::json!({ "surprise": true })),

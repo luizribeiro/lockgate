@@ -1,5 +1,6 @@
 mod common;
 
+use lockgate::PluginId;
 use lockgate::{CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value};
 
 struct WithReuseRole;
@@ -43,7 +44,7 @@ async fn mapped_shared_type_builds_admits_and_round_trips() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            "with-reuse",
+            PluginId::from("with-reuse"),
             &common::WITH_REUSE_FIXTURE,
             PluginConfig::default(),
         )

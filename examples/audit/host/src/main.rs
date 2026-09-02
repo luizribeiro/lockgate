@@ -2,6 +2,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use lockgate::PluginId;
 use lockgate::{HostBuilder, HostCtx, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "audit";
@@ -63,7 +64,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut builder = HostBuilder::new(imports)?;
     let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
         .await?;
     let acceptance = prepared.accept_all();
     let plugin = builder

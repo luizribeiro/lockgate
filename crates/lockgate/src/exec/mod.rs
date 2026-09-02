@@ -8,6 +8,7 @@ use std::sync::{
 use std::sync::Arc;
 use std::{any::Any, marker::PhantomData, time::Duration};
 
+use lockgate_policy::PluginId;
 use wasmtime::component::{
     Component, ComponentExportIndex, InstancePre, Linker, ResourceTable, Val, types::ComponentItem,
 };
@@ -275,17 +276,17 @@ pub(crate) struct LoadedComponent<S: 'static> {
     http_pool: Option<Arc<HttpPool>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct EnvironmentGrants {
-    instance_id: String,
+    plugin_id: PluginId,
     required: Vec<String>,
     optional: Vec<String>,
 }
 
 impl EnvironmentGrants {
-    pub(crate) fn new(instance_id: String, required: Vec<String>, optional: Vec<String>) -> Self {
+    pub(crate) fn new(plugin_id: PluginId, required: Vec<String>, optional: Vec<String>) -> Self {
         Self {
-            instance_id,
+            plugin_id,
             required,
             optional,
         }
@@ -298,13 +299,13 @@ impl EnvironmentGrants {
                 Ok(value) => value,
                 Err(std::env::VarError::NotPresent) => {
                     return Err(EnvironmentError::RequiredUnset {
-                        instance_id: self.instance_id.clone(),
+                        plugin_id: self.plugin_id.clone(),
                         variable: name.clone(),
                     });
                 }
                 Err(std::env::VarError::NotUnicode(_)) => {
                     return Err(EnvironmentError::RequiredNotUnicode {
-                        instance_id: self.instance_id.clone(),
+                        plugin_id: self.plugin_id.clone(),
                         variable: name.clone(),
                     });
                 }
@@ -317,6 +318,16 @@ impl EnvironmentGrants {
             }
         }
         Ok(wasi.build())
+    }
+}
+
+impl Default for EnvironmentGrants {
+    fn default() -> Self {
+        Self {
+            plugin_id: PluginId::from(String::new()),
+            required: Vec::new(),
+            optional: Vec::new(),
+        }
     }
 }
 

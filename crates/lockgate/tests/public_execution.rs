@@ -1,5 +1,6 @@
 mod common;
 
+use lockgate::PluginId;
 use lockgate::{
     CallBudget, CallError, Host, HostBuilder, PluginConfig, PluginHandle, Role, RoleInvocation,
     RuntimeLimits, Value,
@@ -87,15 +88,24 @@ impl DiagnosticsClient<'_, ()> {
 
 async fn admitted_fixture() -> (Host<()>, PluginHandle) {
     let mut builder = HostBuilder::new(()).unwrap();
-    let plugin = admit(&mut builder, PLUGIN_ID, &common::PUBLIC_FIXTURE).await;
+    let plugin = admit(
+        &mut builder,
+        PluginId::from(PLUGIN_ID),
+        &common::PUBLIC_FIXTURE,
+    )
+    .await;
     (builder.finish(), plugin)
 }
 
-async fn admit(builder: &mut HostBuilder<()>, id: &str, component: &[u8]) -> PluginHandle {
-    let metadata = PluginMetadata::new(id, "Enumeration fixture", "1.0").unwrap();
+async fn admit(
+    builder: &mut HostBuilder<()>,
+    plugin_id: PluginId,
+    component: &[u8],
+) -> PluginHandle {
+    let metadata = PluginMetadata::new(plugin_id.as_str(), "Enumeration fixture", "1.0").unwrap();
     let bytes = common::sectioned_fixture(component, &metadata);
     let prepared = builder
-        .prepare(id, &bytes, PluginConfig::default())
+        .prepare(plugin_id, &bytes, PluginConfig::default())
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -126,8 +136,18 @@ fn unrelated_component() -> Vec<u8> {
 #[tokio::test]
 async fn role_clients_skip_non_exporters_and_yield_invokable_clients() {
     let mut builder = HostBuilder::new(()).unwrap();
-    let skipped = admit(&mut builder, "unrelated", &unrelated_component()).await;
-    let implementing = admit(&mut builder, "diagnostics", &common::PUBLIC_FIXTURE).await;
+    let skipped = admit(
+        &mut builder,
+        PluginId::from("unrelated"),
+        &unrelated_component(),
+    )
+    .await;
+    let implementing = admit(
+        &mut builder,
+        PluginId::from("diagnostics"),
+        &common::PUBLIC_FIXTURE,
+    )
+    .await;
     let host = builder.finish();
 
     let mut clients = host.clients::<DiagnosticsRole>();
@@ -149,7 +169,12 @@ async fn role_clients_skip_non_exporters_and_yield_invokable_clients() {
 #[tokio::test]
 async fn role_clients_are_empty_when_no_plugin_exports_the_role() {
     let mut builder = HostBuilder::new(()).unwrap();
-    admit(&mut builder, "unrelated", &unrelated_component()).await;
+    admit(
+        &mut builder,
+        PluginId::from("unrelated"),
+        &unrelated_component(),
+    )
+    .await;
     let host = builder.finish();
 
     assert_eq!(host.clients::<DiagnosticsRole>().count(), 0);
@@ -159,8 +184,18 @@ async fn role_clients_are_empty_when_no_plugin_exports_the_role() {
 #[tokio::test]
 async fn role_clients_follow_admission_order() {
     let mut builder = HostBuilder::new(()).unwrap();
-    let first = admit(&mut builder, "first", &common::PUBLIC_FIXTURE).await;
-    let second = admit(&mut builder, "second", &common::PUBLIC_FIXTURE).await;
+    let first = admit(
+        &mut builder,
+        PluginId::from("first"),
+        &common::PUBLIC_FIXTURE,
+    )
+    .await;
+    let second = admit(
+        &mut builder,
+        PluginId::from("second"),
+        &common::PUBLIC_FIXTURE,
+    )
+    .await;
     let host = builder.finish();
 
     let plugins = host

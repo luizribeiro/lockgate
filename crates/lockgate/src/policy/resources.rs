@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use lockgate_policy::{Scope, ScopeError, ScopedPermission};
+use lockgate_policy::{PluginId, Scope, ScopeError, ScopedPermission};
 use lockgate_schema::AtomKey;
 use wasmtime::component::{Resource, ResourceTable, ResourceTableError};
 
@@ -30,7 +30,7 @@ impl fmt::Debug for PluginSubject<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PluginSubject")
-            .field("plugin_id", &self.plugin_id())
+            .field("plugin_id", &self.plugin_id().as_str())
             .finish()
     }
 }
@@ -41,7 +41,7 @@ impl<'a> PluginSubject<'a> {
     }
 
     /// Returns the stable ID of the plugin making this invocation.
-    pub fn plugin_id(&self) -> &str {
+    pub fn plugin_id(&self) -> &PluginId {
         self.plugin.id()
     }
 }
@@ -522,13 +522,13 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct MockVm {
         pool: String,
-        created_by: Option<String>,
+        created_by: Option<PluginId>,
     }
 
     impl ScopedResource<InstanceScope> for MockVm {
         fn scopes_for(&self, subject: &PluginSubject<'_>) -> Vec<InstanceScope> {
             let mut scopes = vec![InstanceScope::Pool(self.pool.clone())];
-            if self.created_by.as_deref() == Some(subject.plugin_id()) {
+            if self.created_by.as_ref() == Some(subject.plugin_id()) {
                 scopes.push(InstanceScope::CreatedByCaller);
             }
             scopes
@@ -598,7 +598,7 @@ mod tests {
         })
     }
 
-    fn subject(plugin_id: &str) -> PluginHandle {
+    fn subject(plugin_id: PluginId) -> PluginHandle {
         PluginHandle::for_policy_test(plugin_id, effective_grants(&[]))
     }
 
@@ -615,7 +615,7 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "gpu".to_owned(),
-                    created_by: Some("A".to_owned()),
+                    created_by: Some(PluginId::from("A")),
                 },
                 caller: "A",
                 memberships: vec![
@@ -627,7 +627,7 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "gpu".to_owned(),
-                    created_by: Some("A".to_owned()),
+                    created_by: Some(PluginId::from("A")),
                 },
                 caller: "B",
                 memberships: vec![InstanceScope::Pool("gpu".to_owned())],
@@ -636,7 +636,7 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "cpu".to_owned(),
-                    created_by: Some("B".to_owned()),
+                    created_by: Some(PluginId::from("B")),
                 },
                 caller: "A",
                 memberships: vec![InstanceScope::Pool("cpu".to_owned())],
@@ -652,7 +652,7 @@ mod tests {
         let registry = registry();
 
         for row in rows {
-            let handle = subject(row.caller);
+            let handle = subject(PluginId::from(row.caller));
             let plugin_subject = PluginSubject::new(&handle);
             let memberships = row.vm.scopes_for(&plugin_subject);
             assert_eq!(memberships, row.memberships);
@@ -709,8 +709,10 @@ mod tests {
 
     #[test]
     fn subject_debug_exposes_only_the_public_plugin_id() {
-        let handle =
-            PluginHandle::for_policy_test("A", effective_grants(&[InstanceScope::CreatedByCaller]));
+        let handle = PluginHandle::for_policy_test(
+            PluginId::from("A"),
+            effective_grants(&[InstanceScope::CreatedByCaller]),
+        );
         let subject = PluginSubject::new(&handle);
 
         assert_eq!(format!("{subject:?}"), "PluginSubject { plugin_id: \"A\" }");
@@ -720,12 +722,12 @@ mod tests {
     async fn string_id_resolves_asynchronously_to_a_local_vm() {
         let vm = MockVm {
             pool: "gpu".to_owned(),
-            created_by: Some("A".to_owned()),
+            created_by: Some(PluginId::from("A")),
         };
         let host = MockHost {
             vms: Mutex::new(BTreeMap::from([("vm-1".to_owned(), vm.clone())])),
         };
-        let handle = subject("A");
+        let handle = subject(PluginId::from("A"));
         let plugin_subject = PluginSubject::new(&handle);
 
         assert_eq!(
@@ -827,7 +829,7 @@ mod tests {
     async fn cache_shapes_contrast_fresh_loads_live_reuse_and_versioned_facts() {
         const CALLS: usize = 256;
 
-        let plugin = subject("cache-probe");
+        let plugin = subject(PluginId::from("cache-probe"));
         let resources = ResourceStore::__new();
         let data = ();
         let context = ResolveCtx::new(&data, &plugin, &resources);

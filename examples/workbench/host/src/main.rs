@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+use lockgate::PluginId;
 use lockgate::{HostBuilder, PluginConfig, RoleError, RuntimeLimits};
 
 const TIDY_ID: &str = "tidy";
@@ -43,10 +44,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     let mut builder = HostBuilder::new(())?;
     let tidy = builder
-        .prepare(TIDY_ID, &tidy_bytes, PluginConfig::default())
+        .prepare(
+            PluginId::from(TIDY_ID),
+            &tidy_bytes,
+            PluginConfig::default(),
+        )
         .await?;
     let counter = builder
-        .prepare(COUNTER_ID, &counter_bytes, PluginConfig::default())
+        .prepare(
+            PluginId::from(COUNTER_ID),
+            &counter_bytes,
+            PluginConfig::default(),
+        )
         .await?;
     let tidy_acceptance = tidy.accept_all();
     let counter_acceptance = counter.accept_all();

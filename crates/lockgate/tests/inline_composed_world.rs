@@ -1,5 +1,6 @@
 mod common;
 
+use lockgate::PluginId;
 use lockgate::{CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value};
 
 struct InlineComposedRole;
@@ -39,7 +40,7 @@ async fn inline_composed_world_builds_admits_and_invokes() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            "inline-composed",
+            PluginId::from("inline-composed"),
             &common::INLINE_COMPOSED_FIXTURE,
             PluginConfig::default(),
         )

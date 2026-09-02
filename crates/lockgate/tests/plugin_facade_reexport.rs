@@ -1,5 +1,6 @@
 mod common;
 
+use lockgate::PluginId;
 use lockgate::{CallError, HostBuilder, PluginConfig, Role, RoleInvocation, RuntimeLimits, Value};
 
 struct ReexportedPluginRole;
@@ -39,7 +40,7 @@ async fn reexport_only_guest_builds_admits_and_invokes() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            "reexported-plugin",
+            PluginId::from("reexported-plugin"),
             &common::REEXPORTED_PLUGIN_FIXTURE,
             PluginConfig::default(),
         )

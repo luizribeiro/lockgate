@@ -6,6 +6,7 @@ use std::sync::{
 };
 
 use lockgate::__private::{StoreCtx, wasmtime};
+use lockgate::PluginId;
 use lockgate::{
     CallError, Host, HostBuilder, HostImports, PluginConfig, PluginHandle, Role, RoleInvocation,
     RuntimeLimits, Value,
@@ -164,7 +165,11 @@ async fn handwritten_imports_receive_data_and_clone_per_call() {
     })
     .unwrap();
     let prepared = builder
-        .prepare("manual-import", &component(), PluginConfig::default())
+        .prepare(
+            PluginId::from("manual-import"),
+            &component(),
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -193,7 +198,11 @@ async fn host_with_call_limit(
     })
     .unwrap();
     let prepared = builder
-        .prepare("manual-import", &component(), PluginConfig::default())
+        .prepare(
+            PluginId::from("manual-import"),
+            &component(),
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();

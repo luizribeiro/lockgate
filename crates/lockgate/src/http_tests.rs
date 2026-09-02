@@ -15,7 +15,7 @@ use lockgate_schema::GrantSet;
 use wasmtime_wasi_http::{Error as WasiHttpError, RequestOptions, WasiBody, WasiHttpHooks};
 
 use crate::{
-    PluginHandle,
+    PluginHandle, PluginId,
     exec::{
         ExecEngine, HostPanicState, StoreCtx, add_http_to_linker,
         wasi_http::{HttpHooks, catch_http_future, clamp_request_options},
@@ -37,7 +37,7 @@ fn hooks_with_origins(origins: &[HttpOrigin]) -> HttpHooks {
             .unwrap();
     }
     let plugin = PluginHandle::for_policy_test_with_registry(
-        "http-test",
+        PluginId::from("http-test"),
         EffectiveGrants::from_resolved(ResolvedNeeds {
             required,
             optional: GrantSet::new(),

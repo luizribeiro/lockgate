@@ -7,12 +7,12 @@ use lockgate_schema::{GrantSet, GrantValue, NeedEntry};
 use serde::{Deserialize, Serialize};
 
 use super::{DriftReport, PreparedNeedsDigest, ResolvedNeeds, diff_exports, diff_grants};
-use crate::{Acceptance, Prepared};
+use crate::{Acceptance, PluginId, Prepared};
 
 /// The complete resolved permission and export surface presented for operator approval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsentManifest {
-    pub instance_id: String,
+    pub plugin_id: PluginId,
     pub plugin_label: String,
     pub request_digest: PreparedNeedsDigest,
     pub component_digest: String,
@@ -66,12 +66,12 @@ impl fmt::Display for ConsentRequired {
             Self::FirstRun { manifest } => write!(
                 formatter,
                 "instance `{}` requires approval before its first admission",
-                manifest.instance_id
+                manifest.plugin_id
             ),
             Self::Drift { manifest, .. } => write!(
                 formatter,
                 "instance `{}` has expanded its requested access and requires approval",
-                manifest.instance_id
+                manifest.plugin_id
             ),
         }
     }
@@ -97,7 +97,7 @@ impl Prepared {
         exported_interfaces.sort();
         exported_interfaces.dedup();
         ConsentManifest {
-            instance_id: self.instance_id.clone(),
+            plugin_id: self.plugin_id.clone(),
             plugin_label: self.inspection.metadata().name().to_owned(),
             request_digest: self.prepared_digest,
             component_digest: self.component_digest.clone(),
@@ -110,7 +110,7 @@ impl Prepared {
     pub fn approve(&self, approved_at: String) -> ConsentRecord {
         let manifest = self.review();
         ConsentRecord {
-            instance_id: manifest.instance_id,
+            instance_id: manifest.plugin_id.as_str().to_owned(),
             request_digest: manifest.request_digest,
             component_digest: Some(manifest.component_digest),
             exported_interfaces: manifest.exported_interfaces,
@@ -129,7 +129,7 @@ impl Prepared {
         &self,
         prior: Option<&ConsentRecord>,
     ) -> Result<Acceptance, ConsentRequired> {
-        let Some(prior) = prior.filter(|prior| prior.instance_id == self.instance_id) else {
+        let Some(prior) = prior.filter(|prior| prior.instance_id == self.plugin_id.as_str()) else {
             return Err(ConsentRequired::FirstRun {
                 manifest: self.review(),
             });

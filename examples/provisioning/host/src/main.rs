@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use lockgate::{
-    HostBuilder, HostCtx, PermissionDenied, PluginConfig, PluginSubject, ResolveScopedResource,
-    RuntimeLimits, ScopedResource,
+    HostBuilder, HostCtx, PermissionDenied, PluginConfig, PluginId, PluginSubject,
+    ResolveScopedResource, RuntimeLimits, ScopedResource,
 };
 use provisioning_policy::permissions::vm::{self as vm_permissions, InstanceScope, PoolScope};
 
@@ -18,7 +18,7 @@ examples/provisioning/plugin/Cargo.toml --target wasm32-wasip2 --release";
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MockVm {
     pool: String,
-    created_by: Option<String>,
+    created_by: Option<PluginId>,
 }
 
 impl MockVm {
@@ -29,9 +29,9 @@ impl MockVm {
         }
     }
 
-    fn memberships_for(&self, plugin_id: &str) -> Vec<InstanceScope> {
+    fn memberships_for(&self, plugin_id: &PluginId) -> Vec<InstanceScope> {
         let mut memberships = vec![InstanceScope::Pool(self.pool.clone())];
-        if self.created_by.as_deref() == Some(plugin_id) {
+        if self.created_by.as_ref() == Some(plugin_id) {
             memberships.push(InstanceScope::CreatedByCaller);
         }
         memberships
@@ -153,7 +153,7 @@ impl vm::Host for Imports {
             id.clone(),
             MockVm {
                 pool,
-                created_by: Some(cx.subject().plugin_id().to_owned()),
+                created_by: Some(cx.subject().plugin_id().clone()),
             },
         );
         Ok(id)
@@ -203,7 +203,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     let mut builder = HostBuilder::new(Imports::new())?.register::<vm_permissions::Contract>()?;
     let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
         .await?;
     let acceptance = prepared.accept_all();
     let plugin = builder
@@ -254,7 +254,7 @@ mod tests {
             (
                 MockVm {
                     pool: "gpu".into(),
-                    created_by: Some("plugin-a".into()),
+                    created_by: Some(lockgate::PluginId::from("plugin-a")),
                 },
                 "plugin-a",
                 vec![
@@ -265,7 +265,7 @@ mod tests {
             (
                 MockVm {
                     pool: "gpu".into(),
-                    created_by: Some("plugin-a".into()),
+                    created_by: Some(lockgate::PluginId::from("plugin-a")),
                 },
                 "plugin-b",
                 vec![InstanceScope::Pool("gpu".into())],
@@ -273,7 +273,10 @@ mod tests {
         ];
 
         for (vm, caller, expected) in rows {
-            assert_eq!(vm.memberships_for(caller), expected);
+            assert_eq!(
+                vm.memberships_for(&lockgate::PluginId::from(caller)),
+                expected
+            );
         }
     }
 }

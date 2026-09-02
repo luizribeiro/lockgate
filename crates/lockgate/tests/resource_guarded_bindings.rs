@@ -3,6 +3,7 @@ extern crate alloc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use lockgate::PluginId;
 use lockgate::{
     HostCtx, PermissionDenied, PluginConfig, PluginSubject, ResolveCtx,
     ResolveScopedResourceHandle, Resource, ResourceLookupError, RuntimeLimits, Scope,
@@ -229,7 +230,11 @@ async fn runtime_host(
         .register::<permissions::Contract>()
         .unwrap();
     let prepared = builder
-        .prepare("resource-guarded", &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::from("resource-guarded"),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();

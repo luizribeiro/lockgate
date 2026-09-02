@@ -2,6 +2,7 @@ mod common;
 
 use std::str::FromStr;
 
+use lockgate::PluginId;
 use lockgate::{
     AdmissionError, HostBuilder, JsonValueKind, PluginConfig, RuntimeLimits, Scope, ScopeError,
     ScopeReference, ScopeRepr, SymbolicRoots,
@@ -98,11 +99,11 @@ fn host_builder() -> HostBuilder<()> {
         .unwrap()
 }
 
-fn fixture_for(plugin_id: &str, needs: &NeedsManifest) -> Vec<u8> {
+fn fixture_for(plugin_id: &lockgate::PluginId, needs: &NeedsManifest) -> Vec<u8> {
     let bytes = common::with_custom_section(
         &common::constant_schema_component(r#"{"type":"object"}"#),
         PLUGIN_METADATA_SECTION,
-        &PluginMetadata::new(plugin_id, "Prepared grants fixture", "1.0")
+        &PluginMetadata::new(plugin_id.as_str(), "Prepared grants fixture", "1.0")
             .unwrap()
             .to_section_bytes()
             .unwrap(),
@@ -115,7 +116,7 @@ fn fixture_for(plugin_id: &str, needs: &NeedsManifest) -> Vec<u8> {
 }
 
 fn fixture(needs: &NeedsManifest) -> Vec<u8> {
-    fixture_for(PLUGIN_ID, needs)
+    fixture_for(&PluginId::from(PLUGIN_ID), needs)
 }
 
 #[tokio::test]
@@ -137,7 +138,7 @@ async fn literal_setting_and_root_references_prepare_accept_and_admit() {
     let mut builder = host_builder();
     let prepared = builder
         .prepare(
-            PLUGIN_ID,
+            PluginId::from(PLUGIN_ID),
             &fixture(&needs),
             PluginConfig {
                 settings: Some(serde_json::json!({ "scope": "current" })),
@@ -154,7 +155,7 @@ async fn literal_setting_and_root_references_prepare_accept_and_admit() {
         .await
         .unwrap();
 
-    assert_eq!(handle.id(), PLUGIN_ID);
+    assert_eq!(handle.id().as_str(), PLUGIN_ID);
 }
 
 #[tokio::test]
@@ -163,7 +164,11 @@ async fn malformed_literal_fails_prepare_with_the_complete_teaching_error() {
     let mut builder = host_builder();
 
     let error = builder
-        .prepare(PLUGIN_ID, &fixture(&needs), PluginConfig::default())
+        .prepare(
+            PluginId::from(PLUGIN_ID),
+            &fixture(&needs),
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
 
@@ -197,7 +202,7 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
         let mut builder = host_builder();
         let error = builder
             .prepare(
-                PLUGIN_ID,
+                PluginId::from(PLUGIN_ID),
                 &fixture(&setting),
                 PluginConfig {
                     settings: Some(settings),
@@ -225,7 +230,11 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
 
     let mut builder = host_builder();
     let error = builder
-        .prepare(PLUGIN_ID, &fixture(&setting), PluginConfig::default())
+        .prepare(
+            PluginId::from(PLUGIN_ID),
+            &fixture(&setting),
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
     assert!(matches!(
@@ -239,7 +248,11 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
     let root = required(scoped(vec![ScopeRefEntry::root("workspace").unwrap()]));
     let mut builder = host_builder();
     let error = builder
-        .prepare(PLUGIN_ID, &fixture(&root), PluginConfig::default())
+        .prepare(
+            PluginId::from(PLUGIN_ID),
+            &fixture(&root),
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
     assert!(matches!(
@@ -254,14 +267,22 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
 #[tokio::test]
 async fn acceptance_for_one_instance_cannot_admit_another() {
     let needs = required(NeedEntry::flag(atom("sessions.send")));
-    let bytes = fixture_for("shared-code", &needs);
+    let bytes = fixture_for(&PluginId::from("shared-code"), &needs);
     let mut builder = host_builder();
     let prepared_a = builder
-        .prepare("instance-a", &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::from("instance-a"),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let prepared_b = builder
-        .prepare("instance-b", &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::from("instance-b"),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance_b = prepared_b.accept_all();
@@ -274,9 +295,10 @@ async fn acceptance_for_one_instance_cannot_admit_another() {
     assert!(matches!(
         error,
         AdmissionError::AcceptancePluginMismatch {
-            ref prepared,
-            ref acceptance,
-        } if prepared == "instance-a" && acceptance == "instance-b"
+            ref prepared_plugin_id,
+            ref acceptance_plugin_id,
+        } if prepared_plugin_id.as_str() == "instance-a"
+            && acceptance_plugin_id.as_str() == "instance-b"
     ));
     assert!(error.to_string().contains("instance-a"));
     assert!(error.to_string().contains("instance-b"));
@@ -289,7 +311,7 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
     let mut builder = host_builder();
     let stale = builder
         .prepare(
-            PLUGIN_ID,
+            PluginId::from(PLUGIN_ID),
             &bytes,
             PluginConfig {
                 settings: Some(serde_json::json!({ "scope": "all" })),
@@ -301,7 +323,7 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
     let stale_acceptance = stale.accept_all();
     let current = builder
         .prepare(
-            PLUGIN_ID,
+            PluginId::from(PLUGIN_ID),
             &bytes,
             PluginConfig {
                 settings: Some(serde_json::json!({ "scope": "current" })),
@@ -317,14 +339,14 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
         .unwrap_err();
 
     let AdmissionError::AcceptanceDigestMismatch {
-        plugin,
+        plugin_id,
         prepared,
         acceptance,
     } = &error
     else {
         panic!("unexpected error: {error:?}");
     };
-    assert_eq!(plugin, PLUGIN_ID);
+    assert_eq!(plugin_id.as_str(), PLUGIN_ID);
     assert_ne!(prepared, acceptance);
     assert!(prepared.starts_with("sha256:"));
     assert!(acceptance.starts_with("sha256:"));
@@ -351,12 +373,15 @@ async fn dash_prefix_declaration_orders_admit_identically() {
     );
 
     let mut builder = host_builder();
-    for (instance_id, needs) in ["forward-order", "reversed-order"]
-        .into_iter()
-        .zip([&forward, &reversed])
+    for (plugin_id, needs) in [
+        PluginId::from("forward-order"),
+        PluginId::from("reversed-order"),
+    ]
+    .into_iter()
+    .zip([&forward, &reversed])
     {
         let prepared = builder
-            .prepare(instance_id, &fixture(needs), PluginConfig::default())
+            .prepare(plugin_id.clone(), &fixture(needs), PluginConfig::default())
             .await
             .unwrap();
         let acceptance = prepared.accept_all();
@@ -364,6 +389,6 @@ async fn dash_prefix_declaration_orders_admit_identically() {
             .admit(prepared, acceptance, RuntimeLimits::default())
             .await
             .unwrap();
-        assert_eq!(handle.id(), instance_id);
+        assert_eq!(handle.id(), &plugin_id);
     }
 }

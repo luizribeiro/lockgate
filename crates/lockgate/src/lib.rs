@@ -269,7 +269,7 @@ mod tests {
     use lockgate_schema::{AtomKey, GrantSet};
 
     use super::{
-        HostCtx, PluginHandle, ScopedResource,
+        HostCtx, PluginHandle, PluginId, ScopedResource,
         exec::ExecEngine,
         jobs,
         policy::{CapabilityRegistry, EffectiveGrants, ResolvedNeeds, ResourceStore},
@@ -316,9 +316,14 @@ mod tests {
     fn context(grants: EffectiveGrants) -> (PluginHandle, jobs::DetachedJobContext) {
         let mut registry = CapabilityRegistry::default();
         registry.register::<vm::Contract>().unwrap();
-        let plugin = PluginHandle::for_policy_test_with_registry("plugin-a", grants, registry);
+        let plugin = PluginHandle::for_policy_test_with_registry(
+            PluginId::from("plugin-a"),
+            grants,
+            registry,
+        );
         let tracker = jobs::JobTracker::new().unwrap();
-        let jobs = jobs::DetachedJobContext::new(Arc::clone(&tracker), "plugin-a".to_owned(), 1);
+        let jobs =
+            jobs::DetachedJobContext::new(Arc::clone(&tracker), PluginId::from("plugin-a"), 1);
         (plugin, jobs)
     }
 
@@ -334,7 +339,7 @@ mod tests {
         let (plugin, jobs) = context(grants(true, &[InstanceScope::Pool("gpu".to_owned())]));
         let cx = HostCtx::new(&(), &plugin, jobs, ResourceStore::__new());
 
-        assert_eq!(cx.subject().plugin_id(), "plugin-a");
+        assert_eq!(cx.subject().plugin_id().as_str(), "plugin-a");
         assert_eq!(cx.require(vm::LIST_POOLS), Ok(()));
         assert_eq!(cx.require_scoped(vm::EXEC, &Vm { pool: "gpu" }), Ok(()));
         let denial = cx

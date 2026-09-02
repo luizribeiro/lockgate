@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+use lockgate::PluginId;
 use lockgate::{HostBuilder, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "greeter";
@@ -34,7 +35,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut builder = HostBuilder::new(())?;
     // prepare validates the declared identity, needs, and supported WIT shape.
     let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
         .await?;
     // admit records consent, applies limits, and proves the component can start.
     let acceptance = prepared.accept_all();

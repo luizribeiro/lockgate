@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use lockgate::PluginId;
 use lockgate::{Host, HostBuilder, PluginConfig, PluginHandle, RuntimeLimits};
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use rustls::{RootCertStore, ServerConfig, pki_types::PrivatePkcs8KeyDer};
@@ -183,7 +184,7 @@ async fn admitted_client_with_options(
     };
     let prepared = builder
         .prepare(
-            "http-client",
+            PluginId::from("http-client"),
             &common::HTTP_CLIENT_FIXTURE,
             PluginConfig {
                 settings: Some(serde_json::json!({ "origin": origin })),

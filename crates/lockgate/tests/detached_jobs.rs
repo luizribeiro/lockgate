@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use lockgate::PluginId;
 use lockgate::{
     CallError, DetachError, DetachedJobFailure, Host, HostBuilder, HostCtx, PluginConfig,
     PluginHandle, Role, RoleInvocation, RuntimeLimits, Value,
@@ -213,7 +214,7 @@ async fn host(
     builder.on_detached_job_error(move |failure| failures.lock().unwrap().push(failure));
     let prepared = builder
         .prepare(
-            "detached-jobs",
+            PluginId::from("detached-jobs"),
             &common::DETACHED_JOBS_FIXTURE,
             PluginConfig::default(),
         )
@@ -281,7 +282,7 @@ async fn failed_job_reports_attribution_and_releases_capacity() {
     {
         let reports = failures.lock().unwrap();
         assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].plugin_id(), "detached-jobs");
+        assert_eq!(reports[0].plugin_id().as_str(), "detached-jobs");
         assert_eq!(reports[0].job_id().to_string(), job_id);
         assert_eq!(reports[0].error().to_string(), "detached failure");
     }
@@ -304,7 +305,7 @@ async fn panicking_job_is_reported_to_the_error_sink() {
 
     {
         let reports = failures.lock().unwrap();
-        assert_eq!(reports[0].plugin_id(), "detached-jobs");
+        assert_eq!(reports[0].plugin_id().as_str(), "detached-jobs");
         assert_eq!(reports[0].job_id().to_string(), job_id);
         assert!(reports[0].error().to_string().contains("panicked"));
     }

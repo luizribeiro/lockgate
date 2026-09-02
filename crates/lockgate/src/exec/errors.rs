@@ -10,16 +10,17 @@ use std::{
 };
 
 use anyhow::Error as AnyError;
+use lockgate_policy::PluginId;
 use wasmtime::{Error as WasmtimeError, Result as WasmtimeResult, Trap};
 
 #[derive(Debug)]
 pub(crate) enum EnvironmentError {
     RequiredUnset {
-        instance_id: String,
+        plugin_id: PluginId,
         variable: String,
     },
     RequiredNotUnicode {
-        instance_id: String,
+        plugin_id: PluginId,
         variable: String,
     },
 }
@@ -28,18 +29,18 @@ impl fmt::Display for EnvironmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RequiredUnset {
-                instance_id,
+                plugin_id,
                 variable,
             } => write!(
                 formatter,
-                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but it is unset"
+                "plugin instance `{plugin_id}` requires host environment variable `{variable}`, but it is unset"
             ),
             Self::RequiredNotUnicode {
-                instance_id,
+                plugin_id,
                 variable,
             } => write!(
                 formatter,
-                "plugin instance `{instance_id}` requires host environment variable `{variable}`, but its value is not valid Unicode"
+                "plugin instance `{plugin_id}` requires host environment variable `{variable}`, but its value is not valid Unicode"
             ),
         }
     }

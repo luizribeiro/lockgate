@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use lockgate_policy::PluginId;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{Id as TaskId, JoinError, JoinSet};
 
@@ -28,7 +29,7 @@ impl fmt::Display for JobId {
 pub enum DetachError {
     /// This admitted plugin already owns its maximum number of detached jobs.
     QuotaExceeded {
-        plugin_id: String,
+        plugin_id: PluginId,
         max_detached_jobs: usize,
     },
     /// The owning host has begun shutting down.
@@ -55,14 +56,14 @@ impl Error for DetachError {}
 /// A failed or panicked detached job reported to the application.
 #[derive(Debug)]
 pub struct DetachedJobFailure {
-    plugin_id: String,
+    plugin_id: PluginId,
     job_id: JobId,
     error: anyhow::Error,
 }
 
 impl DetachedJobFailure {
     /// Returns the admitted plugin that detached this job.
-    pub fn plugin_id(&self) -> &str {
+    pub fn plugin_id(&self) -> &PluginId {
         &self.plugin_id
     }
 
@@ -81,7 +82,7 @@ impl DetachedJobFailure {
 #[derive(Clone)]
 pub struct DetachedJobContext {
     tracker: Arc<JobTracker>,
-    plugin_id: String,
+    plugin_id: PluginId,
     max_detached_jobs: usize,
     active: Arc<AtomicUsize>,
 }
@@ -89,7 +90,7 @@ pub struct DetachedJobContext {
 impl DetachedJobContext {
     pub(crate) fn new(
         tracker: Arc<JobTracker>,
-        plugin_id: String,
+        plugin_id: PluginId,
         max_detached_jobs: usize,
     ) -> Self {
         Self {
@@ -115,7 +116,7 @@ struct JobPermit(Arc<AtomicUsize>);
 impl JobPermit {
     fn acquire(
         active: Arc<AtomicUsize>,
-        plugin_id: &str,
+        plugin_id: &PluginId,
         limit: usize,
     ) -> Result<Self, DetachError> {
         let reserved = active.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -124,7 +125,7 @@ impl JobPermit {
         match reserved {
             Ok(_) => Ok(Self(active)),
             Err(_) => Err(DetachError::QuotaExceeded {
-                plugin_id: plugin_id.to_owned(),
+                plugin_id: plugin_id.clone(),
                 max_detached_jobs: limit,
             }),
         }
@@ -179,7 +180,7 @@ impl JobTracker {
 
     fn submit(
         &self,
-        plugin_id: String,
+        plugin_id: PluginId,
         permit: JobPermit,
         future: JobFuture,
     ) -> Result<JobId, DetachError> {
@@ -233,7 +234,7 @@ enum JobCommand {
 }
 
 struct JobMetadata {
-    plugin_id: String,
+    plugin_id: PluginId,
     job_id: JobId,
 }
 
@@ -349,14 +350,15 @@ pub(crate) async fn assert_queued_start_after_shutdown_is_aborted() {
         })
     }));
     let active = Arc::new(AtomicUsize::new(0));
-    let permit = JobPermit::acquire(Arc::clone(&active), "race", 1).unwrap();
+    let plugin_id = PluginId::from("race");
+    let permit = JobPermit::acquire(Arc::clone(&active), &plugin_id, 1).unwrap();
     let dropped = Arc::new(AtomicBool::new(false));
 
     sender.send(JobCommand::Shutdown).unwrap();
     sender
         .send(JobCommand::Start {
             metadata: JobMetadata {
-                plugin_id: "race".into(),
+                plugin_id,
                 job_id: JobId(1),
             },
             permit,

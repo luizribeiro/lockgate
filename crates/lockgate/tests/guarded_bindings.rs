@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use lockgate::{
     AdmissionError, CallError, HostConstructionError, HostCtx, HostImportPolicyError,
-    InstanceAllocation, PermissionDenied, PluginConfig, PluginSubject, PoolingAllocationConfig,
-    ResolveScopedResource, RuntimeLimits, ScopedResource,
+    InstanceAllocation, PermissionDenied, PluginConfig, PluginId, PluginSubject,
+    PoolingAllocationConfig, ResolveScopedResource, RuntimeLimits, ScopedResource,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
@@ -39,13 +39,13 @@ mod admin_permissions {
 struct MockVm {
     id: String,
     pool: String,
-    created_by: Option<String>,
+    created_by: Option<PluginId>,
 }
 
 impl ScopedResource<InstanceScope> for MockVm {
     fn scopes_for(&self, subject: &PluginSubject<'_>) -> Vec<InstanceScope> {
         let mut scopes = vec![InstanceScope::Pool(self.pool.clone())];
-        if self.created_by.as_deref() == Some(subject.plugin_id()) {
+        if self.created_by.as_ref() == Some(subject.plugin_id()) {
             scopes.push(InstanceScope::CreatedByCaller);
         }
         scopes
@@ -98,7 +98,7 @@ impl Default for Imports {
                 MockVm {
                     id: "gpu-a".to_owned(),
                     pool: "gpu".to_owned(),
-                    created_by: Some("plugin-a".to_owned()),
+                    created_by: Some(PluginId::from("plugin-a")),
                 },
             ),
             (
@@ -106,7 +106,7 @@ impl Default for Imports {
                 MockVm {
                     id: "gpu-b".to_owned(),
                     pool: "gpu".to_owned(),
-                    created_by: Some("plugin-b".to_owned()),
+                    created_by: Some(PluginId::from("plugin-b")),
                 },
             ),
             (
@@ -114,7 +114,7 @@ impl Default for Imports {
                 MockVm {
                     id: "cpu-b".to_owned(),
                     pool: "cpu".to_owned(),
-                    created_by: Some("plugin-b".to_owned()),
+                    created_by: Some(PluginId::from("plugin-b")),
                 },
             ),
         ]
@@ -218,7 +218,7 @@ impl vm::Host for Imports {
             MockVm {
                 id: id.clone(),
                 pool,
-                created_by: Some(cx.subject().plugin_id().to_owned()),
+                created_by: Some(cx.subject().plugin_id().clone()),
             },
         );
         Ok(id)
@@ -458,7 +458,11 @@ fn application_host_import_cannot_collide_with_the_reserved_framework_namespace(
 async fn preparation_rejects_an_unregistered_guard_permission() {
     let mut builder = lockgate::HostBuilder::new(Imports::default()).unwrap();
     let error = builder
-        .prepare("unused", b"not inspected", PluginConfig::default())
+        .prepare(
+            PluginId::from("unused"),
+            b"not inspected",
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
     assert!(matches!(
@@ -478,7 +482,11 @@ async fn preparation_rejects_an_unregistered_guard_permission() {
         .register::<admin_permissions::Contract>()
         .unwrap();
     let error = registered
-        .prepare("unused", b"not inspected", PluginConfig::default())
+        .prepare(
+            PluginId::from("unused"),
+            b"not inspected",
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::Inspection(_)));
@@ -525,7 +533,7 @@ fn host_builder() -> lockgate::HostBuilder<()> {
 
 async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
     let prepared = builder
-        .prepare(PLUGIN_ID, bytes, PluginConfig::default())
+        .prepare(PluginId::from(PLUGIN_ID), bytes, PluginConfig::default())
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -545,7 +553,7 @@ async fn all_guarded_import_without_a_mapped_need_is_a_manifest_mismatch() {
     let bytes = fixture(ADMIN_IMPORT, &NeedsManifest::empty());
     let mut builder = host_builder();
     let error = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
         .await
         .unwrap_err();
 
@@ -595,7 +603,8 @@ async fn cross_capability_mixed_methods_deny_independently_after_interface_wirin
         let imports = Imports::default();
         let needs =
             NeedsManifest::new(vec![NeedEntry::flag(atom.parse().unwrap())], vec![]).unwrap();
-        let (host, plugin) = runtime_host(imports.clone(), "mixed-plugin", &needs).await;
+        let (host, plugin) =
+            runtime_host(imports.clone(), PluginId::from("mixed-plugin"), &needs).await;
         let guest = host.guest(&plugin).unwrap();
 
         assert_eq!(guest.mixed_version().await.unwrap(), "mixed-v1");
@@ -635,8 +644,9 @@ async fn declared_need_without_a_matching_import_still_admits() {
     admit(&mut host_builder(), &bytes).await;
 }
 
-fn runtime_fixture(plugin_id: &str, needs: &NeedsManifest) -> Vec<u8> {
-    let metadata = PluginMetadata::new(plugin_id, "Guard enforcement fixture", "1.0").unwrap();
+fn runtime_fixture(plugin_id: &PluginId, needs: &NeedsManifest) -> Vec<u8> {
+    let metadata =
+        PluginMetadata::new(plugin_id.as_str(), "Guard enforcement fixture", "1.0").unwrap();
     common::policy_fixture(&common::GUARDED_BINDINGS_FIXTURE, &metadata, needs)
 }
 
@@ -650,7 +660,7 @@ fn scoped_need(atom: &str, scope: &str) -> NeedEntry {
 
 async fn runtime_host(
     imports: Imports,
-    plugin_id: &str,
+    plugin_id: PluginId,
     needs: &NeedsManifest,
 ) -> (lockgate::Host<()>, lockgate::PluginHandle) {
     runtime_host_with_limits(imports, plugin_id, needs, RuntimeLimits::default()).await
@@ -658,7 +668,7 @@ async fn runtime_host(
 
 async fn runtime_host_with_limits(
     imports: Imports,
-    plugin_id: &str,
+    plugin_id: PluginId,
     needs: &NeedsManifest,
     limits: RuntimeLimits,
 ) -> (lockgate::Host<()>, lockgate::PluginHandle) {
@@ -671,7 +681,7 @@ async fn runtime_host_with_limits(
     .unwrap()
     .register::<admin_permissions::Contract>()
     .unwrap();
-    let bytes = runtime_fixture(plugin_id, needs);
+    let bytes = runtime_fixture(&plugin_id, needs);
     let prepared = builder
         .prepare(plugin_id, &bytes, PluginConfig::default())
         .await
@@ -687,7 +697,7 @@ async fn guarded_capability_imports_still_consume_the_call_limit() {
     let imports = Imports::default();
     let (host, plugin) = runtime_host_with_limits(
         imports.clone(),
-        "call-limit-plugin",
+        PluginId::from("call-limit-plugin"),
         &NeedsManifest::empty(),
         RuntimeLimits {
             max_host_import_calls: LIMIT,
@@ -728,7 +738,7 @@ async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
         vec![],
     )
     .unwrap();
-    let (host, plugin) = runtime_host(imports.clone(), "pool-plugin", &needs).await;
+    let (host, plugin) = runtime_host(imports.clone(), PluginId::from("pool-plugin"), &needs).await;
     let guest = host.guest(&plugin).unwrap();
 
     let vm = guest.create("gpu").await.unwrap();
@@ -756,7 +766,8 @@ async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
 async fn argument_resource_guard_executes_the_normalized_checked_resource() {
     let imports = Imports::default();
     let needs = NeedsManifest::new(vec![scoped_need("vm.exec", "pool:gpu")], vec![]).unwrap();
-    let (host, plugin) = runtime_host(imports.clone(), "normalized-plugin", &needs).await;
+    let (host, plugin) =
+        runtime_host(imports.clone(), PluginId::from("normalized-plugin"), &needs).await;
     let guest = host.guest(&plugin).unwrap();
 
     assert_eq!(
@@ -780,7 +791,7 @@ async fn created_by_caller_guards_cover_only_the_callers_own_vms() {
         vec![],
     )
     .unwrap();
-    let (host, plugin) = runtime_host(imports.clone(), "plugin-a", &needs).await;
+    let (host, plugin) = runtime_host(imports.clone(), PluginId::from("plugin-a"), &needs).await;
     let guest = host.guest(&plugin).unwrap();
 
     assert_eq!(
@@ -799,8 +810,12 @@ async fn created_by_caller_guards_cover_only_the_callers_own_vms() {
 #[tokio::test]
 async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
     let denied_imports = Imports::default();
-    let (host, plugin) =
-        runtime_host(denied_imports.clone(), "no-grants", &NeedsManifest::empty()).await;
+    let (host, plugin) = runtime_host(
+        denied_imports.clone(),
+        PluginId::from("no-grants"),
+        &NeedsManifest::empty(),
+    )
+    .await;
     let guest = host.guest(&plugin).unwrap();
     assert_eq!(guest.list_pools().await.unwrap(), "denied");
     assert_eq!(
@@ -828,7 +843,12 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
         vec![],
     )
     .unwrap();
-    let (host, plugin) = runtime_host(allowed_imports.clone(), "list-plugin", &needs).await;
+    let (host, plugin) = runtime_host(
+        allowed_imports.clone(),
+        PluginId::from("list-plugin"),
+        &needs,
+    )
+    .await;
     let guest = host.guest(&plugin).unwrap();
     assert_eq!(guest.list_pools().await.unwrap(), "cpu,gpu");
     assert_eq!(

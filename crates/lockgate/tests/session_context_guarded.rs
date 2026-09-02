@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lockgate::{
-    HostCtx, PermissionDenied, PluginConfig, PluginSubject, ResolveScopedResource, RuntimeLimits,
-    Scope, ScopeRepr, ScopedResource,
+    HostCtx, PermissionDenied, PluginConfig, PluginId, PluginSubject, ResolveScopedResource,
+    RuntimeLimits, Scope, ScopeRepr, ScopedResource,
 };
 use lockgate_schema::{NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
@@ -54,19 +54,6 @@ struct SageCall {
 }
 
 #[derive(Clone)]
-struct PluginId(Box<str>);
-
-impl PluginId {
-    fn new(id: &str) -> Self {
-        Self(id.into())
-    }
-
-    fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Clone)]
 struct StoredSession {
     created_by: PluginId,
     is_current: bool,
@@ -83,7 +70,7 @@ impl ScopedResource<SessionScope> for SessionAuthorizationSnapshot {
         if self.is_current {
             scopes.push(SessionScope::Current);
         }
-        if self.created_by.as_str() == subject.plugin_id() {
+        if &self.created_by == subject.plugin_id() {
             scopes.push(SessionScope::Created);
         }
         if scopes.is_empty() {
@@ -140,7 +127,7 @@ impl Imports {
                 (
                     row.id.into(),
                     StoredSession {
-                        created_by: PluginId::new(created_by),
+                        created_by: PluginId::from(created_by),
                         is_current: row.current,
                     },
                 )
@@ -291,7 +278,7 @@ async fn runtime_host(
         .register::<permissions::Contract>()
         .unwrap();
     let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
         .await
         .unwrap();
     let acceptance = prepared.accept_all();

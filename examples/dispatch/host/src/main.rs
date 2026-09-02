@@ -2,6 +2,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use lockgate::PluginId;
 use lockgate::{HostBuilder, HostCtx, PluginConfig, RuntimeLimits};
 
 const PLUGIN_ID: &str = "dispatch";
@@ -76,7 +77,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         );
     });
     let prepared = builder
-        .prepare(PLUGIN_ID, &bytes, PluginConfig::default())
+        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
         .await?;
     let acceptance = prepared.accept_all();
     let plugin = builder
