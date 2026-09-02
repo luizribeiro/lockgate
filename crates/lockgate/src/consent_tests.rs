@@ -208,11 +208,19 @@ async fn built_in_env_needs_resolve_names_and_bind_the_request_digest() {
     let bytes = fixture(&needs);
     let mut builder = HostBuilder::new(()).unwrap();
     let first = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, config("LOCKGATE_TOKEN"))
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            config("LOCKGATE_TOKEN"),
+        )
         .await
         .unwrap();
     let second = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, config("SERVICE_TOKEN"))
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            config("SERVICE_TOKEN"),
+        )
         .await
         .unwrap();
 
@@ -248,7 +256,7 @@ async fn review_projects_resolved_grants_and_author_reasons() {
     let mut builder = builder();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig {
                 settings: Some(serde_json::json!({ "scope": "current" })),
@@ -300,7 +308,7 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
     let mut builder = builder();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig::default(),
         )
@@ -340,7 +348,7 @@ async fn approval_record_accepts_the_legacy_fingerprint_key() {
     let mut builder = builder();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig::default(),
         )
@@ -369,7 +377,7 @@ async fn approval_record_without_a_component_digest_deserializes() {
     let mut builder = builder();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig::default(),
         )
@@ -403,7 +411,7 @@ async fn approval_record_without_exported_interfaces_deserializes() {
     let mut builder = builder();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig::default(),
         )
@@ -432,7 +440,7 @@ async fn component_digest_changes_do_not_require_new_consent() {
     let mut prior_builder = builder();
     let prior = prior_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &original_bytes,
             PluginConfig::default(),
         )
@@ -446,7 +454,7 @@ async fn component_digest_changes_do_not_require_new_consent() {
         let mut current_builder = builder();
         let current = current_builder
             .prepare(
-                PluginId::from(PLUGIN_ID),
+                PluginId::try_from(PLUGIN_ID).unwrap(),
                 &rebuilt_bytes,
                 PluginConfig::default(),
             )
@@ -475,7 +483,7 @@ async fn first_run_refuses_acceptance_until_explicit_approval_then_admits() {
     let mut builder = builder();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig::default(),
         )
@@ -506,7 +514,7 @@ async fn approval_for_another_instance_does_not_authorize_matching_manifest() {
     let mut builder = builder();
     let approved = builder
         .prepare(
-            PluginId::from("sessions-staging"),
+            PluginId::try_from("sessions-staging").unwrap(),
             &bytes,
             PluginConfig::default(),
         )
@@ -514,7 +522,11 @@ async fn approval_for_another_instance_does_not_authorize_matching_manifest() {
         .unwrap();
     let record = approved.approve("2026-08-19T15:00:00Z".to_owned());
     let current = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -531,13 +543,21 @@ async fn same_digest_and_same_exports_are_accepted() {
     let bytes = empty_needs_fixture(ONE_EXPORT);
     let mut prior_builder = HostBuilder::new(()).unwrap();
     let prior = prior_builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let record = prior.approve("2026-08-20T10:00:00Z".to_owned());
     let mut current_builder = HostBuilder::new(()).unwrap();
     let current = current_builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -554,7 +574,7 @@ async fn no_needs_approval_does_not_cover_a_new_exported_interface() {
     let mut prior_builder = HostBuilder::new(()).unwrap();
     let prior = prior_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &empty_needs_fixture(ONE_EXPORT),
             PluginConfig::default(),
         )
@@ -564,7 +584,7 @@ async fn no_needs_approval_does_not_cover_a_new_exported_interface() {
     let mut current_builder = HostBuilder::new(()).unwrap();
     let current = current_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &empty_needs_fixture(TWO_EXPORTS),
             PluginConfig::default(),
         )
@@ -593,7 +613,7 @@ async fn removing_an_exported_interface_is_accepted() {
     let mut prior_builder = HostBuilder::new(()).unwrap();
     let prior = prior_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &empty_needs_fixture(TWO_EXPORTS),
             PluginConfig::default(),
         )
@@ -603,7 +623,7 @@ async fn removing_an_exported_interface_is_accepted() {
     let mut current_builder = HostBuilder::new(()).unwrap();
     let current = current_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &empty_needs_fixture(ONE_EXPORT),
             PluginConfig::default(),
         )
@@ -630,7 +650,7 @@ async fn changing_only_an_exported_interface_version_is_accepted() {
     let mut prior_builder = HostBuilder::new(()).unwrap();
     let prior = prior_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &empty_needs_fixture(VERSION_ONE_EXPORT),
             PluginConfig::default(),
         )
@@ -640,7 +660,7 @@ async fn changing_only_an_exported_interface_version_is_accepted() {
     let mut current_builder = HostBuilder::new(()).unwrap();
     let current = current_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &empty_needs_fixture(VERSION_TWO_EXPORT),
             PluginConfig::default(),
         )
@@ -667,7 +687,11 @@ async fn legacy_record_requires_approval_for_current_exports() {
     let bytes = empty_needs_fixture(ONE_EXPORT);
     let mut builder = HostBuilder::new(()).unwrap();
     let current = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let mut stored =
@@ -732,7 +756,7 @@ async fn capability_scope_and_requirement_expansions_refuse_acceptance() {
         let mut prior_builder = builder();
         let prior = prior_builder
             .prepare(
-                PluginId::from(PLUGIN_ID),
+                PluginId::try_from(PLUGIN_ID).unwrap(),
                 &fixture(&before),
                 PluginConfig::default(),
             )
@@ -742,7 +766,7 @@ async fn capability_scope_and_requirement_expansions_refuse_acceptance() {
         let mut current_builder = builder();
         let current = current_builder
             .prepare(
-                PluginId::from(PLUGIN_ID),
+                PluginId::try_from(PLUGIN_ID).unwrap(),
                 &fixture(&after),
                 PluginConfig::default(),
             )
@@ -783,13 +807,21 @@ async fn config_widening_changes_the_request_digest_and_refuses_acceptance() {
     let bytes = fixture(&needs);
     let mut prior_builder = builder();
     let prior = prior_builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, config("current"))
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            config("current"),
+        )
         .await
         .unwrap();
     let record = prior.approve("2026-08-19T16:00:00Z".to_owned());
     let mut current_builder = builder();
     let current = current_builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, config("all"))
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            config("all"),
+        )
         .await
         .unwrap();
 
@@ -824,7 +856,7 @@ async fn mixed_scope_addition_and_removal_is_refused_as_widening() {
     let mut prior_builder = builder();
     let prior = prior_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&before),
             PluginConfig::default(),
         )
@@ -834,7 +866,7 @@ async fn mixed_scope_addition_and_removal_is_refused_as_widening() {
     let mut current_builder = builder();
     let current = current_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&after),
             PluginConfig::default(),
         )
@@ -877,7 +909,7 @@ async fn scope_and_requirement_narrowing_rebinds_to_the_current_manifest() {
     let mut prior_builder = builder();
     let prior = prior_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&before),
             PluginConfig::default(),
         )
@@ -887,7 +919,7 @@ async fn scope_and_requirement_narrowing_rebinds_to_the_current_manifest() {
     let mut current_builder = builder();
     let current = current_builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&after),
             PluginConfig::default(),
         )

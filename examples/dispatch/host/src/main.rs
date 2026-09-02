@@ -77,7 +77,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
         );
     });
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await?;
     let acceptance = prepared.accept_all();
     let plugin = builder

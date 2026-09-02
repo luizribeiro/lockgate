@@ -214,7 +214,7 @@ async fn host(
     builder.on_detached_job_error(move |failure| failures.lock().unwrap().push(failure));
     let prepared = builder
         .prepare(
-            PluginId::from("detached-jobs"),
+            PluginId::try_from("detached-jobs").unwrap(),
             &common::DETACHED_JOBS_FIXTURE,
             PluginConfig::default(),
         )

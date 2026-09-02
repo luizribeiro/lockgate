@@ -35,7 +35,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut builder = HostBuilder::new(())?;
     // prepare validates the declared identity, needs, and supported WIT shape.
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await?;
     // admit records consent, applies limits, and proves the component can start.
     let acceptance = prepared.accept_all();

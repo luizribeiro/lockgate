@@ -40,7 +40,7 @@ async fn inline_composed_world_builds_admits_and_invokes() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("inline-composed"),
+            PluginId::try_from("inline-composed").unwrap(),
             &common::INLINE_COMPOSED_FIXTURE,
             PluginConfig::default(),
         )

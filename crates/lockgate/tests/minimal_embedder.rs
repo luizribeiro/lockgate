@@ -54,7 +54,11 @@ async fn minimal_embedder_calls_a_greeter() {
 
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();

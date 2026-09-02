@@ -350,7 +350,7 @@ pub(crate) async fn assert_queued_start_after_shutdown_is_aborted() {
         })
     }));
     let active = Arc::new(AtomicUsize::new(0));
-    let plugin_id = PluginId::from("race");
+    let plugin_id = PluginId::try_from("race").unwrap();
     let permit = JobPermit::acquire(Arc::clone(&active), &plugin_id, 1).unwrap();
     let dropped = Arc::new(AtomicBool::new(false));
 

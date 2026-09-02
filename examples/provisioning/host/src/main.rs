@@ -203,7 +203,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     let mut builder = HostBuilder::new(Imports::new())?.register::<vm_permissions::Contract>()?;
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await?;
     let acceptance = prepared.accept_all();
     let plugin = builder
@@ -254,7 +258,7 @@ mod tests {
             (
                 MockVm {
                     pool: "gpu".into(),
-                    created_by: Some(lockgate::PluginId::from("plugin-a")),
+                    created_by: Some(lockgate::PluginId::try_from("plugin-a").unwrap()),
                 },
                 "plugin-a",
                 vec![
@@ -265,7 +269,7 @@ mod tests {
             (
                 MockVm {
                     pool: "gpu".into(),
-                    created_by: Some(lockgate::PluginId::from("plugin-a")),
+                    created_by: Some(lockgate::PluginId::try_from("plugin-a").unwrap()),
                 },
                 "plugin-b",
                 vec![InstanceScope::Pool("gpu".into())],
@@ -274,7 +278,7 @@ mod tests {
 
         for (vm, caller, expected) in rows {
             assert_eq!(
-                vm.memberships_for(&lockgate::PluginId::from(caller)),
+                vm.memberships_for(&lockgate::PluginId::try_from(caller).unwrap()),
                 expected
             );
         }

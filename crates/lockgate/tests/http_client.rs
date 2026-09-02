@@ -184,7 +184,7 @@ async fn admitted_client_with_options(
     };
     let prepared = builder
         .prepare(
-            PluginId::from("http-client"),
+            PluginId::try_from("http-client").unwrap(),
             &common::HTTP_CLIENT_FIXTURE,
             PluginConfig {
                 settings: Some(serde_json::json!({ "origin": origin })),

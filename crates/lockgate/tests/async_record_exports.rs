@@ -15,7 +15,7 @@ async fn async_export_with_params_and_rich_result_round_trips() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("async-record"),
+            PluginId::try_from("async-record").unwrap(),
             &common::ASYNC_RECORD_FIXTURE,
             PluginConfig::default(),
         )

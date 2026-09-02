@@ -40,7 +40,7 @@ async fn reexport_only_guest_builds_admits_and_invokes() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("reexported-plugin"),
+            PluginId::try_from("reexported-plugin").unwrap(),
             &common::REEXPORTED_PLUGIN_FIXTURE,
             PluginConfig::default(),
         )

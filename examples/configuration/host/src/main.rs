@@ -38,7 +38,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut builder = HostBuilder::new(())?;
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &bytes,
             PluginConfig {
                 settings: Some(settings),

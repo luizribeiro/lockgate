@@ -1619,7 +1619,11 @@ mod grant_tests {
         let mut builder = HostBuilder::new(()).unwrap();
 
         let prepared = builder
-            .prepare(PluginId::from("digest"), &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::try_from("digest").unwrap(),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
 
@@ -1629,14 +1633,18 @@ mod grant_tests {
     #[tokio::test]
     async fn compiled_cache_hits_across_host_builders() {
         let directory = tempdir().unwrap();
-        let bytes = cache_fixture(&PluginId::from("cache-hit"));
+        let bytes = cache_fixture(&PluginId::try_from("cache-hit").unwrap());
         let mut cold = HostBuilder::new(())
             .unwrap()
             .compiled_cache(directory.path().to_path_buf());
 
         let started = Instant::now();
         let prepared = cold
-            .prepare(PluginId::from("cache-hit"), &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::try_from("cache-hit").unwrap(),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let cold_elapsed = started.elapsed();
@@ -1651,7 +1659,11 @@ mod grant_tests {
             .compiled_cache(directory.path().to_path_buf());
         let started = Instant::now();
         cached
-            .prepare(PluginId::from("cache-hit"), &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::try_from("cache-hit").unwrap(),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let cached_elapsed = started.elapsed();
@@ -1664,12 +1676,12 @@ mod grant_tests {
     #[tokio::test]
     async fn corrupt_compiled_cache_entry_is_recompiled_and_overwritten() {
         let directory = tempdir().unwrap();
-        let bytes = cache_fixture(&PluginId::from("cache-corrupt"));
+        let bytes = cache_fixture(&PluginId::try_from("cache-corrupt").unwrap());
         let mut cold = HostBuilder::new(())
             .unwrap()
             .compiled_cache(directory.path().to_path_buf());
         cold.prepare(
-            PluginId::from("cache-corrupt"),
+            PluginId::try_from("cache-corrupt").unwrap(),
             &bytes,
             PluginConfig::default(),
         )
@@ -1685,7 +1697,7 @@ mod grant_tests {
             .compiled_cache(directory.path().to_path_buf());
         repaired
             .prepare(
-                PluginId::from("cache-corrupt"),
+                PluginId::try_from("cache-corrupt").unwrap(),
                 &bytes,
                 PluginConfig::default(),
             )
@@ -1704,7 +1716,7 @@ mod grant_tests {
             .compiled_cache(directory.path().to_path_buf());
         cached
             .prepare(
-                PluginId::from("cache-corrupt"),
+                PluginId::try_from("cache-corrupt").unwrap(),
                 &bytes,
                 PluginConfig::default(),
             )
@@ -1731,12 +1743,12 @@ mod grant_tests {
 
     #[tokio::test]
     async fn no_compiled_cache_configuration_performs_no_cache_writes() {
-        let bytes = cache_fixture(&PluginId::from("cache-disabled"));
+        let bytes = cache_fixture(&PluginId::try_from("cache-disabled").unwrap());
         let mut builder = HostBuilder::new(()).unwrap();
 
         builder
             .prepare(
-                PluginId::from("cache-disabled"),
+                PluginId::try_from("cache-disabled").unwrap(),
                 &bytes,
                 PluginConfig::default(),
             )
@@ -1779,7 +1791,7 @@ mod grant_tests {
         let component_digest = display_component_digest(&raw_component_sha256(&component_bytes));
         let prepared = Prepared {
             host: HostId::next(),
-            plugin_id: PluginId::from("pure-instance"),
+            plugin_id: PluginId::try_from("pure-instance").unwrap(),
             inspection: Inspection::new(metadata, needs, needs_digest, Vec::new()),
             resolved,
             prepared_digest,
@@ -1836,7 +1848,7 @@ mod grant_tests {
             .unwrap();
         let prod = builder
             .prepare(
-                PluginId::from("openai-prod"),
+                PluginId::try_from("openai-prod").unwrap(),
                 &bytes,
                 PluginConfig {
                     settings: Some(serde_json::json!({ "scope": "all" })),
@@ -1847,7 +1859,7 @@ mod grant_tests {
             .unwrap();
         let staging = builder
             .prepare(
-                PluginId::from("openai-staging"),
+                PluginId::try_from("openai-staging").unwrap(),
                 &bytes,
                 PluginConfig {
                     settings: Some(serde_json::json!({ "scope": "current" })),
@@ -1899,11 +1911,19 @@ mod grant_tests {
         );
         let mut builder = HostBuilder::new(()).unwrap();
         let rejected = builder
-            .prepare(PluginId::from("retry"), &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::try_from("retry").unwrap(),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let other = builder
-            .prepare(PluginId::from("other"), &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::try_from("other").unwrap(),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let mismatched_acceptance = other.accept_all();
@@ -1922,7 +1942,11 @@ mod grant_tests {
         ));
 
         let retry = builder
-            .prepare(PluginId::from("retry"), &bytes, PluginConfig::default())
+            .prepare(
+                PluginId::try_from("retry").unwrap(),
+                &bytes,
+                PluginConfig::default(),
+            )
             .await
             .unwrap();
         let acceptance = retry.accept_all();
@@ -1961,7 +1985,7 @@ mod grant_tests {
 
         let error = builder
             .prepare(
-                PluginId::from("http-no-import"),
+                PluginId::try_from("http-no-import").unwrap(),
                 &component,
                 PluginConfig::default(),
             )
@@ -1992,7 +2016,7 @@ mod grant_tests {
 
         let error = builder
             .prepare(
-                PluginId::from("empty-http"),
+                PluginId::try_from("empty-http").unwrap(),
                 &component,
                 PluginConfig::default(),
             )
@@ -2033,7 +2057,7 @@ mod grant_tests {
             .unwrap();
         let prepared = originating
             .prepare(
-                PluginId::from("host-bound"),
+                PluginId::try_from("host-bound").unwrap(),
                 &component,
                 PluginConfig::default(),
             )
@@ -2092,7 +2116,7 @@ mod grant_tests {
             .unwrap();
         let prepared = builder
             .prepare(
-                PluginId::from("grant-query"),
+                PluginId::try_from("grant-query").unwrap(),
                 &component,
                 PluginConfig::default(),
             )

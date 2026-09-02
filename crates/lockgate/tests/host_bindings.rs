@@ -129,7 +129,7 @@ async fn host() -> (
     let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("host-caller"),
+            PluginId::try_from("host-caller").unwrap(),
             &common::HOST_BINDINGS_FIXTURE,
             PluginConfig::default(),
         )
@@ -287,7 +287,7 @@ async fn smoke_imports_observe_startup_data() {
     let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("smoke-caller"),
+            PluginId::try_from("smoke-caller").unwrap(),
             &component,
             PluginConfig::default(),
         )
@@ -399,7 +399,7 @@ async fn generated_role_fails_at_the_cast_when_not_exported() {
     let mut builder = HostBuilder::new(imports).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("greeter"),
+            PluginId::try_from("greeter").unwrap(),
             &common::PUBLIC_FIXTURE,
             PluginConfig::default(),
         )
@@ -440,7 +440,7 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
     let mut builder = HostBuilder::new(imports).unwrap();
     let skipped = builder
         .prepare(
-            PluginId::from("greeter"),
+            PluginId::try_from("greeter").unwrap(),
             &common::PUBLIC_FIXTURE,
             PluginConfig::default(),
         )
@@ -458,7 +458,7 @@ async fn generated_role_clients_skip_guests_that_do_not_implement_the_interface(
         .unwrap();
     let implementing = builder
         .prepare(
-            PluginId::from("host-caller"),
+            PluginId::try_from("host-caller").unwrap(),
             &common::HOST_BINDINGS_FIXTURE,
             PluginConfig::default(),
         )
@@ -495,7 +495,7 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
     let mut builder = HostBuilder::new(imports).unwrap();
     let first = builder
         .prepare(
-            PluginId::from("host-caller"),
+            PluginId::try_from("host-caller").unwrap(),
             &common::HOST_BINDINGS_FIXTURE,
             PluginConfig::default(),
         )
@@ -517,7 +517,7 @@ async fn each_admitted_plugin_is_named_by_its_own_host_context() {
     let second_bytes = common::sectioned_fixture(&common::HOST_BINDINGS_FIXTURE, &metadata);
     let second = builder
         .prepare(
-            PluginId::from("other-caller"),
+            PluginId::try_from("other-caller").unwrap(),
             &second_bytes,
             PluginConfig::default(),
         )

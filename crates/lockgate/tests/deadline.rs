@@ -101,7 +101,11 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
     let metadata = PluginMetadata::new("deadline", "Deadline fixture", "1.0").unwrap();
     let bytes = common::sectioned_fixture(&common::EXEC_FIXTURE, &metadata);
     let prepared = builder
-        .prepare(PluginId::from("deadline"), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from("deadline").unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -160,7 +164,7 @@ async fn blocking_start_returns_a_smoke_deadline_error() {
     let bytes = common::sectioned_fixture(&blocking_start_component(), &metadata);
     let prepared = builder
         .prepare(
-            PluginId::from("deadline-start"),
+            PluginId::try_from("deadline-start").unwrap(),
             &bytes,
             PluginConfig::default(),
         )

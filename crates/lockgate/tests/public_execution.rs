@@ -90,7 +90,7 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
     let mut builder = HostBuilder::new(()).unwrap();
     let plugin = admit(
         &mut builder,
-        PluginId::from(PLUGIN_ID),
+        PluginId::try_from(PLUGIN_ID).unwrap(),
         &common::PUBLIC_FIXTURE,
     )
     .await;
@@ -138,13 +138,13 @@ async fn role_clients_skip_non_exporters_and_yield_invokable_clients() {
     let mut builder = HostBuilder::new(()).unwrap();
     let skipped = admit(
         &mut builder,
-        PluginId::from("unrelated"),
+        PluginId::try_from("unrelated").unwrap(),
         &unrelated_component(),
     )
     .await;
     let implementing = admit(
         &mut builder,
-        PluginId::from("diagnostics"),
+        PluginId::try_from("diagnostics").unwrap(),
         &common::PUBLIC_FIXTURE,
     )
     .await;
@@ -171,7 +171,7 @@ async fn role_clients_are_empty_when_no_plugin_exports_the_role() {
     let mut builder = HostBuilder::new(()).unwrap();
     admit(
         &mut builder,
-        PluginId::from("unrelated"),
+        PluginId::try_from("unrelated").unwrap(),
         &unrelated_component(),
     )
     .await;
@@ -186,13 +186,13 @@ async fn role_clients_follow_admission_order() {
     let mut builder = HostBuilder::new(()).unwrap();
     let first = admit(
         &mut builder,
-        PluginId::from("first"),
+        PluginId::try_from("first").unwrap(),
         &common::PUBLIC_FIXTURE,
     )
     .await;
     let second = admit(
         &mut builder,
-        PluginId::from("second"),
+        PluginId::try_from("second").unwrap(),
         &common::PUBLIC_FIXTURE,
     )
     .await;

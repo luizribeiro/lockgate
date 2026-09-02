@@ -44,7 +44,7 @@ async fn mapped_shared_type_builds_admits_and_round_trips() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("with-reuse"),
+            PluginId::try_from("with-reuse").unwrap(),
             &common::WITH_REUSE_FIXTURE,
             PluginConfig::default(),
         )

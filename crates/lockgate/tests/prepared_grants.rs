@@ -116,7 +116,7 @@ fn fixture_for(plugin_id: &lockgate::PluginId, needs: &NeedsManifest) -> Vec<u8>
 }
 
 fn fixture(needs: &NeedsManifest) -> Vec<u8> {
-    fixture_for(&PluginId::from(PLUGIN_ID), needs)
+    fixture_for(&PluginId::try_from(PLUGIN_ID).unwrap(), needs)
 }
 
 #[tokio::test]
@@ -138,7 +138,7 @@ async fn literal_setting_and_root_references_prepare_accept_and_admit() {
     let mut builder = host_builder();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig {
                 settings: Some(serde_json::json!({ "scope": "current" })),
@@ -165,7 +165,7 @@ async fn malformed_literal_fails_prepare_with_the_complete_teaching_error() {
 
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&needs),
             PluginConfig::default(),
         )
@@ -202,7 +202,7 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
         let mut builder = host_builder();
         let error = builder
             .prepare(
-                PluginId::from(PLUGIN_ID),
+                PluginId::try_from(PLUGIN_ID).unwrap(),
                 &fixture(&setting),
                 PluginConfig {
                     settings: Some(settings),
@@ -231,7 +231,7 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
     let mut builder = host_builder();
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&setting),
             PluginConfig::default(),
         )
@@ -249,7 +249,7 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
     let mut builder = host_builder();
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &fixture(&root),
             PluginConfig::default(),
         )
@@ -267,11 +267,11 @@ async fn setting_and_root_resolution_failures_are_prepare_errors() {
 #[tokio::test]
 async fn acceptance_for_one_instance_cannot_admit_another() {
     let needs = required(NeedEntry::flag(atom("sessions.send")));
-    let bytes = fixture_for(&PluginId::from("shared-code"), &needs);
+    let bytes = fixture_for(&PluginId::try_from("shared-code").unwrap(), &needs);
     let mut builder = host_builder();
     let prepared_a = builder
         .prepare(
-            PluginId::from("instance-a"),
+            PluginId::try_from("instance-a").unwrap(),
             &bytes,
             PluginConfig::default(),
         )
@@ -279,7 +279,7 @@ async fn acceptance_for_one_instance_cannot_admit_another() {
         .unwrap();
     let prepared_b = builder
         .prepare(
-            PluginId::from("instance-b"),
+            PluginId::try_from("instance-b").unwrap(),
             &bytes,
             PluginConfig::default(),
         )
@@ -311,7 +311,7 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
     let mut builder = host_builder();
     let stale = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &bytes,
             PluginConfig {
                 settings: Some(serde_json::json!({ "scope": "all" })),
@@ -323,7 +323,7 @@ async fn acceptance_for_stale_settings_resolved_needs_is_rejected() {
     let stale_acceptance = stale.accept_all();
     let current = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &bytes,
             PluginConfig {
                 settings: Some(serde_json::json!({ "scope": "current" })),
@@ -374,8 +374,8 @@ async fn dash_prefix_declaration_orders_admit_identically() {
 
     let mut builder = host_builder();
     for (plugin_id, needs) in [
-        PluginId::from("forward-order"),
-        PluginId::from("reversed-order"),
+        PluginId::try_from("forward-order").unwrap(),
+        PluginId::try_from("reversed-order").unwrap(),
     ]
     .into_iter()
     .zip([&forward, &reversed])

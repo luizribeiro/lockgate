@@ -98,7 +98,7 @@ impl Default for Imports {
                 MockVm {
                     id: "gpu-a".to_owned(),
                     pool: "gpu".to_owned(),
-                    created_by: Some(PluginId::from("plugin-a")),
+                    created_by: Some(PluginId::try_from("plugin-a").unwrap()),
                 },
             ),
             (
@@ -106,7 +106,7 @@ impl Default for Imports {
                 MockVm {
                     id: "gpu-b".to_owned(),
                     pool: "gpu".to_owned(),
-                    created_by: Some(PluginId::from("plugin-b")),
+                    created_by: Some(PluginId::try_from("plugin-b").unwrap()),
                 },
             ),
             (
@@ -114,7 +114,7 @@ impl Default for Imports {
                 MockVm {
                     id: "cpu-b".to_owned(),
                     pool: "cpu".to_owned(),
-                    created_by: Some(PluginId::from("plugin-b")),
+                    created_by: Some(PluginId::try_from("plugin-b").unwrap()),
                 },
             ),
         ]
@@ -459,7 +459,7 @@ async fn preparation_rejects_an_unregistered_guard_permission() {
     let mut builder = lockgate::HostBuilder::new(Imports::default()).unwrap();
     let error = builder
         .prepare(
-            PluginId::from("unused"),
+            PluginId::try_from("unused").unwrap(),
             b"not inspected",
             PluginConfig::default(),
         )
@@ -483,7 +483,7 @@ async fn preparation_rejects_an_unregistered_guard_permission() {
         .unwrap();
     let error = registered
         .prepare(
-            PluginId::from("unused"),
+            PluginId::try_from("unused").unwrap(),
             b"not inspected",
             PluginConfig::default(),
         )
@@ -533,7 +533,11 @@ fn host_builder() -> lockgate::HostBuilder<()> {
 
 async fn admit(builder: &mut lockgate::HostBuilder<()>, bytes: &[u8]) {
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -553,7 +557,11 @@ async fn all_guarded_import_without_a_mapped_need_is_a_manifest_mismatch() {
     let bytes = fixture(ADMIN_IMPORT, &NeedsManifest::empty());
     let mut builder = host_builder();
     let error = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
 
@@ -603,8 +611,12 @@ async fn cross_capability_mixed_methods_deny_independently_after_interface_wirin
         let imports = Imports::default();
         let needs =
             NeedsManifest::new(vec![NeedEntry::flag(atom.parse().unwrap())], vec![]).unwrap();
-        let (host, plugin) =
-            runtime_host(imports.clone(), PluginId::from("mixed-plugin"), &needs).await;
+        let (host, plugin) = runtime_host(
+            imports.clone(),
+            PluginId::try_from("mixed-plugin").unwrap(),
+            &needs,
+        )
+        .await;
         let guest = host.guest(&plugin).unwrap();
 
         assert_eq!(guest.mixed_version().await.unwrap(), "mixed-v1");
@@ -697,7 +709,7 @@ async fn guarded_capability_imports_still_consume_the_call_limit() {
     let imports = Imports::default();
     let (host, plugin) = runtime_host_with_limits(
         imports.clone(),
-        PluginId::from("call-limit-plugin"),
+        PluginId::try_from("call-limit-plugin").unwrap(),
         &NeedsManifest::empty(),
         RuntimeLimits {
             max_host_import_calls: LIMIT,
@@ -738,7 +750,12 @@ async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
         vec![],
     )
     .unwrap();
-    let (host, plugin) = runtime_host(imports.clone(), PluginId::from("pool-plugin"), &needs).await;
+    let (host, plugin) = runtime_host(
+        imports.clone(),
+        PluginId::try_from("pool-plugin").unwrap(),
+        &needs,
+    )
+    .await;
     let guest = host.guest(&plugin).unwrap();
 
     let vm = guest.create("gpu").await.unwrap();
@@ -766,8 +783,12 @@ async fn generated_pool_guards_resolve_once_and_deny_before_the_body() {
 async fn argument_resource_guard_executes_the_normalized_checked_resource() {
     let imports = Imports::default();
     let needs = NeedsManifest::new(vec![scoped_need("vm.exec", "pool:gpu")], vec![]).unwrap();
-    let (host, plugin) =
-        runtime_host(imports.clone(), PluginId::from("normalized-plugin"), &needs).await;
+    let (host, plugin) = runtime_host(
+        imports.clone(),
+        PluginId::try_from("normalized-plugin").unwrap(),
+        &needs,
+    )
+    .await;
     let guest = host.guest(&plugin).unwrap();
 
     assert_eq!(
@@ -791,7 +812,12 @@ async fn created_by_caller_guards_cover_only_the_callers_own_vms() {
         vec![],
     )
     .unwrap();
-    let (host, plugin) = runtime_host(imports.clone(), PluginId::from("plugin-a"), &needs).await;
+    let (host, plugin) = runtime_host(
+        imports.clone(),
+        PluginId::try_from("plugin-a").unwrap(),
+        &needs,
+    )
+    .await;
     let guest = host.guest(&plugin).unwrap();
 
     assert_eq!(
@@ -812,7 +838,7 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
     let denied_imports = Imports::default();
     let (host, plugin) = runtime_host(
         denied_imports.clone(),
-        PluginId::from("no-grants"),
+        PluginId::try_from("no-grants").unwrap(),
         &NeedsManifest::empty(),
     )
     .await;
@@ -845,7 +871,7 @@ async fn unscoped_and_capability_free_guards_run_through_the_runtime() {
     .unwrap();
     let (host, plugin) = runtime_host(
         allowed_imports.clone(),
-        PluginId::from("list-plugin"),
+        PluginId::try_from("list-plugin").unwrap(),
         &needs,
     )
     .await;

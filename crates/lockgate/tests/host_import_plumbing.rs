@@ -166,7 +166,7 @@ async fn handwritten_imports_receive_data_and_clone_per_call() {
     .unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("manual-import"),
+            PluginId::try_from("manual-import").unwrap(),
             &component(),
             PluginConfig::default(),
         )
@@ -199,7 +199,7 @@ async fn host_with_call_limit(
     .unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("manual-import"),
+            PluginId::try_from("manual-import").unwrap(),
             &component(),
             PluginConfig::default(),
         )

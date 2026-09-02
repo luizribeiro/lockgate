@@ -615,7 +615,7 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "gpu".to_owned(),
-                    created_by: Some(PluginId::from("A")),
+                    created_by: Some(PluginId::try_from("A").unwrap()),
                 },
                 caller: "A",
                 memberships: vec![
@@ -627,7 +627,7 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "gpu".to_owned(),
-                    created_by: Some(PluginId::from("A")),
+                    created_by: Some(PluginId::try_from("A").unwrap()),
                 },
                 caller: "B",
                 memberships: vec![InstanceScope::Pool("gpu".to_owned())],
@@ -636,7 +636,7 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "cpu".to_owned(),
-                    created_by: Some(PluginId::from("B")),
+                    created_by: Some(PluginId::try_from("B").unwrap()),
                 },
                 caller: "A",
                 memberships: vec![InstanceScope::Pool("cpu".to_owned())],
@@ -652,7 +652,7 @@ mod tests {
         let registry = registry();
 
         for row in rows {
-            let handle = subject(PluginId::from(row.caller));
+            let handle = subject(PluginId::try_from(row.caller).unwrap());
             let plugin_subject = PluginSubject::new(&handle);
             let memberships = row.vm.scopes_for(&plugin_subject);
             assert_eq!(memberships, row.memberships);
@@ -710,7 +710,7 @@ mod tests {
     #[test]
     fn subject_debug_exposes_only_the_public_plugin_id() {
         let handle = PluginHandle::for_policy_test(
-            PluginId::from("A"),
+            PluginId::try_from("A").unwrap(),
             effective_grants(&[InstanceScope::CreatedByCaller]),
         );
         let subject = PluginSubject::new(&handle);
@@ -722,12 +722,12 @@ mod tests {
     async fn string_id_resolves_asynchronously_to_a_local_vm() {
         let vm = MockVm {
             pool: "gpu".to_owned(),
-            created_by: Some(PluginId::from("A")),
+            created_by: Some(PluginId::try_from("A").unwrap()),
         };
         let host = MockHost {
             vms: Mutex::new(BTreeMap::from([("vm-1".to_owned(), vm.clone())])),
         };
-        let handle = subject(PluginId::from("A"));
+        let handle = subject(PluginId::try_from("A").unwrap());
         let plugin_subject = PluginSubject::new(&handle);
 
         assert_eq!(
@@ -829,7 +829,7 @@ mod tests {
     async fn cache_shapes_contrast_fresh_loads_live_reuse_and_versioned_facts() {
         const CALLS: usize = 256;
 
-        let plugin = subject(PluginId::from("cache-probe"));
+        let plugin = subject(PluginId::try_from("cache-probe").unwrap());
         let resources = ResourceStore::__new();
         let data = ();
         let context = ResolveCtx::new(&data, &plugin, &resources);

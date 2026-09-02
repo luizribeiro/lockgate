@@ -37,7 +37,7 @@ fn hooks_with_origins(origins: &[HttpOrigin]) -> HttpHooks {
             .unwrap();
     }
     let plugin = PluginHandle::for_policy_test_with_registry(
-        PluginId::from("http-test"),
+        PluginId::try_from("http-test").unwrap(),
         EffectiveGrants::from_resolved(ResolvedNeeds {
             required,
             optional: GrantSet::new(),

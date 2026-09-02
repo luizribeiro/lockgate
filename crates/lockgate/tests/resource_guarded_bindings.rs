@@ -231,7 +231,7 @@ async fn runtime_host(
         .unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("resource-guarded"),
+            PluginId::try_from("resource-guarded").unwrap(),
             &bytes,
             PluginConfig::default(),
         )

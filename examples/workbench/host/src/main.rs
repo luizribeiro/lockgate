@@ -45,14 +45,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut builder = HostBuilder::new(())?;
     let tidy = builder
         .prepare(
-            PluginId::from(TIDY_ID),
+            PluginId::try_from(TIDY_ID).unwrap(),
             &tidy_bytes,
             PluginConfig::default(),
         )
         .await?;
     let counter = builder
         .prepare(
-            PluginId::from(COUNTER_ID),
+            PluginId::try_from(COUNTER_ID).unwrap(),
             &counter_bytes,
             PluginConfig::default(),
         )

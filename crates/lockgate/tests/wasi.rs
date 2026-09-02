@@ -107,7 +107,7 @@ async fn admitted_wasi(needs: &NeedsManifest) -> (Host<()>, PluginHandle) {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from(ENV_PLUGIN_ID),
+            PluginId::try_from(ENV_PLUGIN_ID).unwrap(),
             &component,
             PluginConfig::default(),
         )
@@ -250,7 +250,7 @@ fn preflight_reports_required_unset_env_before_admission_fails() {
         let mut builder = HostBuilder::new(()).unwrap();
         let prepared = builder
             .prepare(
-                PluginId::from(ENV_PLUGIN_ID),
+                PluginId::try_from(ENV_PLUGIN_ID).unwrap(),
                 &component,
                 PluginConfig::default(),
             )

@@ -127,7 +127,7 @@ impl Imports {
                 (
                     row.id.into(),
                     StoredSession {
-                        created_by: PluginId::from(created_by),
+                        created_by: PluginId::try_from(created_by).unwrap(),
                         is_current: row.current,
                     },
                 )
@@ -278,7 +278,11 @@ async fn runtime_host(
         .register::<permissions::Contract>()
         .unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();

@@ -242,7 +242,11 @@ async fn empty_needs_accept_all_round_trips() {
     let bytes = well_formed_fixture();
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -259,7 +263,11 @@ async fn three_verb_lifecycle_finishes_with_the_admitted_plugin() {
     let bytes = well_formed_fixture();
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -282,7 +290,11 @@ async fn role_casts_fail_before_calling_for_missing_roles_and_wrong_hosts() {
     let bytes = well_formed_fixture();
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -317,7 +329,11 @@ async fn unregistered_declared_capability_fails_during_prepare() {
     let bytes = fixture_with_needs(&needs);
     let mut builder = HostBuilder::new(()).unwrap();
     let error = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
     assert!(matches!(
@@ -341,7 +357,11 @@ async fn smoke_instantiation_budget_exhaustion_is_typed() {
         })
         .unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -363,7 +383,11 @@ async fn smoke_instantiation_applies_the_store_memory_cap() {
     )
     .unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let limits = RuntimeLimits {
@@ -404,7 +428,11 @@ async fn pooling_rejects_a_runtime_memory_limit_larger_than_its_slots() {
     )
     .unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -444,7 +472,11 @@ async fn smoke_instantiation_observes_ready_validated_settings() {
     );
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
@@ -476,7 +508,7 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
 
     let trapped = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &trapped,
             PluginConfig {
                 settings: Some(serde_json::json!({ "ignored": true })),
@@ -494,7 +526,7 @@ async fn schema_fetch_traps_and_budget_exhaustion_are_typed() {
 
     let exhausted = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &exhausted,
             PluginConfig::default(),
         )
@@ -530,7 +562,7 @@ async fn settings_follow_the_schema_presence_matrix() {
 
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &without_schema,
             PluginConfig::default(),
         )
@@ -543,7 +575,7 @@ async fn settings_follow_the_schema_presence_matrix() {
 
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &without_schema,
             PluginConfig {
                 settings: Some(serde_json::json!({ "enabled": true })),
@@ -561,7 +593,7 @@ async fn settings_follow_the_schema_presence_matrix() {
 
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &empty_schema,
             PluginConfig::default(),
         )
@@ -574,7 +606,7 @@ async fn settings_follow_the_schema_presence_matrix() {
 
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &configured_schema,
             PluginConfig::default(),
         )
@@ -594,7 +626,7 @@ async fn settings_follow_the_schema_presence_matrix() {
 
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &configured_schema,
             PluginConfig {
                 settings: Some(serde_json::json!({ "enabled": true })),
@@ -610,7 +642,7 @@ async fn settings_follow_the_schema_presence_matrix() {
 
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &configured_schema,
             PluginConfig {
                 settings: Some(serde_json::json!({ "enabled": "yes" })),
@@ -633,7 +665,11 @@ async fn malformed_schema_json_is_a_typed_preflight_error() {
         common::sectioned_fixture(&common::constant_schema_component("not JSON"), &metadata());
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let error = builder
@@ -651,7 +687,11 @@ async fn prepares_a_well_formed_sectioned_fixture() {
     let free = inspect(&bytes).unwrap();
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -671,7 +711,7 @@ async fn embedded_label_can_differ_from_the_admitted_plugin_id() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("operator-assigned-instance"),
+            PluginId::try_from("operator-assigned-instance").unwrap(),
             &bytes,
             PluginConfig::default(),
         )
@@ -694,7 +734,7 @@ async fn duplicate_plugin_id_is_rejected() {
     let mut builder = HostBuilder::new(()).unwrap();
     let first = builder
         .prepare(
-            PluginId::from("reused-instance"),
+            PluginId::try_from("reused-instance").unwrap(),
             &bytes,
             PluginConfig::default(),
         )
@@ -707,7 +747,7 @@ async fn duplicate_plugin_id_is_rejected() {
         .unwrap();
     let duplicate = builder
         .prepare(
-            PluginId::from("reused-instance"),
+            PluginId::try_from("reused-instance").unwrap(),
             &bytes,
             PluginConfig::default(),
         )
@@ -747,7 +787,7 @@ async fn preparation_reports_each_early_failure() {
 
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &missing_metadata,
             PluginConfig::default(),
         )
@@ -765,7 +805,7 @@ async fn preparation_reports_each_early_failure() {
 
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &missing_needs,
             PluginConfig::default(),
         )
@@ -783,7 +823,7 @@ async fn preparation_reports_each_early_failure() {
 
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &malformed_needs,
             PluginConfig::default(),
         )
@@ -797,7 +837,7 @@ async fn preparation_reports_each_early_failure() {
 
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             b"not a component",
             PluginConfig::default(),
         )
@@ -829,7 +869,11 @@ async fn forbidden_exports_keep_the_stable_teaching_error() {
 
     let mut builder = HostBuilder::new(()).unwrap();
     let error = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap_err();
 
@@ -852,7 +896,11 @@ async fn validator_passing_unwired_import_fails_linker_preflight() {
     let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, PluginConfig::default())
+        .prepare(
+            PluginId::try_from(PLUGIN_ID).unwrap(),
+            &bytes,
+            PluginConfig::default(),
+        )
         .await
         .unwrap();
     let error = builder
@@ -870,7 +918,7 @@ async fn linker_preflight_precedes_settings_matrix_validation() {
     let mut builder = HostBuilder::new(()).unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &bytes,
             PluginConfig {
                 settings: Some(serde_json::json!({ "would": "lack a schema" })),
@@ -898,7 +946,7 @@ async fn grant_limits_are_rejected_instead_of_ignored() {
     let bytes = common::sectioned_fixture(&component_with_unwired_import(), &metadata());
 
     let error = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, config)
+        .prepare(PluginId::try_from(PLUGIN_ID).unwrap(), &bytes, config)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -924,7 +972,7 @@ async fn artifact_validation_precedes_unresolved_config_rejection() {
 
     let error = builder
         .prepare(
-            PluginId::from(PLUGIN_ID),
+            PluginId::try_from(PLUGIN_ID).unwrap(),
             &value_component(),
             config.clone(),
         )
@@ -937,7 +985,7 @@ async fn artifact_validation_precedes_unresolved_config_rejection() {
 
     let bytes = common::sectioned_fixture(&engine_rejected_component(), &metadata());
     let error = builder
-        .prepare(PluginId::from(PLUGIN_ID), &bytes, config)
+        .prepare(PluginId::try_from(PLUGIN_ID).unwrap(), &bytes, config)
         .await
         .unwrap_err();
     assert!(matches!(error, AdmissionError::UnsupportedExport(_)));

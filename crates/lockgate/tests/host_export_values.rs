@@ -28,7 +28,7 @@ async fn host_with_budgets(
         .unwrap();
     let prepared = builder
         .prepare(
-            PluginId::from("host-export-values"),
+            PluginId::try_from("host-export-values").unwrap(),
             &common::HOST_EXPORT_VALUES_FIXTURE,
             PluginConfig::default(),
         )

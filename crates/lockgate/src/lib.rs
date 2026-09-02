@@ -317,13 +317,16 @@ mod tests {
         let mut registry = CapabilityRegistry::default();
         registry.register::<vm::Contract>().unwrap();
         let plugin = PluginHandle::for_policy_test_with_registry(
-            PluginId::from("plugin-a"),
+            PluginId::try_from("plugin-a").unwrap(),
             grants,
             registry,
         );
         let tracker = jobs::JobTracker::new().unwrap();
-        let jobs =
-            jobs::DetachedJobContext::new(Arc::clone(&tracker), PluginId::from("plugin-a"), 1);
+        let jobs = jobs::DetachedJobContext::new(
+            Arc::clone(&tracker),
+            PluginId::try_from("plugin-a").unwrap(),
+            1,
+        );
         (plugin, jobs)
     }
 
