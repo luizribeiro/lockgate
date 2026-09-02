@@ -9,6 +9,6 @@ description = "Reports task progress to its host's audit log."
 crate-type = ["cdylib"]
 
 [dependencies]
-lockgate-plugin = { path = "../../../crates/lockgate-plugin" }
+lockgate-plugin = { version = "0.1.0", path = "../../../crates/lockgate-plugin" }
 
 [workspace]

@@ -9,6 +9,6 @@ description = "Returns a personalized greeting."
 crate-type = ["cdylib"]
 
 [dependencies]
-lockgate-plugin = { path = "../../../crates/lockgate-plugin" }
+lockgate-plugin = { version = "0.1.0", path = "../../../crates/lockgate-plugin" }
 
 [workspace]

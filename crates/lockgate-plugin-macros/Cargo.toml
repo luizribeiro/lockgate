@@ -7,7 +7,7 @@ edition.workspace = true
 proc-macro = true
 
 [dependencies]
-lockgate-schema = { path = "../lockgate-schema" }
+lockgate-schema = { version = "0.1.0", path = "../lockgate-schema" }
 proc-macro-crate.workspace = true
 proc-macro2.workspace = true
 quote = "1"

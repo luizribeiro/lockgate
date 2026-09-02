@@ -8,8 +8,8 @@ default = ["runtime"]
 runtime = ["dep:dlmalloc"]
 
 [dependencies]
-lockgate-policy = { path = "../lockgate-policy" }
-lockgate-plugin-macros = { path = "../lockgate-plugin-macros" }
+lockgate-policy = { version = "0.1.0", path = "../lockgate-policy" }
+lockgate-plugin-macros = { version = "0.1.0", path = "../lockgate-plugin-macros" }
 schemars.workspace = true
 # Declared directly: stable cargo forbids disabling default features on
 # workspace-inherited dependencies, and these guest builds must stay no-default.
@@ -21,4 +21,4 @@ wit-bindgen = { version = "0.57", default-features = false, features = ["async",
 dlmalloc = { version = "0.2", features = ["global"], optional = true }
 
 [dev-dependencies]
-lockgate-schema = { path = "../lockgate-schema" }
+lockgate-schema = { version = "0.1.0", path = "../lockgate-schema" }

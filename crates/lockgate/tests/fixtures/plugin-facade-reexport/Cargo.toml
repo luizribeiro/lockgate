@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-lockgate-plugin = { path = "../../../../lockgate-plugin" }
+lockgate-plugin = { version = "0.1.0", path = "../../../../lockgate-plugin" }

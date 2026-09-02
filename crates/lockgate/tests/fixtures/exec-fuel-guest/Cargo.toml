@@ -7,4 +7,4 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-lockgate-plugin = { path = "../../../../lockgate-plugin" }
+lockgate-plugin = { version = "0.1.0", path = "../../../../lockgate-plugin" }

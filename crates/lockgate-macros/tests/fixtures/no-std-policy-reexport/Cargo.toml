@@ -6,4 +6,4 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-policy = { package = "lockgate-policy", path = "../../../../lockgate-policy" }
+policy = { package = "lockgate-policy", version = "0.1.0", path = "../../../../lockgate-policy" }

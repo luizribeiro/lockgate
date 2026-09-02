@@ -5,6 +5,6 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-lockgate = { path = "../../../crates/lockgate" }
-provisioning-policy = { path = "../policy" }
+lockgate = { version = "0.1.0", path = "../../../crates/lockgate" }
+provisioning-policy = { version = "0.1.0", path = "../policy" }
 tokio = { workspace = true, features = ["macros", "rt"] }

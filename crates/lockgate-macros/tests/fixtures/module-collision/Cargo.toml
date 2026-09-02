@@ -6,4 +6,4 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-lockgate = { path = "../../../../lockgate" }
+lockgate = { version = "0.1.0", path = "../../../../lockgate" }

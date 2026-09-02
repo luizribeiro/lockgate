@@ -9,7 +9,7 @@ description = "Exercises Lockgate's typed VM policy from a guest plugin."
 crate-type = ["cdylib"]
 
 [dependencies]
-lockgate-plugin = { path = "../../../crates/lockgate-plugin" }
-provisioning-policy = { path = "../policy" }
+lockgate-plugin = { version = "0.1.0", path = "../../../crates/lockgate-plugin" }
+provisioning-policy = { version = "0.1.0", path = "../policy" }
 
 [workspace]

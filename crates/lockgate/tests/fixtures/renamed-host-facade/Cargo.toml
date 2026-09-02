@@ -7,4 +7,4 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
-lg = { package = "lockgate", path = "../../../../lockgate" }
+lg = { package = "lockgate", version = "0.1.0", path = "../../../../lockgate" }

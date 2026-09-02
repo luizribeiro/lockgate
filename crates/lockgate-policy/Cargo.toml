@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-lockgate-macros = { path = "../lockgate-macros" }
+lockgate-macros = { version = "0.1.0", path = "../lockgate-macros" }
 url.workspace = true
 
 [dev-dependencies]
-lockgate-schema = { path = "../lockgate-schema" }
+lockgate-schema = { version = "0.1.0", path = "../lockgate-schema" }
 proptest = "1"
 trybuild = "1"

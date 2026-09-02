@@ -7,4 +7,4 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-sage-plugin = { package = "lockgate-plugin-facade-reexport-fixture", path = "../plugin-facade-reexport" }
+sage-plugin = { package = "lockgate-plugin-facade-reexport-fixture", version = "0.1.0", path = "../plugin-facade-reexport" }

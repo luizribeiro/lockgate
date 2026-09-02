@@ -8,4 +8,4 @@ crate-type = ["rlib"]
 
 [dependencies]
 dlmalloc.workspace = true
-lgp = { package = "lockgate-plugin", path = "../../../../lockgate-plugin", default-features = false }
+lgp = { package = "lockgate-plugin", version = "0.1.0", path = "../../../../lockgate-plugin", default-features = false }
