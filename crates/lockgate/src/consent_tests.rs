@@ -312,7 +312,7 @@ async fn approval_record_round_trip_preserves_the_complete_drift_basis() {
     let encoded = serde_json::to_vec(&record).unwrap();
     let decoded: ConsentRecord = serde_json::from_slice(&encoded).unwrap();
 
-    assert_eq!(record.instance_id, review.plugin_id.as_str());
+    assert_eq!(record.plugin_id, review.plugin_id);
     assert_eq!(record.request_digest, review.request_digest);
     assert_eq!(
         record.component_digest.as_deref(),
@@ -348,7 +348,7 @@ async fn approval_record_accepts_the_legacy_fingerprint_key() {
         .unwrap();
     let record = prepared.approve("2026-08-19T14:30:00Z".to_owned());
     let legacy_json = serde_json::json!({
-        "instance_id": record.instance_id,
+        "instance_id": record.plugin_id,
         "fingerprint": record.request_digest.to_string(),
         "component_digest": record.component_digest,
         "exported_interfaces": record.exported_interfaces,
@@ -377,7 +377,7 @@ async fn approval_record_without_a_component_digest_deserializes() {
         .unwrap();
     let record = prepared.approve("2026-08-19T14:30:00Z".to_owned());
     let stored_json = serde_json::json!({
-        "instance_id": record.instance_id,
+        "instance_id": record.plugin_id,
         "request_digest": record.request_digest.to_string(),
         "exported_interfaces": record.exported_interfaces,
         "grants": record.grants,
@@ -411,7 +411,7 @@ async fn approval_record_without_exported_interfaces_deserializes() {
         .unwrap();
     let record = prepared.approve("2026-08-19T14:30:00Z".to_owned());
     let stored_json = serde_json::json!({
-        "instance_id": record.instance_id,
+        "instance_id": record.plugin_id,
         "request_digest": record.request_digest.to_string(),
         "component_digest": record.component_digest,
         "grants": record.grants,

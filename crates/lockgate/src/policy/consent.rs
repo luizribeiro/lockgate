@@ -37,7 +37,8 @@ pub struct GrantReview {
 /// record could not vouch for those extension points.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsentRecord {
-    pub instance_id: String,
+    #[serde(rename = "instance_id")]
+    pub plugin_id: PluginId,
     #[serde(alias = "fingerprint")]
     pub request_digest: PreparedNeedsDigest,
     #[serde(default)]
@@ -110,7 +111,7 @@ impl Prepared {
     pub fn approve(&self, approved_at: String) -> ConsentRecord {
         let manifest = self.review();
         ConsentRecord {
-            instance_id: manifest.plugin_id.as_str().to_owned(),
+            plugin_id: manifest.plugin_id,
             request_digest: manifest.request_digest,
             component_digest: Some(manifest.component_digest),
             exported_interfaces: manifest.exported_interfaces,
@@ -129,7 +130,7 @@ impl Prepared {
         &self,
         prior: Option<&ConsentRecord>,
     ) -> Result<Acceptance, ConsentRequired> {
-        let Some(prior) = prior.filter(|prior| prior.instance_id == self.plugin_id.as_str()) else {
+        let Some(prior) = prior.filter(|prior| prior.plugin_id == self.plugin_id) else {
             return Err(ConsentRequired::FirstRun {
                 manifest: self.review(),
             });
