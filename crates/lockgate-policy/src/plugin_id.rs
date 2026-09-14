@@ -11,9 +11,7 @@ pub struct InvalidPluginId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InvalidPluginIdReason {
     Empty,
-    ControlCharacter,
-    PathSeparator,
-    DotSegment,
+    DisallowedCharacter,
 }
 
 impl fmt::Display for InvalidPluginId {
@@ -23,17 +21,10 @@ impl fmt::Display for InvalidPluginId {
             InvalidPluginIdReason::Empty => {
                 write!(formatter, "plugin ID `{value}` must not be empty")
             }
-            InvalidPluginIdReason::ControlCharacter => write!(
+            InvalidPluginIdReason::DisallowedCharacter => write!(
                 formatter,
-                "plugin ID `{value}` must not contain control characters"
+                "plugin ID `{value}` may only contain lowercase ASCII letters, digits and `-`"
             ),
-            InvalidPluginIdReason::PathSeparator => write!(
-                formatter,
-                "plugin ID `{value}` must not contain `/` or `\\`"
-            ),
-            InvalidPluginIdReason::DotSegment => {
-                write!(formatter, "plugin ID `{value}` must not be `.` or `..`")
-            }
         }
     }
 }
@@ -41,6 +32,7 @@ impl fmt::Display for InvalidPluginId {
 impl Error for InvalidPluginId {}
 
 /// Stable identity for a plugin.
+/// Plugin IDs contain one or more lowercase ASCII letters, digits, or `-` characters.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PluginId(String);
 
@@ -63,12 +55,10 @@ impl TryFrom<String> for PluginId {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let reason = if value.is_empty() {
             Some(InvalidPluginIdReason::Empty)
-        } else if value.chars().any(char::is_control) {
-            Some(InvalidPluginIdReason::ControlCharacter)
-        } else if value.contains('/') || value.contains('\\') {
-            Some(InvalidPluginIdReason::PathSeparator)
-        } else if matches!(value.as_str(), "." | "..") {
-            Some(InvalidPluginIdReason::DotSegment)
+        } else if !value.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        }) {
+            Some(InvalidPluginIdReason::DisallowedCharacter)
         } else {
             None
         };
@@ -134,7 +124,7 @@ mod tests {
 
     #[test]
     fn checked_constructors_accept_realistic_ids() {
-        for accepted in ["openai", "build-plugin@grant-a", "kagi.v2", "my_plugin"] {
+        for accepted in ["openai", "kagi", "stateful-tools", "plugin-2"] {
             let parsed: PluginId = accepted.parse().unwrap();
             let borrowed = PluginId::try_from(accepted).unwrap();
             let owned = PluginId::try_from(String::from(accepted)).unwrap();
@@ -147,7 +137,18 @@ mod tests {
 
     #[test]
     fn checked_constructors_reject_malformed_ids() {
-        for rejected in ["", "a\nb", "a\u{7f}b", "a/b", "a\\b", ".", ".."] {
+        for rejected in [
+            "",
+            "Kagi",
+            "kagi.v2",
+            "my_plugin",
+            "build-plugin@grant-a",
+            "a b",
+            "a/b",
+            "a\nb",
+            "k\u{0430}gi",
+            "kagi\u{200b}",
+        ] {
             assert!(
                 rejected.parse::<PluginId>().is_err(),
                 "accepted {rejected:?}"
@@ -169,7 +170,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "plugin ID `a\\nb` must not contain control characters"
+            "plugin ID `a\\nb` may only contain lowercase ASCII letters, digits and `-`"
         );
     }
 
@@ -234,9 +235,9 @@ mod tests {
         let error = serde_json::from_str::<PluginId>(r#""a/b""#).unwrap_err();
 
         assert!(
-            error
-                .to_string()
-                .contains("plugin ID `a/b` must not contain `/` or `\\`")
+            error.to_string().contains(
+                "plugin ID `a/b` may only contain lowercase ASCII letters, digits and `-`"
+            )
         );
     }
 }

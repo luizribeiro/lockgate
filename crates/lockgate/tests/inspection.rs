@@ -5,7 +5,7 @@ use wasm_encoder::{ComponentSection, CustomSection, Section};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
-const PLUGIN_ID: &str = "com.example.inspection";
+const PLUGIN_ID: &str = "com-example-inspection";
 
 fn component(wit: &str) -> Vec<u8> {
     let mut resolve = Resolve::new();

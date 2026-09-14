@@ -615,9 +615,9 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "gpu".to_owned(),
-                    created_by: Some(PluginId::try_from("A").unwrap()),
+                    created_by: Some(PluginId::try_from("plugin-a").unwrap()),
                 },
-                caller: "A",
+                caller: "plugin-a",
                 memberships: vec![
                     InstanceScope::Pool("gpu".to_owned()),
                     InstanceScope::CreatedByCaller,
@@ -627,18 +627,18 @@ mod tests {
             GoldenRow {
                 vm: MockVm {
                     pool: "gpu".to_owned(),
-                    created_by: Some(PluginId::try_from("A").unwrap()),
+                    created_by: Some(PluginId::try_from("plugin-a").unwrap()),
                 },
-                caller: "B",
+                caller: "plugin-b",
                 memberships: vec![InstanceScope::Pool("gpu".to_owned())],
                 allowed: [true, true, false, false],
             },
             GoldenRow {
                 vm: MockVm {
                     pool: "cpu".to_owned(),
-                    created_by: Some(PluginId::try_from("B").unwrap()),
+                    created_by: Some(PluginId::try_from("plugin-b").unwrap()),
                 },
-                caller: "A",
+                caller: "plugin-a",
                 memberships: vec![InstanceScope::Pool("cpu".to_owned())],
                 allowed: [true, false, true, false],
             },
@@ -710,24 +710,27 @@ mod tests {
     #[test]
     fn subject_debug_exposes_only_the_public_plugin_id() {
         let handle = PluginHandle::for_policy_test(
-            PluginId::try_from("A").unwrap(),
+            PluginId::try_from("plugin-a").unwrap(),
             effective_grants(&[InstanceScope::CreatedByCaller]),
         );
         let subject = PluginSubject::new(&handle);
 
-        assert_eq!(format!("{subject:?}"), "PluginSubject { plugin_id: \"A\" }");
+        assert_eq!(
+            format!("{subject:?}"),
+            "PluginSubject { plugin_id: \"plugin-a\" }"
+        );
     }
 
     #[tokio::test]
     async fn string_id_resolves_asynchronously_to_a_local_vm() {
         let vm = MockVm {
             pool: "gpu".to_owned(),
-            created_by: Some(PluginId::try_from("A").unwrap()),
+            created_by: Some(PluginId::try_from("plugin-a").unwrap()),
         };
         let host = MockHost {
             vms: Mutex::new(BTreeMap::from([("vm-1".to_owned(), vm.clone())])),
         };
-        let handle = subject(PluginId::try_from("A").unwrap());
+        let handle = subject(PluginId::try_from("plugin-a").unwrap());
         let plugin_subject = PluginSubject::new(&handle);
 
         assert_eq!(

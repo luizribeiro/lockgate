@@ -10,7 +10,7 @@ use lockgate::{
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
 
-const PLUGIN_ID: &str = "com.example.prepared-grants";
+const PLUGIN_ID: &str = "com-example-prepared-grants";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TargetScope {

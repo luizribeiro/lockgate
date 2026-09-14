@@ -10,7 +10,7 @@ use lockgate_schema::{AtomKey, NeedEntry, NeedsDigest, NeedsManifest, PluginMeta
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{ManglingAndAbi, Resolve};
 
-const PLUGIN_ID: &str = "com.example.lifecycle";
+const PLUGIN_ID: &str = "com-example-lifecycle";
 
 struct GuestRole;
 

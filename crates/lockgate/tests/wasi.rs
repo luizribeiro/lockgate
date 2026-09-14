@@ -13,7 +13,7 @@ use std::process::Command;
 use wasmtime::Result;
 use wasmtime::component::Val;
 
-const ENV_PLUGIN_ID: &str = "com.example.wasi-environment";
+const ENV_PLUGIN_ID: &str = "com-example-wasi-environment";
 const CHILD_ENV_TEST: &str = "LOCKGATE_WASI_ENV_TEST_CHILD";
 
 struct WasiRole;
