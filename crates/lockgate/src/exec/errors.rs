@@ -82,7 +82,6 @@ pub(crate) enum ExecError {
     Trap(TrapDetail),
     OutOfBudget,
     DeadlineExceeded(Duration),
-    HostImportCallLimitExceeded { limit: u64 },
     HostPanic { import: String, message: String },
     HostImport(AnyError),
     Dispatch(AnyError),
@@ -96,10 +95,6 @@ impl fmt::Display for ExecError {
             Self::Trap(detail) => write!(f, "component trapped: {detail}"),
             Self::OutOfBudget => f.write_str("component exhausted its invocation fuel"),
             Self::DeadlineExceeded(_) => f.write_str("component exceeded its invocation deadline"),
-            Self::HostImportCallLimitExceeded { limit } => write!(
-                f,
-                "component exceeded its per-invocation host-import call limit of {limit}"
-            ),
             Self::HostPanic { import, message } => {
                 write!(f, "host import `{import}` panicked: {message}")
             }
@@ -190,27 +185,6 @@ impl fmt::Display for HostPanicMarker {
 
 impl Error for HostPanicMarker {}
 
-#[derive(Clone, Copy, Debug)]
-struct HostImportCallLimitExceeded {
-    limit: u64,
-}
-
-impl fmt::Display for HostImportCallLimitExceeded {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "per-invocation host-import call limit of {} exceeded",
-            self.limit
-        )
-    }
-}
-
-impl Error for HostImportCallLimitExceeded {}
-
-pub(super) fn host_import_call_limit_error(limit: u64) -> WasmtimeError {
-    WasmtimeError::new(HostImportCallLimitExceeded { limit })
-}
-
 #[allow(
     dead_code,
     reason = "capability adapters do not yet produce host-import failures; covered by the direct exec test"
@@ -300,11 +274,6 @@ pub(super) fn map_instantiate_error(error: WasmtimeError) -> ExecError {
             message: marker.0.message,
         };
     }
-    if let Some(exceeded) = error.downcast_ref::<HostImportCallLimitExceeded>() {
-        return ExecError::HostImportCallLimitExceeded {
-            limit: exceeded.limit,
-        };
-    }
     if error.is::<MemoryLimitExceeded>() {
         return ExecError::Trap(memory_limit_detail(error));
     }
@@ -326,11 +295,6 @@ pub(super) fn map_call_error(error: WasmtimeError) -> ExecError {
         return ExecError::HostPanic {
             import: marker.0.import,
             message: marker.0.message,
-        };
-    }
-    if let Some(exceeded) = error.downcast_ref::<HostImportCallLimitExceeded>() {
-        return ExecError::HostImportCallLimitExceeded {
-            limit: exceeded.limit,
         };
     }
     if error.is::<HostImportMarker>() {

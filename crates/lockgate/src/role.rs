@@ -136,8 +136,6 @@ pub enum CallError {
     OutOfBudget { fuel: u64 },
     /// The invocation exceeded its bounded wall-clock allowance.
     DeadlineExceeded { deadline: Duration },
-    /// The invocation exceeded its per-invocation host-import call limit.
-    HostImportCallLimitExceeded { limit: u64 },
     /// A host import panicked while servicing the invocation.
     HostPanic { import: String, message: String },
     /// Dynamic function lookup, argument lowering, or result lifting failed.
@@ -165,9 +163,6 @@ impl CallError {
             },
             ExecError::OutOfBudget => Self::OutOfBudget { fuel },
             ExecError::DeadlineExceeded(deadline) => Self::DeadlineExceeded { deadline },
-            ExecError::HostImportCallLimitExceeded { limit } => {
-                Self::HostImportCallLimitExceeded { limit }
-            }
             ExecError::HostPanic { import, message } => Self::HostPanic { import, message },
             // Generated application imports currently use their outer failure
             // channel only for panics: WIT `result` values are guest data, while
@@ -196,10 +191,6 @@ impl fmt::Display for CallError {
             Self::DeadlineExceeded { deadline } => write!(
                 formatter,
                 "plugin exceeded its bounded call deadline of {deadline:?}"
-            ),
-            Self::HostImportCallLimitExceeded { limit } => write!(
-                formatter,
-                "plugin exceeded its per-invocation host-import call limit of {limit}"
             ),
             Self::HostPanic { import, message } => {
                 write!(formatter, "host import `{import}` panicked: {message}")

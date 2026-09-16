@@ -212,7 +212,6 @@ fn runtime_inputs_are_bounded_and_explicit() {
     assert!(limits.instantiation_fuel < u64::MAX);
     assert!(limits.max_memory_bytes > 0);
     assert!(limits.max_memory_bytes < usize::MAX);
-    assert_eq!(limits.max_host_import_calls, 10_000);
 
     let call_budget = CallBudget::default();
     assert!(call_budget.fuel > 0);

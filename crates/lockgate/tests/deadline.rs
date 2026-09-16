@@ -110,14 +110,7 @@ async fn admitted_fixture() -> (Host<()>, PluginHandle) {
         .unwrap();
     let acceptance = prepared.accept_all();
     let plugin = builder
-        .admit(
-            prepared,
-            acceptance,
-            RuntimeLimits {
-                max_host_import_calls: 0,
-                ..RuntimeLimits::default()
-            },
-        )
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
         .unwrap();
     (builder.finish(), plugin)

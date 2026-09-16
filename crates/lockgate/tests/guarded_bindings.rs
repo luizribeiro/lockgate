@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lockgate::{
-    AdmissionError, CallError, HostConstructionError, HostCtx, HostImportPolicyError,
-    InstanceAllocation, PermissionDenied, PluginConfig, PluginId, PluginSubject,
-    PoolingAllocationConfig, ResolveScopedResource, RuntimeLimits, ScopedResource,
+    AdmissionError, HostConstructionError, HostCtx, HostImportPolicyError, InstanceAllocation,
+    PermissionDenied, PluginConfig, PluginId, PluginSubject, PoolingAllocationConfig,
+    ResolveScopedResource, RuntimeLimits, ScopedResource,
 };
 use lockgate_schema::sections::{PLUGIN_METADATA_SECTION, PLUGIN_NEEDS_SECTION};
 use lockgate_schema::{AtomKey, NeedEntry, NeedsManifest, PluginMetadata, ScopeRefEntry};
@@ -675,15 +675,6 @@ async fn runtime_host(
     plugin_id: PluginId,
     needs: &NeedsManifest,
 ) -> (lockgate::Host<()>, lockgate::PluginHandle) {
-    runtime_host_with_limits(imports, plugin_id, needs, RuntimeLimits::default()).await
-}
-
-async fn runtime_host_with_limits(
-    imports: Imports,
-    plugin_id: PluginId,
-    needs: &NeedsManifest,
-    limits: RuntimeLimits,
-) -> (lockgate::Host<()>, lockgate::PluginHandle) {
     let mut builder = lockgate::HostBuilder::with_allocation(
         imports,
         InstanceAllocation::Pooling(PoolingAllocationConfig::default()),
@@ -699,44 +690,11 @@ async fn runtime_host_with_limits(
         .await
         .unwrap();
     let acceptance = prepared.accept_all();
-    let plugin = builder.admit(prepared, acceptance, limits).await.unwrap();
-    (builder.finish(), plugin)
-}
-
-#[tokio::test]
-async fn guarded_capability_imports_still_consume_the_call_limit() {
-    const LIMIT: u64 = 3;
-    let imports = Imports::default();
-    let (host, plugin) = runtime_host_with_limits(
-        imports.clone(),
-        PluginId::try_from("call-limit-plugin").unwrap(),
-        &NeedsManifest::empty(),
-        RuntimeLimits {
-            max_host_import_calls: LIMIT,
-            ..RuntimeLimits::default()
-        },
-    )
-    .await;
-    let guest = host.guest(&plugin).unwrap();
-
-    let error = guest
-        .protocol_version_many(LIMIT as u32 + 1)
+    let plugin = builder
+        .admit(prepared, acceptance, RuntimeLimits::default())
         .await
-        .unwrap_err();
-
-    assert!(matches!(
-        error,
-        CallError::HostImportCallLimitExceeded { limit } if limit == LIMIT
-    ));
-    assert_eq!(
-        imports
-            .state
-            .body_calls
-            .protocol_version
-            .load(Ordering::SeqCst),
-        LIMIT as usize
-    );
-    host.shutdown().await;
+        .unwrap();
+    (builder.finish(), plugin)
 }
 
 #[tokio::test]

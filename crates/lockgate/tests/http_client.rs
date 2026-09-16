@@ -165,13 +165,6 @@ async fn admitted_client(origin: String) -> (Host<()>, PluginHandle) {
     admitted_client_with_options(origin, RuntimeLimits::default(), None).await
 }
 
-async fn admitted_client_with_limits(
-    origin: String,
-    limits: RuntimeLimits,
-) -> (Host<()>, PluginHandle) {
-    admitted_client_with_options(origin, limits, None).await
-}
-
 async fn admitted_client_with_options(
     origin: String,
     limits: RuntimeLimits,
@@ -263,31 +256,6 @@ async fn sequential_invocations_reuse_one_http_connection() {
 
     host.shutdown().await;
     server.join().unwrap();
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn wasi_stream_io_does_not_consume_the_guarded_call_limit() {
-    let (allowed_origin, server) = serve_once();
-    let (host, plugin) = admitted_client_with_limits(
-        allowed_origin.clone(),
-        RuntimeLimits {
-            max_host_import_calls: 1,
-            ..RuntimeLimits::default()
-        },
-    )
-    .await;
-    let guest = host.guest(&plugin).unwrap();
-
-    let response = guest
-        .get(&format!("{allowed_origin}/stream-limit"))
-        .await
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(response.status, 201);
-    assert_eq!(response.body, RESPONSE_BODY);
-    server.join().unwrap();
-    host.shutdown().await;
 }
 
 fn assert_no_connection(listener: TcpListener) {

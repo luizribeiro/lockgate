@@ -4,16 +4,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use common::TestState;
-use common::exec::{ExecEngine, ExecError, ExecLimits, StoreCtx};
+use common::exec::{ExecEngine, ExecError, StoreCtx};
 use wasmtime::component::{Linker, Val};
 
 const ITERATIONS: u32 = 1_000;
 const LOW_FUEL: u64 = 100_000;
 const HIGH_FUEL: u64 = 5_000_000;
-const FUEL_LIMITS: ExecLimits = ExecLimits {
-    max_host_import_calls: 0,
-    ..common::LIMITS
-};
 
 #[tokio::test(flavor = "current_thread")]
 async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
@@ -37,7 +33,7 @@ async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
                 run,
                 &[Val::U32(ITERATIONS)],
                 TestState,
-                FUEL_LIMITS,
+                common::LIMITS,
                 LOW_FUEL,
                 common::INVOCATION_DEADLINE,
             )
@@ -59,7 +55,7 @@ async fn fixed_loop_exhausts_at_a_deterministic_iteration() {
             run,
             &[Val::U32(ITERATIONS)],
             TestState,
-            FUEL_LIMITS,
+            common::LIMITS,
             HIGH_FUEL,
             common::INVOCATION_DEADLINE,
         )

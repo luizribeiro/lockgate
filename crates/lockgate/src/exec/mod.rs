@@ -40,10 +40,7 @@ use cache::CompiledComponentCache;
 )]
 pub use errors::catch_host_panic;
 pub(crate) use errors::{EnvironmentError, ExecError, HostPanicState, LoadError};
-use errors::{
-    MemoryLimitExceeded, host_import_call_limit_error, map_call_error, map_dispatch_error,
-    map_instantiate_error,
-};
+use errors::{MemoryLimitExceeded, map_call_error, map_dispatch_error, map_instantiate_error};
 #[allow(
     unused_imports,
     reason = "later host adapters consume the marker helper and trap detail"
@@ -516,7 +513,6 @@ pub(crate) struct ExportRef {
 pub(crate) struct ExecLimits {
     pub(crate) instantiation_fuel: u64,
     pub(crate) max_memory_bytes: usize,
-    pub(crate) max_host_import_calls: u64,
     pub(crate) http_request_timeout_ceiling: Option<Duration>,
 }
 
@@ -524,9 +520,6 @@ struct StoreRuntimeConfig {
     limits: ExecLimits,
     http_pool: Option<Arc<HttpPool>>,
 }
-
-#[doc(hidden)]
-pub type HostParts<S, I, P> = (I, Arc<S>, Arc<P>, DetachedJobContext, ResourceStore);
 
 /// Data owned by every `Store` this module creates.
 ///
@@ -543,8 +536,6 @@ pub struct StoreCtx<S> {
     plugin: Option<Arc<dyn Any + Send + Sync>>,
     jobs: Option<DetachedJobContext>,
     resources: ResourceStore,
-    host_import_calls: u64,
-    max_host_import_calls: u64,
     settings: SettingsState,
     wasi: WasiCtx,
     wasi_http: WasiHttpCtx,
@@ -581,8 +572,6 @@ impl<S> StoreCtx<S> {
             plugin,
             jobs,
             resources: ResourceStore::__new(),
-            host_import_calls: 0,
-            max_host_import_calls: runtime.limits.max_host_import_calls,
             settings,
             // The context retains its deny-by-default network policy and no
             // filesystem preopens. Raw WASI sockets and paths therefore cannot
@@ -617,19 +606,11 @@ impl<S> StoreCtx<S> {
     }
 
     #[doc(hidden)]
-    pub fn host_parts<I, P>(&mut self) -> WasmtimeResult<HostParts<S, I, P>>
+    pub fn host_parts<I, P>(&self) -> (I, Arc<S>, Arc<P>, DetachedJobContext, ResourceStore)
     where
         I: Clone + 'static,
         P: Send + Sync + 'static,
     {
-        // Generated capability adapters enter here exactly once per call;
-        // framework and WASI implementations use their dedicated Store views.
-        if self.max_host_import_calls != 0 {
-            if self.host_import_calls >= self.max_host_import_calls {
-                return Err(host_import_call_limit_error(self.max_host_import_calls));
-            }
-            self.host_import_calls += 1;
-        }
         let imports = self
             .imports
             .downcast_ref::<I>()
@@ -646,13 +627,13 @@ impl<S> StoreCtx<S> {
             .jobs
             .clone()
             .expect("public plugin Stores must carry detached-job context");
-        Ok((
+        (
             imports,
             Arc::clone(&self.data),
             plugin,
             jobs,
             self.resources.clone(),
-        ))
+        )
     }
 
     #[cfg(test)]

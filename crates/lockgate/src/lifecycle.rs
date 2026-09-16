@@ -138,8 +138,6 @@ pub struct RuntimeLimits {
     pub instantiation_fuel: u64,
     pub max_memory_bytes: usize,
     pub max_detached_jobs: usize,
-    /// Maximum guarded capability-import calls per invocation; `0` disables this limit.
-    pub max_host_import_calls: u64,
     pub http_request_timeout_ceiling: Option<Duration>,
 }
 
@@ -149,7 +147,6 @@ impl Default for RuntimeLimits {
             instantiation_fuel: 10_000_000,
             max_memory_bytes: 64 * 1024 * 1024,
             max_detached_jobs: 32,
-            max_host_import_calls: 10_000,
             http_request_timeout_ceiling: None,
         }
     }
@@ -160,7 +157,6 @@ impl From<RuntimeLimits> for ExecLimits {
         Self {
             instantiation_fuel: limits.instantiation_fuel,
             max_memory_bytes: limits.max_memory_bytes,
-            max_host_import_calls: limits.max_host_import_calls,
             http_request_timeout_ceiling: limits.http_request_timeout_ceiling,
         }
     }

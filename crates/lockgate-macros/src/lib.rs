@@ -2018,7 +2018,7 @@ fn adapter_items(
                 #(#inputs),*
             ) -> impl ::core::future::Future<Output = #adapter_result> + Send {
                 async move {
-                    let (mut imports, data, plugin, jobs, resources) = #host_parts?;
+                    let (mut imports, data, plugin, jobs, resources) = #host_parts;
                     let cx = #lockgate::HostCtx::new(
                         data.as_ref(),
                         plugin.as_ref(),
@@ -2174,11 +2174,11 @@ fn resource_adapter_items(
                 {
                     async move {
                         let resources = accessor.with(|mut access| {
-                            access
+                            let (_, _, _, _, resources) = access
                                 .data_mut()
-                                .host_parts::<#imports, #lockgate::PluginHandle>()
-                                .map(|(_, _, _, _, resources)| resources)
-                        })?;
+                                .host_parts::<#imports, #lockgate::PluginHandle>();
+                            resources
+                        });
                         match resources.__delete_resource(&rep) {
                             Ok(())
                             | Err(#lockgate::ResourceLookupError::NotPresent) => Ok(()),
@@ -2244,7 +2244,7 @@ fn resource_adapter_items(
                 async move {
                     let (mut imports, data, plugin, jobs, resources) = host
                         .data_mut()
-                        .host_parts::<#imports, #lockgate::PluginHandle>()?;
+                        .host_parts::<#imports, #lockgate::PluginHandle>();
                     let cx = #lockgate::HostCtx::new(
                         data.as_ref(),
                         plugin.as_ref(),
